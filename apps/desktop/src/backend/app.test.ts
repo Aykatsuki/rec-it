@@ -8,7 +8,8 @@ import { BackendApp, fingerprint } from './app';
 
 const cleanups: (() => void)[] = [];
 afterEach(() => {
-  for (const c of cleanups.splice(0)) c();
+  // Reverse order: close databases before deleting their folders (Windows keeps open files locked).
+  for (const c of cleanups.splice(0).reverse()) c();
 });
 
 function start(dir = mkdtempSync(join(tmpdir(), 'recit-backend-'))) {
