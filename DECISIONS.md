@@ -23,6 +23,8 @@ Each record states the decision, why it was made and what else was considered. R
 | 017 | Target platform: Windows + NVIDIA first | Accepted |
 | 018 | Claude through the user's own Claude app via MCP | Accepted |
 | 019 | Editor first: Phases 0–5 have no AI dependency | Accepted |
+| 020 | SQLite through Node's built-in `node:sqlite` | Accepted |
+| 021 | Toolchain baseline and the Linux CI sandbox switch | Accepted |
 
 ---
 
@@ -233,3 +235,29 @@ Each record states the decision, why it was made and what else was considered. R
 **Decision.** The first goal is a fully working video editor: import, multi-track timeline, preview, export, local transcription and captions, and 9:16 reframing (Phases 0–5, milestones M1 and M2). No Claude work starts until M2 is reached and reviewed. AI-adjacent features in those phases (Whisper transcription, face tracking) are local and work offline.
 
 **Why.** The editor's quality — accurate preview, matching export, stable undo — decides whether the AI features are useful at all. Claude's tools are a thin layer over the editor's commands, so they are quick to add once the editor is solid.
+
+---
+
+## ADR-020 · SQLite through Node's built-in `node:sqlite`
+
+**Status.** Accepted (11 Nov 2026, Phase 0). Refines ADR-004, which named better-sqlite3.
+
+**Decision.** Use the `node:sqlite` module that ships with Node 24 (and therefore with Electron 45's Node) instead of the better-sqlite3 native module. Access goes through `packages/db`, which wraps opening, pragmas (WAL, foreign keys, busy timeout), transactions and migrations.
+
+**Why.** better-sqlite3 is a native addon that must be compiled or downloaded separately for Electron's ABI and for the Node used by tests, which is a frequent source of broken installs on Windows. `node:sqlite` has the same synchronous API style, needs no build step, and is identical in tests and in the app.
+
+**Risks.** The module is newer than better-sqlite3 and marked as still evolving in Node's documentation. All use is behind `packages/db`, so switching back is a contained change. Unit tests cover migrations, rollback and settings persistence.
+
+---
+
+## ADR-021 · Toolchain baseline and the Linux CI sandbox switch
+
+**Status.** Accepted (11 Nov 2026, Phase 0).
+
+**Decision.** Baseline versions: Electron 45 (Node 24), Node 24 for tooling, pnpm 10, TypeScript 6.0, ESLint 10 with typescript-eslint, Vite 8 with electron-vite 6, React 19, Zod 4, Vitest 5, Playwright 1.65, Python 3.12 managed by uv.
+
+**Notes.**
+- TypeScript 7.0 is out but typescript-eslint supports only up to 6.0, so the project stays on 6.0 until it does.
+- Workspace packages export TypeScript sources directly and electron-vite bundles them; there is no per-package build step.
+- Chromium's OS-level sandbox cannot run in Linux CI containers (root user or restricted user namespaces). End-to-end tests on Linux CI pass `--no-sandbox` together with `RECIT_E2E=1` and `RECIT_NO_OS_SANDBOX=1`; the app only honours this when both test variables are set. The renderer keeps Electron's `sandbox: true` and context isolation. Windows and macOS always run with the full sandbox, in CI and in use.
+

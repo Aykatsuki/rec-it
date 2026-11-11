@@ -4,7 +4,18 @@
 
 Rec-It is a free, open-source, timeline-based video editor (in the style of CapCut and DaVinci Resolve) that Claude can operate. You talk to Claude in your own Claude app; through Rec-It's local MCP connector, Claude can research YouTube topics, analyse your footage, suggest the best clips, generate animated captions, reframe video to vertical 9:16 and make edits on the real timeline. Every edit it makes can be undone. Rec-It has no paid tier and no AI bill of its own: AI usage comes from your existing Claude plan.
 
-> **Status: architecture approved with changes; Phase 0 next.** No application code has been written yet. The first goal is a fully working video editor (Phases 0–5) that needs no AI at all; Claude features build on top of it afterwards.
+> **Status: Phase 0 (foundations) complete.** The app shell runs: secure Electron process model, typed IPC, SQLite settings, encrypted key storage, FFmpeg and GPU detection, and the dark editor layout. Editing features start in Phase 1. The first goal is a fully working video editor (Phases 0–5) that needs no AI at all; Claude features build on top of it afterwards.
+
+## Quick start (Windows)
+
+```powershell
+corepack enable
+pnpm install
+pnpm fetch-ffmpeg
+pnpm dev
+```
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for requirements (Node 24, pnpm 10, uv) and all commands.
 
 ---
 
@@ -27,13 +38,13 @@ Rec-It is a free, open-source, timeline-based video editor (in the style of CapC
 
 | Layer | Technology |
 |-------|------------|
-| Desktop shell | Electron (main process, a backend `utilityProcess`, and a sandboxed renderer) |
-| UI | React 19, TypeScript (strict), Zustand, Radix primitives, custom canvas timeline |
+| Desktop shell | Electron 45 (main process, a backend `utilityProcess`, and a sandboxed renderer) |
+| UI | React 19, TypeScript 6 (strict), react-resizable-panels, lucide icons, custom canvas timeline |
 | Preview engine | WebCodecs + WebGL2 compositor, Web Audio, JASSUB (libass WASM) for captions |
 | Application services | Node.js (TypeScript) in an Electron utility process |
 | Video processing | FFmpeg / FFprobe (bundled binaries) |
 | AI media processing | Python sidecar: faster-whisper, PySceneDetect, MediaPipe |
-| Storage | SQLite (better-sqlite3): one app database plus one SQLite file per project |
+| Storage | SQLite via Node's built-in `node:sqlite`: one app database plus one SQLite file per project |
 | AI | Model Context Protocol (MCP) server inside Rec-It, used from the Claude desktop app with your own Claude plan; optional in-app panel via the Claude Agent SDK |
 | Research | YouTube Data API v3 |
 | Build | pnpm workspaces, electron-vite, electron-builder, uv (Python) |
@@ -46,6 +57,7 @@ Rec-It is a free, open-source, timeline-based video editor (in the style of CapC
 | [ARCHITECTURE.md](ARCHITECTURE.md) | System design, process model, folder structure, data models, rendering, Claude tool calling, dependencies, risks, costs |
 | [ROADMAP.md](ROADMAP.md) | Phased development plan with deliverables, exit criteria and testing for each phase |
 | [DECISIONS.md](DECISIONS.md) | Architecture Decision Records (ADRs): what was decided, why, and the alternatives considered |
+| [CONTRIBUTING.md](CONTRIBUTING.md) | Setup, commands and project rules |
 
 ## Important constraints (read before building)
 
@@ -56,7 +68,7 @@ Rec-It is a free, open-source, timeline-based video editor (in the style of CapC
 ## Planned development prerequisites
 
 - Windows 11 (primary development platform; macOS kept building in CI)
-- Node.js 22 LTS and pnpm 9+
+- Node.js 24 and pnpm 10
 - Python 3.11+ and [uv](https://github.com/astral-sh/uv)
 - FFmpeg 7.x GPL build with libx264 and NVENC (downloaded by `scripts/fetch-ffmpeg`, not committed)
 - NVIDIA GPU with current drivers (reference machine: RTX 3070 8 GB) for NVENC export and CUDA transcription; CPU fallback for everything

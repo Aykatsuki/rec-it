@@ -1,0 +1,73 @@
+/* Rec-It design tokens (ARCHITECTURE §18). Dark only for now. */
+:root {
+  color-scheme: dark;
+
+  /* Surfaces, darkest to lightest */
+  --surface-0: #0b0c0f; /* app background, preview well */
+  --surface-1: #121318; /* panels */
+  --surface-2: #181a20; /* panel headers, inputs */
+  --surface-3: #20232b; /* hover, raised */
+  --surface-4: #2a2e38; /* active, pressed */
+  --border: #23262e;
+  --border-strong: #323642;
+
+  /* Text */
+  --text-1: #eceef3;
+  --text-2: #a3a8b5;
+  --text-3: #6c7180;
+  --text-on-accent: #ffffff;
+
+  /* Brand and interaction */
+  --accent: #ff5a5f; /* the "rec" red */
+  --accent-hover: #ff7276;
+  --accent-soft: rgb(255 90 95 / 14%);
+  --focus: #6d9bff;
+  --selection: #4c8dff;
+
+  /* Track types */
+  --track-video: #4c8dff;
+  --track-audio: #3dd68c;
+  --track-caption: #f5b942;
+
+  /* Status */
+  --ok: #3dd68c;
+  --warn: #f5b942;
+  --error: #ff5a5f;
+  --pending: #6c7180;
+
+  /* Type */
+  --font-ui: 'Inter Variable', 'Segoe UI Variable', 'Segoe UI', system-ui, sans-serif;
+  --font-mono: 'Cascadia Mono', 'SF Mono', Consolas, ui-monospace, monospace;
+  --text-xs: 11px;
+  --text-sm: 12px;
+  --text-md: 13px;
+  --text-lg: 15px;
+  --text-xl: 18px;
+
+  /* Spacing (4 px grid) */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 10px;
+
+  --shadow-pop: 0 12px 40px rgb(0 0 0 / 55%), 0 0 0 1px var(--border-strong);
+  --ease: cubic-bezier(0.2, 0, 0, 1);
+  --dur: 120ms;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --dur: 0ms;
+  }
+}
+
+[data-reduce-motion='true'] {
+  --dur: 0ms;
+}

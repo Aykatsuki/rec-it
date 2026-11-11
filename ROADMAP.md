@@ -23,7 +23,9 @@ The roadmap is ordered so that each phase produces something that works and can 
 
 ---
 
-## Phase 0 · Foundations (M)
+## Phase 0 · Foundations (M) — ✅ complete (11 Nov 2026)
+
+**Outcome.** All deliverables built and tested: 6 Playwright end-to-end tests, TypeScript unit tests, Python tests, and a CI pipeline for Windows, Linux and macOS. Changes from the plan: SQLite through Node's built-in `node:sqlite` instead of better-sqlite3 (ADR-020); toolchain baseline recorded in ADR-021. Still to confirm on the reference PC: NVENC and CUDA reported as working (the cloud build machine has no NVIDIA GPU).
 
 **Goal:** a secure, empty Electron app with the full process model, build system and CI in place.
 
@@ -36,7 +38,7 @@ The roadmap is ordered so that each phase produces something that works and can 
 - `packages/ui`: design tokens, dark theme, the empty editor layout (resizable panels).
 - `scripts/fetch-ffmpeg` downloads verified GPL FFmpeg/FFprobe builds (libx264, NVENC, libass) per platform; startup check shows the version and available hardware encoders (NVENC expected on the reference PC).
 - Python sidecar skeleton with JSON-RPC `ping`, `version` and a CUDA check, managed by uv.
-- Public GitHub repository, GPL-3.0 licence, contribution guide, issue templates.
+- GitHub repository, GPL-3.0 licence, contribution guide, issue templates.
 - GitHub Actions: lint, typecheck, unit tests, pytest, Playwright smoke test on Windows and macOS.
 
 **Exit criteria**

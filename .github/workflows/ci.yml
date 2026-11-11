@@ -1,0 +1,79 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  checks:
+    name: Lint, types, unit and Python tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v5
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+      - uses: astral-sh/setup-uv@v6
+      - name: Install FFmpeg (for integration tests)
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm format:check
+      - run: pnpm lint
+      - run: pnpm typecheck
+      - run: pnpm test
+      - name: Python sidecar tests
+        working-directory: services/media-ai
+        run: |
+          uv run ruff check .
+          uv run ruff format --check .
+          uv run pytest -q
+
+  desktop:
+    name: Build and end-to-end (${{ matrix.os }})
+    needs: checks
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    # macOS is not a release target yet (ADR-017); keep it informative only.
+    continue-on-error: ${{ matrix.os == 'macos-latest' }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v5
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+      - uses: astral-sh/setup-uv@v6
+      - run: pnpm install --frozen-lockfile
+      - name: Unit tests on this platform
+        run: pnpm test
+      - name: Download FFmpeg (GPL build)
+        if: runner.os != 'macOS'
+        run: pnpm fetch-ffmpeg
+      - name: Build
+        run: pnpm build
+      - name: End-to-end tests (Linux, virtual display)
+        if: runner.os == 'Linux'
+        run: xvfb-run -a pnpm --filter @rec-it/desktop exec playwright test
+      - name: End-to-end tests
+        if: runner.os != 'Linux'
+        run: pnpm --filter @rec-it/desktop exec playwright test
+      - name: Upload test results
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-${{ matrix.os }}
+          path: apps/desktop/test-results
+          retention-days: 7
