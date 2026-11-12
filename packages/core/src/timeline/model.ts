@@ -14,6 +14,28 @@ export interface Transform {
   rotation: number;
 }
 
+/** Properties that can be animated with keyframes. */
+export type KeyframeProperty = 'x' | 'y' | 'scale' | 'rotation' | 'volume';
+export const KEYFRAME_PROPERTIES: readonly KeyframeProperty[] = [
+  'x',
+  'y',
+  'scale',
+  'rotation',
+  'volume',
+];
+/** How a value moves from this keyframe to the next. */
+export type Easing = 'linear' | 'ease' | 'hold';
+
+export interface Keyframe {
+  /**
+   * Time in the *source* media (flicks), so animation stays attached to the picture when the
+   * clip is trimmed or split.
+   */
+  t: Flicks;
+  v: number;
+  e: Easing;
+}
+
 export interface TimelineItem {
   id: string;
   assetId: string;
@@ -27,6 +49,13 @@ export interface TimelineItem {
   volume: number;
   muted: boolean;
   transform: Transform;
+  /**
+   * Animated properties, each sorted by time. A property with keyframes ignores its static value
+   * (transform.* or volume).
+   */
+  keyframes?: Partial<Record<KeyframeProperty, Keyframe[]>>;
+  /** Clips sharing a linkId (a video and its detached sound) move, trim, split and delete together. */
+  linkId?: string;
 }
 
 export type TrackKind = 'video' | 'audio';
@@ -144,4 +173,54 @@ export function computeLayout(
     top: top + (height - bh) / 2,
   };
   return { width, height, left, top, rotation, bounds };
+}
+
+/** Easing curve applied to progress 0..1. */
+export function ease(e: Easing, p: number): number {
+  if (e === 'hold') return 0;
+  if (e === 'ease') return p * p * (3 - 2 * p);
+  return p;
+}
+
+/** Value of a keyframed property at source time `t` (holds before the first and after the last). */
+export function valueAt(keys: readonly Keyframe[], t: number): number {
+  const first = keys[0]!;
+  if (t <= first.t) return first.v;
+  for (let i = 0; i < keys.length - 1; i++) {
+    const a = keys[i]!;
+    const b = keys[i + 1]!;
+    if (t < b.t) return a.v + (b.v - a.v) * ease(a.e, (t - a.t) / (b.t - a.t));
+  }
+  return keys.at(-1)!.v;
+}
+
+/** Source-media time shown at timeline time `time` by this item. */
+export const sourceTimeAt = (item: TimelineItem, time: number) =>
+  item.sourceIn + (time - item.start);
+
+const animated = (item: TimelineItem, p: KeyframeProperty) => {
+  const k = item.keyframes?.[p];
+  return k && k.length ? k : undefined;
+};
+
+export function hasKeyframes(item: TimelineItem, p?: KeyframeProperty): boolean {
+  return p ? !!animated(item, p) : KEYFRAME_PROPERTIES.some((q) => animated(item, q));
+}
+
+/** The item's transform at timeline time `time`, with keyframes applied. */
+export function transformAt(item: TimelineItem, time: number): Transform {
+  if (!item.keyframes) return item.transform;
+  const src = sourceTimeAt(item, time);
+  const t = { ...item.transform };
+  for (const p of ['x', 'y', 'scale', 'rotation'] as const) {
+    const k = animated(item, p);
+    if (k) t[p] = valueAt(k, src);
+  }
+  return t;
+}
+
+/** The item's volume at timeline time `time`, with keyframes applied. */
+export function volumeAt(item: TimelineItem, time: number): number {
+  const k = animated(item, 'volume');
+  return k ? valueAt(k, sourceTimeAt(item, time)) : item.volume;
 }

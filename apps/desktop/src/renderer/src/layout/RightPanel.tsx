@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { Captions, MousePointerClick, Sparkles } from 'lucide-react';
 import { EmptyState, Tabs } from '@rec-it/ui';
 import { AssetDetails } from '../media/AssetDetails';
-import { findItem } from '../edit';
+import { primaryClip } from '../edit';
 import { useApp, useSelectedAsset, useSequence } from '../store';
 import { ClipInspector } from '../timeline/ClipInspector';
 
@@ -21,8 +21,7 @@ export function RightPanel() {
   const focus = useApp((s) => s.focus);
   const selectedItems = useApp((s) => s.selectedItemIds);
   const assets = useApp((s) => s.assets);
-  const clip =
-    focus === 'timeline' && selectedItems.length === 1 ? findItem(seq, selectedItems[0]!) : null;
+  const clip = focus === 'timeline' ? primaryClip(seq, selectedItems) : null;
   return (
     <section className="panel" data-region="right-panel" aria-label="Details">
       <header className="panel__header">

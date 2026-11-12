@@ -1,9 +1,15 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Maximize2, Pause, Play, SkipBack, SkipForward, StepBack, StepForward } from 'lucide-react';
-import { computeLayout, type Sequence, type TimelineItem, type Track } from '@rec-it/core';
+import {
+  computeLayout,
+  volumeAt,
+  type Sequence,
+  type TimelineItem,
+  type Track,
+} from '@rec-it/core';
 import type { MediaAsset } from '@rec-it/ipc-contract';
 import { IconButton } from '@rec-it/ui';
-import { itemEndSec, sequenceSeconds, toSeconds } from '../edit';
+import { itemEndSec, sequenceSeconds, toFlicks, toSeconds } from '../edit';
 import { useApp } from '../store';
 import { openContextMenu } from '../ui/ContextMenu';
 import { clipMenu, programMenu } from './menus';
@@ -138,7 +144,7 @@ export function ProgramMonitor({ seq }: { seq: Sequence }) {
       // under its nominal time, and seeking exactly onto it shows the previous frame.
       const fps = m.asset.probe?.video?.fps;
       const still = local + (fps && fps.num > 0 ? (0.25 * fps.den) / fps.num : 0.008);
-      el.volume = Math.min(1, m.item.volume);
+      el.volume = Math.min(1, volumeAt(m.item, toFlicks(playhead)));
       el.muted =
         m.item.muted || m.track.muted || (m.asset.kind === 'video' && !m.asset.probe?.audio);
       if (!active) {
@@ -211,7 +217,7 @@ export function ProgramMonitor({ seq }: { seq: Sequence }) {
                     v.displayHeight,
                     seq.width,
                     seq.height,
-                    transformFor(m.item, draft),
+                    transformFor(m.item, draft, playhead),
                   )
                 : null;
               const style = layout

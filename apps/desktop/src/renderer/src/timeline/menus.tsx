@@ -9,6 +9,7 @@ import {
   EyeOff,
   FolderOpen,
   ImageDown,
+  Link2,
   Lock,
   Maximize,
   Minimize,
@@ -36,6 +37,9 @@ import {
   detachAudio,
   duplicateSelected,
   edit,
+  isLinked,
+  linkSelected,
+  linkedPartners,
   moveSelectedToTrack,
   paste,
   rotateSelected,
@@ -71,7 +75,8 @@ function clipboardEntries(at?: number, trackId?: string): MenuEntry[] {
 /** Menu for one or more selected clips. `ids` become the selection if they are not part of it. */
 export function clipMenu(seq: Sequence, ids: string[]): MenuEntry[] {
   const state = useApp.getState();
-  if (!ids.every((id) => state.selectedItemIds.includes(id))) state.selectItems(ids);
+  if (!ids.every((id) => state.selectedItemIds.includes(id)))
+    state.selectItems([...ids, ...linkedPartners(seq, ids)]);
   const clips = selectedClips(seq);
   if (!clips.length) return [];
   const one = clips.length === 1 ? clips[0]! : null;
@@ -154,6 +159,17 @@ export function clipMenu(seq: Sequence, ids: string[]): MenuEntry[] {
         disabled: one.item.muted,
         onSelect: () => void detachAudio(one.item.id),
       },
+    clips.some((c) => isLinked(seq, c.item))
+      ? {
+          label: 'Unlink',
+          icon: <Unlink size={I} />,
+          onSelect: () => void linkSelected(false),
+        }
+      : clips.length > 1 && {
+          label: 'Link clips',
+          icon: <Link2 size={I} />,
+          onSelect: () => void linkSelected(true),
+        },
     sameKindTracks.length > 1 && {
       label: 'Move to track',
       submenu: sameKindTracks.map((t) => ({

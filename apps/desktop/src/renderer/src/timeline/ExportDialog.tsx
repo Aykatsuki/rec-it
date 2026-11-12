@@ -1,6 +1,6 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { create } from 'zustand';
-import { CheckCircle2, FolderSearch, X } from 'lucide-react';
+import { CheckCircle2, FolderOpen, FolderSearch, X } from 'lucide-react';
 import type { Sequence } from '@rec-it/core';
 import { Button, Dialog } from '@rec-it/ui';
 import {
@@ -23,11 +23,11 @@ export const openExportDialog = () => useExportDialog.setState({ open: true });
 export async function exportFrame(seq: Sequence): Promise<void> {
   const { project, playhead } = useApp.getState();
   if (!project) return;
-  const folder = project.path.replace(/[\\/][^\\/]*$/, '');
-  const sep = project.path.includes('\\') ? '\\' : '/';
   const stamp = playhead.toFixed(2).replace('.', '_');
+  // Start in the export folder, like video exports.
+  const target = await backend.invoke('export.target', { fileName: `${seq.name} ${stamp}s` });
   const { path } = await shell.invoke('dialog.saveImage', {
-    defaultPath: `${folder}${sep}${seq.name} ${stamp}s.png`,
+    defaultPath: target.path.replace(/\.mp4$/i, '.png'),
   });
   if (!path) return;
   try {
@@ -151,16 +151,40 @@ function ExportForm({ seq, onClose }: { seq: Sequence | null; onClose: () => voi
     MBPS[settings.quality] * Math.max(0.15, pixels) * (settings.codec === 'hevc' ? 0.65 : 1);
   const estimate = ((videoMbps * 1e6 + settings.audioBitrate * 1e3) / 8) * duration;
 
-  const start = async () => {
-    if (!seq || !project) return;
-    const folder = project.path.replace(/[\\/][^\\/]*$/, '');
-    const sep = project.path.includes('\\') ? '\\' : '/';
-    const { path } = await shell.invoke('dialog.saveExport', {
-      defaultPath: `${folder}${sep}${seq.name}.mp4`,
+  // Destination: last export folder (remembered by the backend) + an editable file name.
+  const [fileName, setFileName] = useState(() => `${seq?.name ?? 'Short'}.mp4`);
+  const [directory, setDirectory] = useState<string | undefined>(undefined);
+  const [target, setTarget] = useState<{ directory: string; path: string; exists: boolean } | null>(
+    null,
+  );
+  const doneAt = exportState.state === 'done' ? exportState.finishedAt : undefined;
+  useEffect(() => {
+    let cancelled = false;
+    const name = fileName.trim() || 'Short';
+    void backend
+      .invoke('export.target', { fileName: name, ...(directory ? { directory } : {}) })
+      .then((t) => {
+        if (!cancelled) setTarget(t);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+    // doneAt: after an export the file exists, so the "replace" warning should appear.
+  }, [fileName, directory, doneAt]);
+
+  const changeFolder = async () => {
+    const { path } = await shell.invoke('dialog.chooseFolder', {
+      defaultPath: target?.directory ?? '',
+      title: 'Choose export folder',
     });
-    if (!path) return;
+    if (path) setDirectory(path);
+  };
+
+  const start = async () => {
+    if (!seq || !project || !target) return;
     try {
-      await backend.invoke('export.start', { sequenceId: seq.id, path, settings });
+      await backend.invoke('export.start', { sequenceId: seq.id, path: target.path, settings });
     } catch (error) {
       notify(error instanceof Error ? error.message : String(error), 'error');
     }
@@ -217,6 +241,43 @@ function ExportForm({ seq, onClose }: { seq: Sequence | null; onClose: () => voi
         </div>
         <p className="form__hint">{preset ? preset.hint : 'Custom settings.'}</p>
         <div className="export__grid">
+          <div className="form__field export__wide">
+            <span>Save to</span>
+            <div className="export__dest">
+              <span
+                className="export__folder"
+                title={target?.directory}
+                data-testid="export-folder"
+              >
+                {target?.directory ?? '…'}
+              </span>
+              <Button
+                size="sm"
+                variant="ghost"
+                icon={<FolderOpen size={13} />}
+                disabled={running}
+                onClick={() => void changeFolder()}
+              >
+                Change…
+              </Button>
+            </div>
+          </div>
+          <label className="form__field export__wide">
+            <span>File name</span>
+            <input
+              className="ui-input"
+              value={fileName}
+              disabled={running}
+              aria-label="File name"
+              onChange={(e) => setFileName(e.target.value)}
+            />
+            {target?.exists && exportState.state !== 'running' && (
+              <span className="form__hint form__hint--warn" data-testid="export-exists">
+                A file called {target.path.split(/[\\/]/).pop()} is already in this folder.
+                Exporting replaces it.
+              </span>
+            )}
+          </label>
           <label className="form__field">
             <span>Resolution</span>
             <select
@@ -383,10 +444,10 @@ function ExportForm({ seq, onClose }: { seq: Sequence | null; onClose: () => voi
               </Button>
               <Button
                 variant="primary"
-                disabled={!seq || duration <= 0}
+                disabled={!seq || duration <= 0 || !target}
                 onClick={() => void start()}
               >
-                Export…
+                {target?.exists ? 'Replace and export' : 'Export'}
               </Button>
             </>
           )}

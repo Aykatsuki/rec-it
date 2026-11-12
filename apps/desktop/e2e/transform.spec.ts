@@ -60,7 +60,17 @@ test.describe('direct manipulation and context menus', () => {
       await expect(page.getByTestId('transform-box')).toBeVisible();
       await expect(page.getByTestId('clip-inspector')).toBeVisible();
       await page.getByRole('radio', { name: 'Fit whole picture' }).click();
+      await expect(page.getByRole('radio', { name: 'Fit whole picture' })).toHaveAttribute(
+        'aria-checked',
+        'true',
+      );
       await expect(sliderValue(page, 'Scale')).toHaveText('100%');
+      // Wait until the box has its new (fitted) size before grabbing a corner.
+      await expect
+        .poll(async () =>
+          Math.round((await page.getByTestId('transform-box').boundingBox())!.height),
+        )
+        .toBeLessThan(200);
 
       // Resize from a corner.
       const se = await centre(page, 'transform-se');

@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import type { Sequence, Transform } from '@rec-it/core';
+import type { Sequence, TimelineItem, Transform } from '@rec-it/core';
 import type {
   DocumentState,
   ExportState,
@@ -59,6 +59,9 @@ export interface ClipboardClip {
   volume: number;
   muted: boolean;
   transform: Transform;
+  keyframes?: TimelineItem['keyframes'];
+  /** Original link id, so pasted linked clips are linked to each other. */
+  linkKey?: string;
 }
 
 const stored = (key: string) => {

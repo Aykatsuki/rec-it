@@ -112,6 +112,21 @@ function useShortcuts() {
         'input:not([type=range]), textarea, select, [contenteditable], dialog',
       );
       const mod = e.ctrlKey || e.metaKey;
+      // A focused slider uses the arrow keys, Home and End itself.
+      if (
+        target.matches('input[type=range]') &&
+        [
+          'ArrowLeft',
+          'ArrowRight',
+          'ArrowUp',
+          'ArrowDown',
+          'Home',
+          'End',
+          'PageUp',
+          'PageDown',
+        ].includes(e.key)
+      )
+        return;
       const key = e.key.toLowerCase();
       const state = useApp.getState();
       const { project, selectedAssetId, selectedItemIds, focus, monitor } = state;

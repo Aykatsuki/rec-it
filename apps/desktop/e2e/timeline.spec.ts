@@ -3,7 +3,7 @@ import { execFileSync } from 'node:child_process';
 import { existsSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { findTestFfmpeg, makeFixtures, type Fixtures } from '../../../packages/ffmpeg/src/testing';
-import { createProject, launch, mockOpenDialog, tempUserData } from './helpers';
+import { createProject, launch, mockOpenDialog, setExportTarget, tempUserData } from './helpers';
 
 const bins = findTestFfmpeg();
 let fx: Fixtures;
@@ -69,15 +69,13 @@ test.describe('timeline editing and export', () => {
 
       // Export.
       const out = join(userData, 'export test.mp4');
-      await app.evaluate(({ dialog }, path) => {
-        dialog.showSaveDialog = (async () => ({
-          canceled: false,
-          filePath: path,
-        })) as typeof dialog.showSaveDialog;
-      }, out);
       await page.getByTestId('export-button').click();
       await page.getByLabel(/Draft/).check();
-      await page.getByRole('button', { name: 'Export…' }).click();
+      await setExportTarget(app, page, out);
+      await page
+        .getByTestId('export-dialog')
+        .getByRole('button', { name: 'Export', exact: true })
+        .click();
       await expect(page.getByTestId('export-status')).toHaveAttribute('data-state', 'done', {
         timeout: 120_000,
       });
@@ -165,7 +163,11 @@ test.describe('timeline editing and export', () => {
       await page.getByLabel('Resolution').selectOption({ index: 3 });
       await expect(page.getByTestId('export-output')).toContainText('540×960');
       await expect(page.getByTestId('export-output')).toContainText('H.265');
-      await page.getByRole('button', { name: 'Export…' }).click();
+      await setExportTarget(app, page, out);
+      await page
+        .getByTestId('export-dialog')
+        .getByRole('button', { name: 'Export', exact: true })
+        .click();
       await expect(page.getByTestId('export-status')).toHaveAttribute('data-state', 'done', {
         timeout: 120_000,
       });
@@ -195,6 +197,11 @@ test.describe('timeline editing and export', () => {
         'false',
       );
       await expect(page.getByTestId('export-output')).toContainText('540×960');
+      // The folder of the last export is remembered, and an existing file is pointed out.
+      await expect(page.getByTestId('export-folder')).toHaveText(userData);
+      await page.getByLabel('File name').fill('small');
+      await expect(page.getByTestId('export-exists')).toBeVisible();
+      await expect(page.getByRole('button', { name: 'Replace and export' })).toBeVisible();
       await page.keyboard.press('Escape');
 
       // Save the frame under the playhead from the preview's right-click menu.

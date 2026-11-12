@@ -3,6 +3,8 @@ import { FRAME_RATES, frameDuration, secondsToFlicks, type Flicks } from '../tim
 import { CommandError, checkInvariants, type Command } from './commands';
 import { History } from './history';
 import {
+  transformAt,
+  volumeAt,
   computeLayout,
   emptyDocument,
   sequenceDuration,
@@ -184,6 +186,16 @@ describe('timeline commands', () => {
                 time: t,
               },
               { type: 'item.split', sequenceId: 'seq', time: t },
+              { type: 'item.link', sequenceId: 'seq', itemIds: [pick(items).id, pick(items).id] },
+              { type: 'item.unlink', sequenceId: 'seq', itemIds: [pick(items).id] },
+              {
+                type: 'keyframe.set',
+                sequenceId: 'seq',
+                itemId: pick(items).id,
+                property: pick(['x', 'scale', 'rotation', 'volume'] as const),
+                t,
+                value: rnd() * 2,
+              },
               {
                 type: 'item.moveMany',
                 sequenceId: 'seq',
@@ -375,5 +387,170 @@ describe('group edits', () => {
       ),
     ).toThrow(CommandError);
     expect(h.doc).toBe(before);
+  });
+});
+
+describe('linked clips and keyframes', () => {
+  const info = {
+    clip: {
+      kind: 'video' as const,
+      duration: secondsToFlicks(10),
+      hasAudio: true,
+      width: 1920,
+      height: 1080,
+    },
+  };
+  const lookup = (id: string) => (info as Record<string, (typeof info)['clip']>)[id];
+  const S = secondsToFlicks;
+  const setup = () => {
+    const h = new History(emptyDocument());
+    const run = (c: Command) => h.execute(c, lookup);
+    run({
+      type: 'sequence.create',
+      id: 's',
+      name: 'S',
+      width: 1080,
+      height: 1920,
+      fps: FRAME_RATES.fps30,
+    });
+    const tracks = () => h.doc.sequences[0]!.tracks;
+    const v1 = tracks()[1]!.id;
+    const a1 = tracks()[2]!.id;
+    run({
+      type: 'item.add',
+      sequenceId: 's',
+      trackId: v1,
+      assetId: 'clip',
+      start: S(1),
+      id: 'v',
+      duration: S(4),
+    });
+    run({
+      type: 'item.add',
+      sequenceId: 's',
+      trackId: a1,
+      assetId: 'clip',
+      start: S(1),
+      id: 'a',
+      duration: S(4),
+    });
+    run({ type: 'item.link', sequenceId: 's', itemIds: ['v', 'a'] });
+    const item = (id: string) =>
+      tracks()
+        .flatMap((t) => t.items)
+        .find((i) => i.id === id);
+    return { h, run, item, tracks, v1, a1 };
+  };
+
+  it('moves, trims, splits and deletes linked clips together', () => {
+    const { h, run, item, tracks, v1 } = setup();
+    run({ type: 'item.move', sequenceId: 's', itemId: 'v', trackId: v1, start: S(2) });
+    expect([item('v')!.start, item('a')!.start]).toEqual([S(2), S(2)]);
+    run({ type: 'item.trim', sequenceId: 's', itemId: 'a', edge: 'end', time: S(5) });
+    expect([item('v')!.duration, item('a')!.duration]).toEqual([S(3), S(3)]);
+    run({ type: 'item.split', sequenceId: 's', time: S(3), itemIds: ['v'] });
+    const all = tracks().flatMap((t) => t.items);
+    expect(all).toHaveLength(4);
+    const right = all.filter((i) => i.start === S(3));
+    expect(right).toHaveLength(2);
+    expect(right[0]!.linkId).toBeDefined();
+    expect(right[0]!.linkId).toBe(right[1]!.linkId);
+    expect(right[0]!.linkId).not.toBe(item('v')!.linkId);
+    run({ type: 'item.remove', sequenceId: 's', itemIds: ['v'] });
+    expect(tracks().flatMap((t) => t.items)).toHaveLength(2);
+    checkInvariants(h.doc);
+  });
+
+  it('unlinks so clips edit separately', () => {
+    const { run, item, v1 } = setup();
+    run({ type: 'item.unlink', sequenceId: 's', itemIds: ['a'] });
+    run({ type: 'item.move', sequenceId: 's', itemId: 'v', trackId: v1, start: S(3) });
+    expect([item('v')!.start, item('a')!.start]).toEqual([S(3), S(1)]);
+  });
+
+  it('interpolates keyframes in source time, with easing and hold', () => {
+    const { run, item } = setup();
+    // The clip starts at 1 s on the timeline with sourceIn 0: source time = timeline time - 1 s.
+    run({
+      type: 'keyframe.set',
+      sequenceId: 's',
+      itemId: 'v',
+      property: 'scale',
+      t: S(0),
+      value: 1,
+    });
+    run({
+      type: 'keyframe.set',
+      sequenceId: 's',
+      itemId: 'v',
+      property: 'scale',
+      t: S(2),
+      value: 2,
+    });
+    run({
+      type: 'keyframe.set',
+      sequenceId: 's',
+      itemId: 'v',
+      property: 'x',
+      t: S(0),
+      value: 0,
+      easing: 'hold',
+    });
+    run({ type: 'keyframe.set', sequenceId: 's', itemId: 'v', property: 'x', t: S(2), value: 0.5 });
+    const v = item('v')!;
+    expect(transformAt(v, S(2)).scale).toBeCloseTo(1.5);
+    expect(transformAt(v, S(0)).scale).toBe(1);
+    expect(transformAt(v, S(9)).scale).toBe(2);
+    expect(transformAt(v, S(2.9)).x).toBe(0);
+    expect(transformAt(v, S(3)).x).toBe(0.5);
+    run({
+      type: 'keyframe.set',
+      sequenceId: 's',
+      itemId: 'v',
+      property: 'scale',
+      t: S(1),
+      value: 3,
+      easing: 'ease',
+    });
+    expect(transformAt(item('v')!, S(2)).scale).toBe(3);
+    expect(transformAt(item('v')!, S(2.5)).scale).toBeCloseTo(2.5);
+    // Trimming the start keeps the animation on the same picture.
+    run({ type: 'item.trim', sequenceId: 's', itemId: 'v', edge: 'start', time: S(2) });
+    expect(transformAt(item('v')!, S(2)).scale).toBe(3);
+  });
+
+  it('removing the last keyframe keeps its value; a static edit replaces the animation', () => {
+    const { run, item } = setup();
+    run({
+      type: 'keyframe.set',
+      sequenceId: 's',
+      itemId: 'v',
+      property: 'rotation',
+      t: S(1),
+      value: 30,
+    });
+    run({ type: 'keyframe.remove', sequenceId: 's', itemId: 'v', property: 'rotation', t: S(1) });
+    expect(item('v')!.keyframes).toBeUndefined();
+    expect(item('v')!.transform.rotation).toBe(30);
+    run({
+      type: 'keyframe.set',
+      sequenceId: 's',
+      itemId: 'v',
+      property: 'volume',
+      t: S(0),
+      value: 0,
+    });
+    run({
+      type: 'keyframe.set',
+      sequenceId: 's',
+      itemId: 'v',
+      property: 'volume',
+      t: S(1),
+      value: 1,
+    });
+    expect(volumeAt(item('v')!, S(1.5))).toBeCloseTo(0.5);
+    run({ type: 'item.update', sequenceId: 's', itemId: 'v', volume: 0.8 });
+    expect(item('v')!.keyframes).toBeUndefined();
+    expect(volumeAt(item('v')!, S(1.5))).toBe(0.8);
   });
 });

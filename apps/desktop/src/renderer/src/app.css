@@ -1614,7 +1614,7 @@ button.statusbar__item:hover {
 /* Inspector sliders */
 .slider {
   display: grid;
-  grid-template-columns: 82px 1fr 44px;
+  grid-template-columns: 76px minmax(0, 1fr) 40px auto;
   align-items: center;
   gap: var(--space-2);
   margin: 6px 0;
@@ -1956,4 +1956,75 @@ button.statusbar__item:hover {
 }
 .export__wide {
   grid-column: 1 / -1;
+}
+.export__dest {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+}
+.export__folder {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  direction: rtl;
+  text-align: left;
+  padding: 6px 8px;
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  font: 12px var(--font-mono);
+}
+.form__hint--warn {
+  color: #f0b44c;
+}
+
+/* ---- Keyframes -------------------------------------------------------------------------- */
+.kf {
+  display: inline-flex;
+  align-items: center;
+  gap: 1px;
+  margin-left: 4px;
+}
+.kf button {
+  display: inline-grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: none;
+  color: var(--text-3);
+  cursor: pointer;
+}
+.kf button:hover:not(:disabled) {
+  background: var(--surface-3);
+  color: var(--text-1);
+}
+.kf button:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+.kf[data-animated='true'] .kf__toggle {
+  color: var(--accent);
+}
+.kf__toggle[aria-pressed='true'] svg {
+  fill: var(--accent);
+}
+.tl__kf {
+  position: absolute;
+  bottom: 2px;
+  width: 8px;
+  height: 8px;
+  margin-left: -4px;
+  rotate: 45deg;
+  background: #ffd54a;
+  border: 1px solid rgb(0 0 0 / 60%);
+  z-index: 3;
+  cursor: pointer;
+}
+.tl__item-label svg[aria-label='Linked'] {
+  color: #9ecbff;
 }
