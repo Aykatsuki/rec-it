@@ -9,7 +9,7 @@ Rec-It is a free, open-source, timeline-based video editor (in the style of CapC
 ## Quick start (Windows)
 
 ```powershell
-corepack enable
+npm install -g pnpm@10
 pnpm install
 pnpm fetch-ffmpeg
 pnpm dev

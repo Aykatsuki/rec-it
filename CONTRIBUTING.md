@@ -5,17 +5,26 @@
 | Tool | Version | Notes |
 |------|---------|-------|
 | Node.js | 24 (see `.nvmrc`) | Matches the Node inside Electron 45 |
-| pnpm | 10 | `corepack enable` installs the version in `package.json` |
+| pnpm | 10 | `npm install -g pnpm@10` (Corepack is no longer bundled with newer Node versions) |
 | uv | 0.8+ | Manages the Python sidecar's environment ([install](https://docs.astral.sh/uv/getting-started/installation/)) |
 | Git | any recent | |
 | NVIDIA driver | recent | Optional, for NVENC export and CUDA transcription |
 
 ## First-time setup (Windows)
 
+Install the tools once, then open a **new** terminal so they are on your PATH:
+
+```powershell
+winget install OpenJS.NodeJS.LTS
+winget install --id=astral-sh.uv -e
+npm install -g pnpm@10
+```
+
+Then:
+
 ```powershell
 git clone https://github.com/Aykatsuki/rec-it.git
 cd rec-it
-corepack enable
 pnpm install
 pnpm fetch-ffmpeg      # downloads a checksum-verified GPL FFmpeg into resources/ffmpeg/win32-x64
 pnpm dev               # starts the app with hot reload
