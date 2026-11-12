@@ -39,5 +39,6 @@ never reach the renderer or logs; new decisions become new ADRs.
 
 - TypeScript 6.0 (not 7.0: typescript-eslint does not support 7 yet). TS 6 defaults `types` to `[]`,
   so each tsconfig lists the ambient types it needs.
-- Electron 45 (Node 24 inside). Electron downloads its binary on first launch; there is no postinstall.
+- Electron 45 (Node 24 inside). Electron itself only downloads its binary lazily, which electron-vite does not
+  trigger, so `apps/desktop` has a `postinstall` that runs `install-electron`.
 - Workspace packages export `.ts` sources directly; electron-vite bundles them (externalizeDeps: false).
