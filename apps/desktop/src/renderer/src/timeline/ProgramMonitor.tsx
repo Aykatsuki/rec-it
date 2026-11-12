@@ -9,7 +9,12 @@ import {
   type Track,
   type Transform,
 } from '@rec-it/core';
-import { PreviewEngine, gpuPreviewSupported, type EngineLayer } from '../engine/preview-engine';
+import {
+  PreviewEngine,
+  describeError,
+  gpuPreviewSupported,
+  type EngineLayer,
+} from '../engine/preview-engine';
 import { notify } from '../notifications';
 import type { MediaAsset } from '@rec-it/ipc-contract';
 import { IconButton } from '@rec-it/ui';
@@ -81,7 +86,7 @@ export function ProgramMonitor({ seq }: { seq: Sequence }) {
   const rate = useApp((s) => s.rate);
   const draft = useApp((s) => s.draftTransform);
   const engineChoice = useApp((s) => s.previewEngine);
-  const [gpuFailed, setGpuFailed] = useState(false);
+  const gpuFailed = useApp((s) => s.gpuFailed);
   const gpu = engineChoice === 'gpu' && !gpuFailed && gpuSupported;
   const well = useRef<HTMLDivElement>(null);
   const elements = useRef(new Map<string, HTMLMediaElement>());
@@ -223,9 +228,11 @@ export function ProgramMonitor({ seq }: { seq: Sequence }) {
                 draft={draft}
                 box={box}
                 onFail={(error) => {
-                  setGpuFailed(true);
+                  const detail = describeError(error);
+                  console.error('GPU preview failed', error);
+                  useApp.setState({ gpuFailed: detail });
                   notify(
-                    `The GPU preview could not start (${error.message}). Using the compatible preview.`,
+                    `The GPU preview stopped (${detail}). Using the compatible preview — right-click the preview → Preview engine to try the GPU again.`,
                     'warn',
                   );
                 }}
@@ -391,20 +398,22 @@ function GpuCanvas({
   playing: boolean;
   draft: { itemId: string; transform: Transform } | null;
   box: { w: number; h: number };
-  onFail: (error: Error) => void;
+  onFail: (error: unknown) => void;
 }) {
   const canvas = useRef<HTMLCanvasElement>(null);
   const engine = useRef<PreviewEngine | null>(null);
   const failed = useRef(false);
+  // Bumped when the graphics context is restored, to draw again.
+  const [restored, setRestored] = useState(0);
   const fail = (error: unknown) => {
     if (failed.current) return;
     failed.current = true;
-    onFail(error instanceof Error ? error : new Error(String(error)));
+    onFail(error);
   };
 
   useEffect(() => {
     try {
-      engine.current = new PreviewEngine(canvas.current!);
+      engine.current = new PreviewEngine(canvas.current!, () => setRestored((n) => n + 1));
     } catch (error) {
       fail(error);
     }
@@ -464,7 +473,7 @@ function GpuCanvas({
       })
       .catch(fail);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [seq, mounted, playhead, playing, draft, box]);
+  }, [seq, mounted, playhead, playing, draft, box, restored]);
 
   return <canvas ref={canvas} className="program__canvas" data-testid="program-canvas" />;
 }

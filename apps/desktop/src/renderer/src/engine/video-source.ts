@@ -241,13 +241,25 @@ export class VideoSource {
     const first = await Promise.race([wait, timeout]);
     if (first !== 'late') return first;
     // Some decoders hold the last frames until more input or a flush arrives.
-    await this.decoder!.flush().catch(() => {});
+    await Promise.race([
+      this.decoder!.flush().catch(() => {}),
+      new Promise((r) => setTimeout(r, 1000)),
+    ]);
     this.next = -1; // after a flush the next chunk must be a keyframe
     const settled = await Promise.race([
       wait,
-      new Promise<null>((r) => setTimeout(() => r(null), 1000)),
+      new Promise<'stuck'>((r) => setTimeout(() => r('stuck'), 1000)),
     ]);
-    return settled;
+    if (settled !== 'stuck') return settled;
+    // The frame never came: a decoder holds a fixed pool of frames, so never leave one unclosed,
+    // and start the decoder afresh so the next request is not stuck behind this one.
+    void wait.then((f) => f?.close());
+    this.waiting.delete(index);
+    if (this.decoder && this.decoder.state !== 'closed') this.decoder.close();
+    this.decoder = null;
+    this.byTimestamp.clear();
+    this.next = -1;
+    return null;
   }
 
   close(): void {

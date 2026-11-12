@@ -38,8 +38,12 @@ export class PreviewEngine {
   private token = 0;
   private disposed = false;
 
-  constructor(canvas: HTMLCanvasElement) {
-    this.compositor = new Compositor(canvas);
+  /** `restored` is called when the graphics context comes back after being lost. */
+  constructor(canvas: HTMLCanvasElement, restored?: () => void) {
+    this.compositor = new Compositor(canvas, () => {
+      this.uploadedImage.clear();
+      restored?.();
+    });
   }
 
   private source(key: string, url: string): Promise<VideoSource> {
@@ -117,7 +121,7 @@ export class PreviewEngine {
         result.close();
       }),
     );
-    if (token !== this.token || this.disposed) return false;
+    if (token !== this.token || this.disposed || this.compositor.isLost) return false;
     this.compositor.retain(new Set(layers.map((l) => l.key)));
     this.compositor.draw(frame.width, frame.height, layers, pixel);
     return true;
@@ -129,4 +133,13 @@ export class PreviewEngine {
     this.compositor.dispose();
     for (const image of this.images.values()) void image.then((b) => b.close()).catch(() => {});
   }
+}
+
+/** A readable description of any error, including DOMExceptions with empty messages. */
+export function describeError(error: unknown): string {
+  if (error instanceof Error || error instanceof DOMException) {
+    const name = error.name && error.name !== 'Error' ? `${error.name}: ` : '';
+    return `${name}${error.message || 'no details'}`;
+  }
+  return String(error) || 'no details';
 }

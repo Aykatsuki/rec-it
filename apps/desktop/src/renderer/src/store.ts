@@ -35,6 +35,8 @@ interface AppState {
   mediaView: 'grid' | 'list';
   /** Preview engine: GPU (WebCodecs + WebGL2, frame-accurate) or the compatible media-element one. */
   previewEngine: 'gpu' | 'compatible';
+  /** Set when the GPU preview failed this session; choosing it again clears this. */
+  gpuFailed: string | null;
   setPreviewEngine(engine: 'gpu' | 'compatible'): void;
   /** A transform being dragged (preview or inspector) before it is committed as an edit. */
   draftTransform: { itemId: string; transform: Transform } | null;
@@ -102,9 +104,10 @@ export const useApp = create<AppState>((set) => ({
   draftTransform: null,
   clipboard: [],
   previewEngine: stored('recit.previewEngine') === 'compatible' ? 'compatible' : 'gpu',
+  gpuFailed: null,
   setPreviewEngine: (previewEngine) => {
     store('recit.previewEngine', previewEngine);
-    set({ previewEngine });
+    set({ previewEngine, gpuFailed: null });
   },
   setDraftTransform: (draftTransform) => set({ draftTransform }),
   select: (id) =>

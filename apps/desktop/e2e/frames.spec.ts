@@ -121,6 +121,21 @@ test.describe('frame accuracy', () => {
       const drawn = Number(await page.getByTestId('program-canvas').getAttribute('data-time'));
       expect(drawn).toBeGreaterThan(frame / 30 + 0.5);
 
+      await page.keyboard.press('Home');
+      frame = 0;
+      await check();
+
+      // If the graphics context is lost (driver reset, sleep) and comes back, drawing resumes.
+      await page.evaluate(() => {
+        const c = document.querySelector<HTMLCanvasElement>('[data-testid=program-canvas]')!;
+        const ext = c.getContext('webgl2')!.getExtension('WEBGL_lose_context')!;
+        ext.loseContext();
+        setTimeout(() => ext.restoreContext(), 300);
+      });
+      await page.waitForTimeout(800);
+      await press('ArrowRight', 1);
+      await expect(page.getByTestId('program-monitor')).toHaveAttribute('data-engine', 'gpu');
+
       // The engine can be switched to the compatible one from the preview's menu.
       await page
         .getByTestId('transform-surface')

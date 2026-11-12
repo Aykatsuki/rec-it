@@ -23,17 +23,37 @@ function compile(gl: WebGL2RenderingContext, type: number, src: string): WebGLSh
   const s = gl.createShader(type)!;
   gl.shaderSource(s, src);
   gl.compileShader(s);
-  if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(s) ?? '');
+  if (!gl.getShaderParameter(s, gl.COMPILE_STATUS))
+    throw new Error(`WebGL shader did not compile: ${gl.getShaderInfoLog(s) || 'no details'}`);
   return s;
 }
 
 export class Compositor {
   private readonly gl: WebGL2RenderingContext;
-  private readonly program: WebGLProgram;
-  private readonly buffer: WebGLBuffer;
+  private program!: WebGLProgram;
+  private buffer!: WebGLBuffer;
   private readonly textures = new Map<string, WebGLTexture>();
+  private lost = false;
+  private readonly onLost = (e: Event) => {
+    // Lets the browser restore the context later (driver reset, GPU switch, sleep).
+    e.preventDefault();
+    this.lost = true;
+    this.textures.clear();
+  };
+  private readonly onRestored = () => {
+    this.lost = false;
+    this.setup();
+    this.restored?.();
+  };
 
-  constructor(private readonly canvas: HTMLCanvasElement) {
+  /**
+   * `restored` is called after the graphics context comes back from being lost; every texture
+   * is gone then, so the caller should render again.
+   */
+  constructor(
+    private readonly canvas: HTMLCanvasElement,
+    private readonly restored?: () => void,
+  ) {
     const gl = canvas.getContext('webgl2', {
       alpha: false,
       antialias: true,
@@ -41,19 +61,35 @@ export class Compositor {
       preserveDrawingBuffer: true, // screenshots and "save frame" read the canvas
     });
     if (!gl) throw new Error('WebGL2 is not available.');
+    if (gl.isContextLost())
+      throw new Error('The graphics context is lost (try again in a moment).');
     this.gl = gl;
+    this.setup();
+    canvas.addEventListener('webglcontextlost', this.onLost);
+    canvas.addEventListener('webglcontextrestored', this.onRestored);
+  }
+
+  private setup(): void {
+    const gl = this.gl;
     const program = gl.createProgram()!;
     gl.attachShader(program, compile(gl, gl.VERTEX_SHADER, VS));
     gl.attachShader(program, compile(gl, gl.FRAGMENT_SHADER, FS));
     gl.linkProgram(program);
     if (!gl.getProgramParameter(program, gl.LINK_STATUS))
-      throw new Error(gl.getProgramInfoLog(program) ?? 'WebGL program failed');
+      throw new Error(
+        `WebGL program did not link: ${gl.getProgramInfoLog(program) || 'no details'}`,
+      );
     this.program = program;
     this.buffer = gl.createBuffer()!;
   }
 
+  get isLost(): boolean {
+    return this.lost || this.gl.isContextLost();
+  }
+
   /** Uploads a new picture for a layer (frames are uploaded once and drawn until replaced). */
   upload(key: string, source: TexImageSource): void {
+    if (this.isLost) return;
     const gl = this.gl;
     let tex = this.textures.get(key);
     if (!tex) {
@@ -94,6 +130,7 @@ export class Compositor {
     layers: Omit<Layer, 'source'>[],
     pixelSize: { w: number; h: number },
   ): void {
+    if (this.isLost) return;
     const gl = this.gl;
     if (this.canvas.width !== pixelSize.w || this.canvas.height !== pixelSize.h) {
       this.canvas.width = pixelSize.w;
@@ -143,8 +180,17 @@ export class Compositor {
     }
   }
 
+  /**
+   * Frees GPU resources. The context itself is left alone: the same canvas can be given to a new
+   * Compositor (React mounts effects twice in development), and a deliberately lost context would
+   * come back lost.
+   */
   dispose(): void {
+    this.canvas.removeEventListener('webglcontextlost', this.onLost);
+    this.canvas.removeEventListener('webglcontextrestored', this.onRestored);
+    if (this.isLost) return;
     this.retain(new Set());
-    this.gl.getExtension('WEBGL_lose_context')?.loseContext();
+    this.gl.deleteBuffer(this.buffer);
+    this.gl.deleteProgram(this.program);
   }
 }
