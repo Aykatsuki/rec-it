@@ -29,6 +29,7 @@ Each record states the decision, why it was made and what else was considered. R
 | 023 | Proxy encoding, derived files and the media protocol | Accepted |
 | 024 | Backend heartbeat so FFmpeg never outlives a crashed app | Accepted |
 | 025 | First timeline, preview and export slice | Accepted |
+| 026 | Direct manipulation, context menus and an effects phase | Accepted |
 
 ---
 
@@ -325,3 +326,17 @@ Each record states the decision, why it was made and what else was considered. R
 - **Editing model:** overwrite edits, snapped to frames; changing the frame rate re-snaps every edit. New sequences default to 1080×1920 at the first clip's frame rate.
 - **Export** uses the original files, not proxies, through one `filter_complex` graph passed as a file. It writes to `<name>.part` and renames on success. One export runs at a time.
 - **Media in use** on a timeline cannot be removed from the project.
+
+---
+
+## ADR-026 · Direct manipulation, context menus and an effects phase
+
+**Status.** Accepted (12 Nov 2026, Phase 2 second slice). Builds on ADR-025.
+
+**Decisions.**
+- **Rotation joins the transform.** `Transform` gains `rotation` (degrees, normalised to −180..180, around the picture's centre). Documents saved earlier load with 0. `computeLayout` also returns the rotated bounding box; export scales, then rotates into that box with transparent corners (`rotate=…:c=none`) and overlays it there, so preview (CSS `rotate`) and export agree.
+- **Direct manipulation in the preview.** Clicking the picture selects the topmost clip under the pointer (hit-tested in its rotated rectangle). Drag moves, corners resize uniformly about the centre, the round handle rotates. Snapping to the frame centre and edges (with guides), Shift constrains (axis, 5% scale steps, 15° rotation steps), Alt turns snapping off, Escape cancels. While dragging, a *draft transform* in the renderer store drives the preview; one `item.update` is sent on release, so every gesture is one undo step and nothing is written to disk mid-drag. Inspector sliders use the same draft, which removes ADR-025's "updates on release" limitation.
+- **Group edits.** Two new commands: `item.moveMany` (lifts every moving clip before placing any, so a group cannot overwrite itself) and `batch` (several commands, one undo step, all-or-nothing, not nestable). Paste, duplicate, detach audio, multi-clip framing changes and context-menu actions use them. `track.remove` deletes a track and its clips but never the last video or audio track. `item.add` accepts volume, mute and transform so pasted clips keep their settings.
+- **Context menus** are one renderer component (`ui/ContextMenu.tsx`: keyboard navigation, submenus, conditional entries) fed by menu builders in `timeline/menus.tsx`. They only call the same edit helpers as buttons and shortcuts; no new IPC.
+- **Clipboard** is renderer memory only (clip references, timing, settings), not the system clipboard.
+- **Effects get their own phase.** Fades, transitions, colour, blur, keying, speed and audio effects become Phase 6, before the Claude phases, so the editor is complete before AI work starts (consistent with ADR-019). Later phases are renumbered: Claude connection is now Phase 7, AI analysis 8, YouTube research 9, batch Shorts 10, release 11.

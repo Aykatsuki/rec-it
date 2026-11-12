@@ -234,4 +234,16 @@ describe.skipIf(!bins)('export renders correct frames (real FFmpeg)', () => {
     ]);
     expect(colour(pixel(out, 1, 176, 316))).toBe('red');
   }, 60_000);
+
+  it('rotates clips around their centre with transparent corners', async () => {
+    const { out } = await render(({ v1 }) => [
+      { type: 'item.add', trackId: v1, assetId: 'red', start: 0, id: 'r' },
+      { type: 'item.update', itemId: 'r', transform: { fit: 'fit', rotation: 90 } },
+    ]);
+    // Unrotated, "fit" is a horizontal band; turned 90° it becomes a vertical band.
+    expect(colour(pixel(out, 0.5, 176, 150))).toBe('red');
+    expect(colour(pixel(out, 0.5, 176, 480))).toBe('red');
+    expect(colour(pixel(out, 0.5, 20, 316))).toBe('black');
+    expect(colour(pixel(out, 0.5, 330, 316))).toBe('black');
+  }, 60_000);
 });

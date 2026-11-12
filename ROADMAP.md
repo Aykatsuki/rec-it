@@ -10,10 +10,11 @@ The roadmap is ordered so that each phase produces something that works and can 
 |-----------|-------------|-----------------|
 | M1 · Working editor | 3 | Import footage, edit on a multi-track timeline, preview, export a 1080×1920 MP4 |
 | M2 · Shorts editor | 5 | Transcribe, add animated captions, reframe to 9:16 by hand or automatically |
-| M3 · AI editor | 7 | Ask Claude (in your Claude app) to edit; get AI-ranked clip suggestions from long videos |
-| M4 · Full product | 10 | YouTube research, rights tracking, batch Shorts, signed installers |
+| M2.5 · Effects | 6 | Fades, transitions, colour, blur, speed and audio effects on clips |
+| M3 · AI editor | 8 | Ask Claude (in your Claude app) to edit; get AI-ranked clip suggestions from long videos |
+| M4 · Full product | 11 | YouTube research, rights tracking, batch Shorts, signed installers |
 
-**Priority: the editor first.** Phases 0–5 deliver a complete, AI-free video editor (multi-track timeline, preview, export, captions, 9:16 reframing). No AI work starts until M2 is reached and you are happy with the editor. Transcription in Phase 4 is local Whisper, not Claude.
+**Priority: the editor first.** Phases 0–6 deliver a complete, AI-free video editor (multi-track timeline, preview, export, captions, 9:16 reframing, effects). No AI work starts until the editor is complete and you are happy with it (ADR-019, ADR-026). Transcription in Phase 4 is local Whisper, not Claude.
 
 **Reference machine.** Your Windows PC with an NVIDIA RTX 3070 (8 GB). Performance targets are measured there. macOS keeps building in CI but is not tested by hand until later.
 
@@ -84,11 +85,11 @@ The roadmap is ordered so that each phase produces something that works and can 
 
 ---
 
-## Phase 2 · Timeline and preview engine (L, highest risk) — 🟡 first slice done (12 Nov 2026)
+## Phase 2 · Timeline and preview engine (L, highest risk) — 🟡 two slices done (12 Nov 2026)
 
 **Goal:** a real multi-track editor with accurate playback.
 
-**Done in the first slice (ADR-025):** the data model, commands, invariants and Immer undo/redo in `packages/core`; a working DOM timeline (drag from the media bin, move, trim, split, delete, ripple delete, snapping, zoom, track hide/mute/lock, add tracks); sequence settings (resolution presets and frame rate); clip inspector (fill/fit, scale, position, volume, mute); an interim preview that plays the timeline with one media element per clip; the document saved in the project file. **Still to do:** canvas timeline with filmstrips and waveforms, multi-select, link/unlink audio, J/K/L, keyframes, the WebCodecs/WebGL2 preview engine and the exit criteria below.
+**Done in the first slice (ADR-025):** the data model, commands, invariants and Immer undo/redo in `packages/core`; a working DOM timeline (drag from the media bin, move, trim, split, delete, ripple delete, snapping, zoom, track hide/mute/lock, add tracks); sequence settings (resolution presets and frame rate); clip inspector (fill/fit, scale, position, volume, mute); an interim preview that plays the timeline with one media element per clip; the document saved in the project file. **Second slice (12 Nov 2026, ADR-026):** move, resize and rotate clips with the mouse in the preview (snapping guides, Shift/Alt modifiers, live preview, one undo step per gesture); clip rotation in the model, preview and export; right-click menus on clips, empty track space, track headers, the preview and the media bin; box and Ctrl/Shift multi-select with group moves; cut/copy/paste/duplicate; detach audio; delete tracks; filmstrip thumbnails and waveforms on clips; J/K/L shuttle; live preview while dragging inspector sliders. **Still to do:** canvas timeline (ADR-015) for very large timelines, linked audio/video pairs, keyframes, the WebCodecs/WebGL2 preview engine and the exit criteria below.
 
 **Deliverables**
 - `packages/core`: full data model (ARCHITECTURE §6), flicks time maths, commands, invariants.
@@ -189,19 +190,46 @@ The roadmap is ordered so that each phase produces something that works and can 
 
 ---
 
-## Phase 6 · Claude connection (M)
+## Phase 6 · Effects and transitions (M) → **Milestone M2.5**
+
+**Goal:** the common visual and audio effects of a Shorts editor, previewed live and exported identically. Requested 12 Nov 2026; placed before the Claude phases so the editor is complete first.
+
+**Deliverables**
+- Effect model in `packages/core`: an ordered effect stack per clip (and per track), each effect with typed parameters that can be keyframed; commands to add, remove, reorder, enable/disable and edit effects; presets.
+- Fades: video fade in/out (from/to black or transparent), audio fade in/out with curve choice; fade handles on clip corners in the timeline.
+- Transitions between adjacent clips: cross-dissolve, dip to black/white, wipe, slide, zoom; audio crossfade. Drag a transition onto a cut; adjustable length.
+- Visual effects: opacity and blend modes, brightness/contrast/saturation/exposure, temperature/tint, LUT import (.cube), blur (gaussian, background blur), sharpen, vignette, film grain, chroma key (green screen), crop, flip, mask shapes, drop shadow, zoom/shake ("punch-in") presets.
+- Speed: constant speed change (0.25×–4×) with pitch-preserved audio, reverse, freeze frame; speed ramps after that.
+- Audio effects: gain and keyframed volume, EQ (low/high shelf, presence), compressor/limiter, noise reduction, ducking under voice, pitch shift, reverb, voice enhance preset.
+- Effects browser panel (drag onto clips), effect controls in the inspector, keyframe lanes for effect parameters.
+- Preview: effects as WebGL2 shaders and Web Audio nodes; export: the matching FFmpeg filters (`fade`, `xfade`, `acrossfade`, `eq`, `colorbalance`, `lut3d`, `gblur`, `chromakey`, `setpts`/`atempo`, `afade`, `equalizer`, `acompressor`, `afftdn`, ...).
+
+**Exit criteria**
+- Every built-in effect has a preview/export golden-frame (SSIM ≥ 0.98) or audio comparison test.
+- Three effects stacked on each of three layers play at the sequence frame rate on the reference PC.
+- Transitions and fades never change the timeline length unexpectedly; undo restores the exact previous state.
+
+**Testing**
+- Unit: effect parameter validation, keyframe interpolation, FFmpeg filter snapshots per effect.
+- Parity: golden frames for each effect and transition at several parameter values.
+- Audio: loudness and spectrum checks for fades, EQ and ducking.
+- E2E: add a fade and a transition from the timeline, adjust them in the inspector, export, verify.
+
+---
+
+## Phase 7 · Claude connection (M)
 
 **Goal:** Claude can read and edit the project from your Claude app, using your existing plan.
 
 **Deliverables**
-- 6a · MCP connector (main deliverable):
+- 7a · MCP connector (main deliverable):
   - `packages/tools`: tool definitions (zod), project summariser, tool instructions; read tools, then edit tools, then confirm-in-Rec-It tools (ARCHITECTURE §13.3).
   - Local tool endpoint in the backend: named pipe (Windows) / Unix socket (macOS), per-launch token, AI on/off switch.
   - `recit-mcp` bridge (stdio MCP server), packaged as a Claude desktop extension (`.mcpb`) for one-click install; also works with `claude mcp add` for Claude Code.
   - MCP prompts: "Find the best Shorts", "Remove silences and filler words", "Caption this", "Convert to vertical".
   - In Rec-It: Claude activity feed, change cards (Undo all / Keep), confirmation cards for heavy tools, connection status, first-connection privacy notice.
   - AI edit transactions and document-version conflict handling.
-- 6b · Optional in-app chat panel using the Claude Agent SDK, built only if Anthropic's rules for third-party Agent SDK apps are clear at that point (ADR-018). Can be skipped without affecting anything else.
+- 7b · Optional in-app chat panel using the Claude Agent SDK, built only if Anthropic's rules for third-party Agent SDK apps are clear at that point (ADR-018). Can be skipped without affecting anything else.
 
 **Exit criteria**
 - From the Claude desktop app, "remove the silences from the first two minutes" works end to end on your PC and is undone with one click in Rec-It.
@@ -218,7 +246,7 @@ The roadmap is ordered so that each phase produces something that works and can 
 
 ---
 
-## Phase 7 · AI analysis and clip selection (M) → **Milestone M3**
+## Phase 8 · AI analysis and clip selection (M) → **Milestone M3**
 
 **Goal:** find the best Shorts in long videos.
 
@@ -242,7 +270,7 @@ The roadmap is ordered so that each phase produces something that works and can 
 
 ---
 
-## Phase 8 · YouTube research and rights-aware importing (M)
+## Phase 9 · YouTube research and rights-aware importing (M)
 
 **Goal:** research what works and keep track of usage rights.
 
@@ -266,7 +294,7 @@ The roadmap is ordered so that each phase produces something that works and can 
 
 ---
 
-## Phase 9 · Batch Shorts (M)
+## Phase 10 · Batch Shorts (M)
 
 **Goal:** turn one long video into many finished Shorts.
 
@@ -287,7 +315,7 @@ The roadmap is ordered so that each phase produces something that works and can 
 
 ---
 
-## Phase 10 · Hardening and release (M) → **Milestone M4**
+## Phase 11 · Hardening and release (M) → **Milestone M4**
 
 **Goal:** an installable, signed, updatable application.
 

@@ -44,6 +44,8 @@ import {
 import { formatFps } from '../format';
 import { WaveformStrip } from '../media/AssetCard';
 import { useApp, useSequence } from '../store';
+import { openContextMenu } from '../ui/ContextMenu';
+import { clipMenu, laneMenu, trackMenu } from './menus';
 import { openSequenceSettings } from './SequenceSettings';
 
 const HEADER = 156;
@@ -52,14 +54,28 @@ const SNAP_PX = 8;
 type Drag =
   | {
       kind: 'move';
+      /** The clip under the pointer; the others in `group` move by the same amount. */
       item: TimelineItem;
       fromTrack: Track;
+      group: { item: TimelineItem; track: Track }[];
       startX: number;
+      /** New start of `item`, in seconds. */
       start: number;
-      trackId: string;
+      /** How many tracks (of the same kind) the group moves down (+) or up (-). */
+      trackShift: number;
       moved: boolean;
     }
-  | { kind: 'trim'; item: TimelineItem; edge: 'start' | 'end'; startX: number; time: number };
+  | { kind: 'trim'; item: TimelineItem; edge: 'start' | 'end'; startX: number; time: number }
+  | {
+      kind: 'marquee';
+      x0: number;
+      y0: number;
+      x1: number;
+      y1: number;
+      additive: boolean;
+      base: string[];
+      moved: boolean;
+    };
 
 function timecode(seconds: number, fine = false): string {
   const m = Math.floor(seconds / 60);
@@ -242,6 +258,30 @@ function TimelineBody({ seq }: { seq: Sequence }) {
   const scroller = useRef<HTMLDivElement>(null);
   const [drag, setDrag] = useState<Drag | null>(null);
   const [dropHint, setDropHint] = useState<{ trackId: string; time: number } | null>(null);
+  const [view, setView] = useState({ left: 0, width: 2000 });
+  const inner = useRef<HTMLDivElement>(null);
+
+  // Visible range, so filmstrips only draw the frames on screen.
+  useEffect(() => {
+    const el = scroller.current;
+    if (!el) return;
+    let raf = 0;
+    const update = () => {
+      cancelAnimationFrame(raf);
+      raf = requestAnimationFrame(() =>
+        setView({ left: el.scrollLeft, width: el.clientWidth - HEADER }),
+      );
+    };
+    update();
+    el.addEventListener('scroll', update, { passive: true });
+    const ro = new ResizeObserver(update);
+    ro.observe(el);
+    return () => {
+      cancelAnimationFrame(raf);
+      el.removeEventListener('scroll', update);
+      ro.disconnect();
+    };
+  }, []);
 
   const byId = useMemo(() => new Map(assets.map((a) => [a.id, a])), [assets]);
   const total = sequenceSeconds(seq);
@@ -265,14 +305,15 @@ function TimelineBody({ seq }: { seq: Sequence }) {
     return () => el.removeEventListener('wheel', onWheel);
   }, []);
 
-  const snapTargets = (excludeId?: string) => {
+  const snapTargets = (exclude?: string | Set<string>) => {
     const targets = [0, useApp.getState().playhead];
+    const skip = (id: string) =>
+      typeof exclude === 'string' ? id === exclude : !!exclude?.has(id);
     for (const t of seq.tracks)
-      for (const i of t.items)
-        if (i.id !== excludeId) targets.push(toSeconds(i.start), itemEndSec(i));
+      for (const i of t.items) if (!skip(i.id)) targets.push(toSeconds(i.start), itemEndSec(i));
     return targets;
   };
-  const snap = (time: number, excludeId?: string, length = 0): number => {
+  const snap = (time: number, excludeId?: string | Set<string>, length = 0): number => {
     if (!snapping) return Math.max(0, time);
     const threshold = SNAP_PX / zoom;
     let best = time;
@@ -316,6 +357,41 @@ function TimelineBody({ seq }: { seq: Sequence }) {
     useApp.getState().setPlaying(false);
   };
 
+  /** Empty lane: click moves the playhead and clears the selection; drag draws a selection box. */
+  const laneDown = (e: ReactPointerEvent) => {
+    if (e.button !== 0) return;
+    (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+    const r = inner.current!.getBoundingClientRect();
+    const x = e.clientX - r.left;
+    const y = e.clientY - r.top;
+    const additive = e.shiftKey || e.ctrlKey || e.metaKey;
+    setDrag({
+      kind: 'marquee',
+      x0: x,
+      y0: y,
+      x1: x,
+      y1: y,
+      additive,
+      base: additive ? useApp.getState().selectedItemIds : [],
+      moved: false,
+    });
+    useApp.getState().setPlaying(false);
+  };
+
+  const marqueeSelect = (d: Extract<Drag, { kind: 'marquee' }>) => {
+    const root = inner.current!;
+    const r = root.getBoundingClientRect();
+    const [ax, bx] = [Math.min(d.x0, d.x1), Math.max(d.x0, d.x1)];
+    const [ay, by] = [Math.min(d.y0, d.y1), Math.max(d.y0, d.y1)];
+    const ids = new Set(d.base);
+    root.querySelectorAll<HTMLElement>('[data-item-id]').forEach((el) => {
+      const b = el.getBoundingClientRect();
+      const [l, t] = [b.left - r.left, b.top - r.top];
+      if (l < bx && l + b.width > ax && t < by && t + b.height > ay) ids.add(el.dataset.itemId!);
+    });
+    useApp.getState().selectItems([...ids]);
+  };
+
   const beginItemDrag = (
     e: ReactPointerEvent,
     track: Track,
@@ -338,15 +414,22 @@ function TimelineBody({ seq }: { seq: Sequence }) {
     }
     useApp.getState().setPlaying(false);
     const start = toSeconds(item.start);
+    const ids = new Set(useApp.getState().selectedItemIds);
+    ids.add(item.id);
+    const group = seq.tracks.flatMap((t) =>
+      t.items.filter((i) => ids.has(i.id)).map((i) => ({ item: i, track: t })),
+    );
+    if (mode === 'move' && group.some((g) => g.track.locked)) return;
     setDrag(
       mode === 'move'
         ? {
             kind: 'move',
             item,
             fromTrack: track,
+            group,
             startX: e.clientX,
             start,
-            trackId: track.id,
+            trackShift: 0,
             moved: false,
           }
         : {
@@ -361,18 +444,46 @@ function TimelineBody({ seq }: { seq: Sequence }) {
 
   const onPointerMove = (e: ReactPointerEvent) => {
     if (!drag) return;
+    if (drag.kind === 'marquee') {
+      const r = inner.current!.getBoundingClientRect();
+      const next = {
+        ...drag,
+        x1: e.clientX - r.left,
+        y1: e.clientY - r.top,
+        moved:
+          drag.moved || Math.hypot(e.clientX - r.left - drag.x0, e.clientY - r.top - drag.y0) > 4,
+      };
+      setDrag(next);
+      if (next.moved) marqueeSelect(next);
+      return;
+    }
     const dx = (e.clientX - drag.startX) / zoom;
     if (drag.kind === 'move') {
       const lane = document
         .elementFromPoint(e.clientX, e.clientY)
         ?.closest<HTMLElement>('[data-track-id]');
       const target = seq.tracks.find((t) => t.id === lane?.dataset.trackId);
-      const trackId = target && target.kind === drag.fromTrack.kind ? target.id : drag.trackId;
+      let trackShift = drag.trackShift;
+      if (target && target.kind === drag.fromTrack.kind) {
+        const same = seq.tracks.filter((t) => t.kind === target.kind);
+        const shift = same.indexOf(target) - same.indexOf(drag.fromTrack);
+        // Only allow a shift that keeps every clip of that kind on an existing track.
+        const ok = drag.group.every((g) => {
+          if (g.track.kind !== target.kind) return true;
+          const to = same[same.indexOf(g.track) + shift];
+          return !!to && !to.locked;
+        });
+        if (ok) trackShift = shift;
+      }
+      const ids = new Set(drag.group.map((g) => g.item.id));
       const length = toSeconds(drag.item.duration);
+      // The whole group cannot start before 0.
+      const earliest = Math.min(...drag.group.map((g) => toSeconds(g.item.start)));
+      const minStart = toSeconds(drag.item.start) - earliest;
       setDrag({
         ...drag,
-        start: snap(toSeconds(drag.item.start) + dx, drag.item.id, length),
-        trackId,
+        start: Math.max(minStart, snap(toSeconds(drag.item.start) + dx, ids, length)),
+        trackShift,
         moved: drag.moved || Math.abs(e.clientX - drag.startX) > 3,
       });
     } else {
@@ -381,17 +492,28 @@ function TimelineBody({ seq }: { seq: Sequence }) {
     }
   };
 
-  const onPointerUp = () => {
+  const onPointerUp = (e: ReactPointerEvent) => {
     if (!drag) return;
     const d = drag;
     setDrag(null);
+    if (d.kind === 'marquee') {
+      if (!d.moved) {
+        // A plain click on empty space: move the playhead there and clear the selection.
+        useApp.getState().setPlayhead(snapping ? snap(timeAt(e.clientX)) : timeAt(e.clientX));
+        if (!d.additive) useApp.getState().selectItems([]);
+      }
+      return;
+    }
     if (d.kind === 'move' && d.moved) {
+      const delta = toFlicks(d.start) - d.item.start;
       void edit({
-        type: 'item.move',
+        type: 'item.moveMany',
         sequenceId: seq.id,
-        itemId: d.item.id,
-        trackId: d.trackId,
-        start: toFlicks(d.start),
+        moves: groupTargets(d).map(({ item, trackId }) => ({
+          itemId: item.id,
+          trackId,
+          start: Math.max(0, item.start + delta),
+        })),
       });
     } else if (d.kind === 'trim') {
       void edit({
@@ -403,6 +525,14 @@ function TimelineBody({ seq }: { seq: Sequence }) {
       });
     }
   };
+
+  /** Where each clip of a moving group ends up. */
+  const groupTargets = (d: Extract<Drag, { kind: 'move' }>) =>
+    d.group.map(({ item, track }) => {
+      if (track.kind !== d.fromTrack.kind) return { item, trackId: track.id };
+      const same = seq.tracks.filter((t) => t.kind === track.kind);
+      return { item, trackId: (same[same.indexOf(track) + d.trackShift] ?? track).id };
+    });
 
   const onLaneDragOver = (e: DragEvent, track: Track) => {
     if (!e.dataTransfer.types.includes(ASSET_MIME)) return;
@@ -428,7 +558,7 @@ function TimelineBody({ seq }: { seq: Sequence }) {
       onPointerUp={onPointerUp}
       onPointerCancel={() => setDrag(null)}
     >
-      <div className="tl__inner" style={{ width: width + HEADER }}>
+      <div className="tl__inner" ref={inner} style={{ width: width + HEADER }}>
         <div className="tl__ruler-row">
           <div className="tl__corner">{timecode(playhead, true)}</div>
           <div className="tl__ruler" onPointerDown={scrubFrom} data-testid="ruler">
@@ -448,13 +578,18 @@ function TimelineBody({ seq }: { seq: Sequence }) {
               data-track-id={track.id}
               data-locked={track.locked}
               data-hidden={track.hidden}
-              onPointerDown={scrubFrom}
+              onPointerDown={laneDown}
+              onContextMenu={(e) => openContextMenu(e, laneMenu(seq, track, timeAt(e.clientX)))}
               onDragOver={(e) => onLaneDragOver(e, track)}
               onDragLeave={() => setDropHint(null)}
               onDrop={(e) => onLaneDrop(e, track)}
             >
               {track.items.map((item) => {
-                const ghost = drag?.item.id === item.id ? drag : null;
+                const dimmed =
+                  (drag?.kind === 'trim' && drag.item.id === item.id) ||
+                  (drag?.kind === 'move' &&
+                    drag.moved &&
+                    drag.group.some((g) => g.item.id === item.id));
                 return (
                   <ItemView
                     key={item.id}
@@ -462,18 +597,32 @@ function TimelineBody({ seq }: { seq: Sequence }) {
                     track={track}
                     asset={byId.get(item.assetId)}
                     zoom={zoom}
+                    view={view}
                     selected={selected.includes(item.id)}
-                    dimmed={!!ghost && (ghost.kind === 'trim' || ghost.moved)}
+                    dimmed={dimmed}
                     onPointerDown={(e, mode) => beginItemDrag(e, track, item, mode)}
+                    onContextMenu={(e) => openContextMenu(e, clipMenu(seq, [item.id]))}
                   />
                 );
               })}
-              {drag?.kind === 'move' && drag.moved && drag.trackId === track.id && (
-                <div
-                  className="tl__ghost"
-                  style={{ left: drag.start * zoom, width: toSeconds(drag.item.duration) * zoom }}
-                />
-              )}
+              {drag?.kind === 'move' &&
+                drag.moved &&
+                groupTargets(drag)
+                  .filter((g) => g.trackId === track.id)
+                  .map(({ item }) => (
+                    <div
+                      key={item.id}
+                      className="tl__ghost"
+                      style={{
+                        left:
+                          Math.max(
+                            0,
+                            toSeconds(item.start) + drag.start - toSeconds(drag.item.start),
+                          ) * zoom,
+                        width: toSeconds(item.duration) * zoom,
+                      }}
+                    />
+                  ))}
               {drag?.kind === 'trim' &&
                 seq.tracks.find((t) => t.items.includes(drag.item))?.id === track.id && (
                   <div
@@ -502,6 +651,18 @@ function TimelineBody({ seq }: { seq: Sequence }) {
           style={{ left: HEADER + playhead * zoom }}
           data-testid="playhead"
         />
+        {drag?.kind === 'marquee' && drag.moved && (
+          <div
+            className="tl__marquee"
+            data-testid="marquee"
+            style={{
+              left: Math.min(drag.x0, drag.x1),
+              top: Math.min(drag.y0, drag.y1),
+              width: Math.abs(drag.x1 - drag.x0),
+              height: Math.abs(drag.y1 - drag.y0),
+            }}
+          />
+        )}
       </div>
     </div>
   );
@@ -511,7 +672,11 @@ function TrackHeader({ seq, track }: { seq: Sequence; track: Track }) {
   const update = (patch: { muted?: boolean; hidden?: boolean; locked?: boolean }) =>
     void edit({ type: 'track.update', sequenceId: seq.id, trackId: track.id, ...patch });
   return (
-    <div className="tl__header" data-kind={track.kind}>
+    <div
+      className="tl__header"
+      data-kind={track.kind}
+      onContextMenu={(e) => openContextMenu(e, trackMenu(seq, track))}
+    >
       <span className="track-header__chip">{track.name}</span>
       <span className="tl__header-buttons">
         {track.kind === 'video' ? (
@@ -550,23 +715,30 @@ function ItemView({
   track,
   asset,
   zoom,
+  view,
   selected,
   dimmed,
   onPointerDown,
+  onContextMenu,
 }: {
   item: TimelineItem;
   track: Track;
   asset: MediaAsset | undefined;
   zoom: number;
+  view: { left: number; width: number };
   selected: boolean;
   dimmed: boolean;
   onPointerDown: (e: ReactPointerEvent, mode: 'move' | 'start' | 'end') => void;
+  onContextMenu: (e: React.MouseEvent) => void;
 }) {
   const left = toSeconds(item.start) * zoom;
   const width = Math.max(4, toSeconds(item.duration) * zoom);
   const assetSeconds = asset?.probe?.durationSec ?? 0;
-  const showWave = track.kind === 'audio' && asset?.urls.waveform && assetSeconds > 0;
+  const hasWave = !!asset?.urls.waveform && assetSeconds > 0;
+  const showWave = hasWave && (track.kind === 'audio' || !!asset?.probe?.audio);
   const poster = track.kind === 'video' ? (asset?.urls.still ?? asset?.urls.poster) : undefined;
+  const sprite = track.kind === 'video' && asset?.kind === 'video' ? asset.urls.sprite : undefined;
+  const v = asset?.probe?.video;
   return (
     <div
       className="tl__item"
@@ -574,15 +746,31 @@ function ItemView({
       data-selected={selected}
       data-dimmed={dimmed}
       data-testid="timeline-item"
+      data-item-id={item.id}
       data-asset-name={asset?.name}
+      data-has-wave={showWave && track.kind === 'video'}
       style={{ left, width }}
       onPointerDown={(e) => onPointerDown(e, 'move')}
+      onContextMenu={onContextMenu}
       title={asset?.name}
     >
-      {poster && <div className="tl__film" style={{ backgroundImage: `url("${poster}")` }} />}
+      {sprite && v ? (
+        <Filmstrip
+          sprite={sprite}
+          aspect={v.displayWidth / v.displayHeight}
+          item={item}
+          zoom={zoom}
+          // Visible part of this clip, relative to its left edge.
+          from={view.left - left}
+          to={view.left + view.width - left}
+          width={width}
+        />
+      ) : (
+        poster && <div className="tl__film" style={{ backgroundImage: `url("${poster}")` }} />
+      )}
       {showWave && (
         <div
-          className="tl__wave"
+          className={`tl__wave${track.kind === 'video' ? ' tl__wave--under' : ''}`}
           style={{ left: -toSeconds(item.sourceIn) * zoom, width: assetSeconds * zoom }}
         >
           <WaveformStrip url={asset!.urls.waveform!} className="tl__wave-svg" />
@@ -596,6 +784,57 @@ function ItemView({
         onPointerDown={(e) => onPointerDown(e, 'start')}
       />
       <span className="tl__handle tl__handle--end" onPointerDown={(e) => onPointerDown(e, 'end')} />
+    </div>
+  );
+}
+
+/** Thumbnails from the asset's sprite sheet along a video clip; only the visible ones are drawn. */
+function Filmstrip({
+  sprite,
+  aspect,
+  item,
+  zoom,
+  from,
+  to,
+  width,
+}: {
+  sprite: NonNullable<MediaAsset['urls']['sprite']>;
+  aspect: number;
+  item: TimelineItem;
+  zoom: number;
+  from: number;
+  to: number;
+  width: number;
+}) {
+  const tileW = Math.max(16, Math.round(48 * (aspect || 16 / 9)));
+  const first = Math.max(0, Math.floor(from / tileW));
+  const last = Math.min(Math.ceil(width / tileW), Math.ceil(to / tileW) + 1);
+  const tiles = [];
+  for (let i = first; i < last && tiles.length < 400; i++) {
+    const x = i * tileW;
+    const t = toSeconds(item.sourceIn) + (x + tileW / 2) / zoom;
+    const frame = Math.min(sprite.count - 1, Math.max(0, Math.floor(t / sprite.interval)));
+    const col = frame % sprite.columns;
+    const row = Math.floor(frame / sprite.columns);
+    tiles.push(
+      <span
+        key={i}
+        className="tl__tile"
+        style={{
+          left: x,
+          width: tileW,
+          backgroundImage: `url("${sprite.url}")`,
+          backgroundSize: `${sprite.columns * 100}% ${sprite.rows * 100}%`,
+          backgroundPosition: `${sprite.columns > 1 ? (col / (sprite.columns - 1)) * 100 : 0}% ${
+            sprite.rows > 1 ? (row / (sprite.rows - 1)) * 100 : 0
+          }%`,
+        }}
+      />,
+    );
+  }
+  return (
+    <div className="tl__filmstrip" data-testid="filmstrip">
+      {tiles}
     </div>
   );
 }
