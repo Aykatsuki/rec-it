@@ -773,7 +773,7 @@ All schemas have numbered migrations in `packages/db`; projects record the schem
 | UI | `react`, `zustand`, `@radix-ui/*`, `immer` | |
 | Preview | WebCodecs (built in), `mp4box`, `jassub` | |
 | Validation | `zod`, `zod-to-json-schema` | |
-| Storage | `better-sqlite3` | Native module; rebuilt for Electron |
+| Storage | `node:sqlite` (built into Node 24 / Electron 45) | No native module to rebuild (ADR-020) |
 | AI | `@modelcontextprotocol/sdk` (MCP server in the bridge), `@anthropic-ai/claude-agent-sdk` (optional panel, Phase 6b) | |
 | Hashing | `xxhash-wasm` | |
 | Media | FFmpeg 7.x / FFprobe GPL static builds (libx264, NVENC, libass) | Licensing: ADR-007 |

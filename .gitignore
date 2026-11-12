@@ -1,0 +1,26 @@
+node_modules/
+out/
+dist/
+release/
+coverage/
+*.log
+.DS_Store
+Thumbs.db
+
+# Downloaded at setup time, never committed
+resources/ffmpeg/*
+!resources/ffmpeg/README.md
+
+# Python
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+
+# Playwright
+test-results/
+playwright-report/
+
+.env
+.env.*

@@ -1,0 +1,37 @@
+{
+  "name": "rec-it",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Free, open-source AI-assisted desktop video editor for YouTube Shorts",
+  "license": "GPL-3.0-or-later",
+  "type": "module",
+  "packageManager": "pnpm@10.28.0",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "dev": "pnpm --filter @rec-it/desktop dev",
+    "build": "pnpm --filter @rec-it/desktop build",
+    "typecheck": "pnpm -r --parallel typecheck",
+    "lint": "eslint . --max-warnings 0",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:e2e": "pnpm --filter @rec-it/desktop test:e2e",
+    "test:py": "uv run --project services/media-ai pytest services/media-ai",
+    "check": "pnpm lint && pnpm typecheck && pnpm test && pnpm test:py",
+    "fetch-ffmpeg": "node scripts/fetch-ffmpeg.mjs"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@types/node": "^24.0.0",
+    "eslint": "^10.14.0",
+    "eslint-plugin-react-hooks": "^7.1.1",
+    "globals": "^17.14.0",
+    "prettier": "^3.6.0",
+    "typescript": "~6.0.3",
+    "typescript-eslint": "^8.72.2",
+    "vitest": "^5.1.0"
+  }
+}

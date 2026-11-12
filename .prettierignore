@@ -1,0 +1,9 @@
+pnpm-lock.yaml
+out/
+dist/
+release/
+coverage/
+resources/ffmpeg/
+services/media-ai/
+LICENSE
+*.md
