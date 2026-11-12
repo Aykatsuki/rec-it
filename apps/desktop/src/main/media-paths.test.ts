@@ -5,19 +5,21 @@ import { parseRange, resolveMediaUrl } from './media-paths';
 describe('recit-media URLs', () => {
   const root = join('/cache');
   it('resolves allowed files', () => {
-    expect(resolveMediaUrl('recit-media://asset/project_1/asset_2/proxy.mp4?v=3', root)).toEqual({
-      path: join(root, 'project_1', 'asset_2', 'proxy.mp4'),
-      mime: 'video/mp4',
-    });
+    expect(resolveMediaUrl('recit-media://asset/project_1/asset_2/proxy-v2.mp4?v=3', root)).toEqual(
+      {
+        path: join(root, 'project_1', 'asset_2', 'proxy-v2.mp4'),
+        mime: 'video/mp4',
+      },
+    );
   });
 
   it('refuses anything else', () => {
     for (const url of [
       'recit-media://asset/project_1/asset_2/../../../etc/passwd',
-      'recit-media://asset/project_1/%2e%2e/proxy.mp4',
+      'recit-media://asset/project_1/%2e%2e/proxy-v2.mp4',
       'recit-media://asset/project_1/asset_2/secrets.json',
       'recit-media://asset/project_1/asset_2/constructor',
-      'recit-media://other/project_1/asset_2/proxy.mp4',
+      'recit-media://other/project_1/asset_2/proxy-v2.mp4',
       'recit-media://asset/project_1/asset_2',
       'file:///etc/passwd',
       'not a url',

@@ -33,6 +33,9 @@ interface AppState {
   zoom: number;
   snapping: boolean;
   mediaView: 'grid' | 'list';
+  /** Preview engine: GPU (WebCodecs + WebGL2, frame-accurate) or the compatible media-element one. */
+  previewEngine: 'gpu' | 'compatible';
+  setPreviewEngine(engine: 'gpu' | 'compatible'): void;
   /** A transform being dragged (preview or inspector) before it is committed as an edit. */
   draftTransform: { itemId: string; transform: Transform } | null;
   /** Clips copied with Ctrl+C, ready to paste. */
@@ -98,6 +101,11 @@ export const useApp = create<AppState>((set) => ({
   mediaView: (stored('recit.mediaView') as 'grid' | 'list' | null) ?? 'grid',
   draftTransform: null,
   clipboard: [],
+  previewEngine: stored('recit.previewEngine') === 'compatible' ? 'compatible' : 'gpu',
+  setPreviewEngine: (previewEngine) => {
+    store('recit.previewEngine', previewEngine);
+    set({ previewEngine });
+  },
   setDraftTransform: (draftTransform) => set({ draftTransform }),
   select: (id) =>
     set({

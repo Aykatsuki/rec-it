@@ -13,6 +13,7 @@ import {
   Lock,
   Maximize,
   Minimize,
+  MonitorPlay,
   Pause,
   Play,
   Plus,
@@ -297,6 +298,22 @@ export function programMenu(seq: Sequence): MenuEntry[] {
       shortcut: 'N',
       checked: snapping,
       onSelect: () => useApp.setState({ snapping: !snapping }),
+    },
+    {
+      label: 'Preview engine',
+      icon: <MonitorPlay size={I} />,
+      submenu: [
+        {
+          label: 'GPU — frame-accurate',
+          checked: useApp.getState().previewEngine === 'gpu',
+          onSelect: () => useApp.getState().setPreviewEngine('gpu'),
+        },
+        {
+          label: 'Compatible',
+          checked: useApp.getState().previewEngine === 'compatible',
+          onSelect: () => useApp.getState().setPreviewEngine('compatible'),
+        },
+      ],
     },
     {
       label: 'Sequence settings…',

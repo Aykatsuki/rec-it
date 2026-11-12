@@ -2,11 +2,15 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Maximize2, Pause, Play, SkipBack, SkipForward, StepBack, StepForward } from 'lucide-react';
 import {
   computeLayout,
+  sourceTimeAt,
   volumeAt,
   type Sequence,
   type TimelineItem,
   type Track,
+  type Transform,
 } from '@rec-it/core';
+import { PreviewEngine, gpuPreviewSupported, type EngineLayer } from '../engine/preview-engine';
+import { notify } from '../notifications';
 import type { MediaAsset } from '@rec-it/ipc-contract';
 import { IconButton } from '@rec-it/ui';
 import { itemEndSec, sequenceSeconds, toFlicks, toSeconds } from '../edit';
@@ -66,9 +70,9 @@ export function stepFrames(seq: Sequence, frames: number): void {
 }
 
 /**
- * Timeline preview (interim engine, ADR-025): one media element per clip near the playhead,
- * positioned with the same layout maths as export, kept in sync with a wall-clock playhead.
- * Frame-accurate WebCodecs compositing replaces this later in Phase 2.
+ * Timeline preview. The GPU engine (ADR-029) decodes proxies with WebCodecs and composites with
+ * WebGL2, frame-accurately; sound still plays through media elements kept in sync with the
+ * playhead. The compatible engine (ADR-025) uses one media element per clip and is the fallback.
  */
 export function ProgramMonitor({ seq }: { seq: Sequence }) {
   const assets = useApp((s) => s.assets);
@@ -76,6 +80,9 @@ export function ProgramMonitor({ seq }: { seq: Sequence }) {
   const playing = useApp((s) => s.playing);
   const rate = useApp((s) => s.rate);
   const draft = useApp((s) => s.draftTransform);
+  const engineChoice = useApp((s) => s.previewEngine);
+  const [gpuFailed, setGpuFailed] = useState(false);
+  const gpu = engineChoice === 'gpu' && !gpuFailed && gpuSupported;
   const well = useRef<HTMLDivElement>(null);
   const elements = useRef(new Map<string, HTMLMediaElement>());
   /** Clips that were on screen at the last sync, to spot ones that have just appeared. */
@@ -204,8 +211,26 @@ export function ProgramMonitor({ seq }: { seq: Sequence }) {
           className="program-stage"
           style={{ width: box.w, height: box.h }}
           data-testid="program-monitor"
+          data-engine={gpu ? 'gpu' : 'compatible'}
         >
           <div className="program">
+            {gpu && (
+              <GpuCanvas
+                seq={seq}
+                mounted={mounted}
+                playhead={playhead}
+                playing={playing}
+                draft={draft}
+                box={box}
+                onFail={(error) => {
+                  setGpuFailed(true);
+                  notify(
+                    `The GPU preview could not start (${error.message}). Using the compatible preview.`,
+                    'warn',
+                  );
+                }}
+              />
+            )}
             {mounted.map((m) => {
               const start = toSeconds(m.item.start);
               const active = playhead >= start && playhead < itemEndSec(m.item);
@@ -232,6 +257,17 @@ export function ProgramMonitor({ seq }: { seq: Sequence }) {
                     opacity: visible ? 1 : 0,
                   }
                 : undefined;
+              if (gpu && m.track.kind === 'video') {
+                // The GPU engine draws pictures; a video clip's sound still plays from an element.
+                return m.asset.kind === 'video' && m.asset.urls.proxy ? (
+                  <audio
+                    key={m.item.id}
+                    ref={register(m.item.id)}
+                    src={m.asset.urls.proxy}
+                    preload="auto"
+                  />
+                ) : null;
+              }
               if (m.asset.kind === 'image') {
                 const src = m.asset.urls.still ?? m.asset.urls.poster;
                 return src ? (
@@ -336,4 +372,99 @@ export function ProgramMonitor({ seq }: { seq: Sequence }) {
       </footer>
     </>
   );
+}
+
+const gpuSupported = gpuPreviewSupported();
+
+function GpuCanvas({
+  seq,
+  mounted,
+  playhead,
+  playing,
+  draft,
+  box,
+  onFail,
+}: {
+  seq: Sequence;
+  mounted: Mounted[];
+  playhead: number;
+  playing: boolean;
+  draft: { itemId: string; transform: Transform } | null;
+  box: { w: number; h: number };
+  onFail: (error: Error) => void;
+}) {
+  const canvas = useRef<HTMLCanvasElement>(null);
+  const engine = useRef<PreviewEngine | null>(null);
+  const failed = useRef(false);
+  const fail = (error: unknown) => {
+    if (failed.current) return;
+    failed.current = true;
+    onFail(error instanceof Error ? error : new Error(String(error)));
+  };
+
+  useEffect(() => {
+    try {
+      engine.current = new PreviewEngine(canvas.current!);
+    } catch (error) {
+      fail(error);
+    }
+    return () => {
+      engine.current?.dispose();
+      engine.current = null;
+    };
+    // The engine lives as long as the canvas.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    const e = engine.current;
+    if (!e || !box.w || !box.h) return;
+    const now = toFlicks(playhead);
+    const layers: EngineLayer[] = [];
+    for (const m of [...mounted].sort((a, b) => a.layer - b.layer)) {
+      const active = now >= m.item.start && now < m.item.start + m.item.duration;
+      const v = m.asset.probe?.video;
+      if (!active || m.track.kind !== 'video' || m.track.hidden || !v) continue;
+      const transform = transformFor(m.item, draft, playhead);
+      if (m.asset.kind === 'image') {
+        const url = m.asset.urls.still ?? m.asset.urls.poster;
+        if (url)
+          layers.push({
+            key: m.item.id,
+            kind: 'image',
+            url,
+            sourceTime: 0,
+            width: v.displayWidth,
+            height: v.displayHeight,
+            transform,
+          });
+      } else if (m.asset.kind === 'video' && m.asset.urls.proxy) {
+        layers.push({
+          key: m.item.id,
+          kind: 'video',
+          url: m.asset.urls.proxy,
+          sourceTime: toSeconds(sourceTimeAt(m.item, now)),
+          width: v.displayWidth,
+          height: v.displayHeight,
+          transform,
+        });
+      }
+    }
+    e.retain(new Set(mounted.map((m) => m.item.id)));
+    const dpr = window.devicePixelRatio || 1;
+    const at = playhead.toFixed(3);
+    e.render(
+      { width: seq.width, height: seq.height },
+      layers,
+      { w: Math.round(box.w * dpr), h: Math.round(box.h * dpr) },
+      playing,
+    )
+      .then((drawn) => {
+        if (drawn && canvas.current) canvas.current.dataset.time = at;
+      })
+      .catch(fail);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [seq, mounted, playhead, playing, draft, box]);
+
+  return <canvas ref={canvas} className="program__canvas" data-testid="program-canvas" />;
 }

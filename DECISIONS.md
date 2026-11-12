@@ -11,7 +11,7 @@ Each record states the decision, why it was made and what else was considered. R
 | 005 | Flicks as the unit of timeline time | Accepted |
 | 006 | Normalised proxies for all preview playback | Accepted |
 | 007 | FFmpeg build and licensing: GPL, open source | Accepted |
-| 008 | Custom WebCodecs + WebGL2 preview engine | Accepted |
+| 008 | Custom WebCodecs + WebGL2 preview engine | Accepted (first version: ADR-029) |
 | 009 | Claude analyses signals, transcripts and frames, not raw video | Accepted |
 | 010 | Local transcription with faster-whisper | Accepted |
 | 011 | Captions as ASS rendered by libass in preview and export | Accepted |
@@ -32,6 +32,7 @@ Each record states the decision, why it was made and what else was considered. R
 | 026 | Direct manipulation, context menus and an effects phase | Accepted |
 | 027 | Export settings, two-pass loudness and preview/export parity | Accepted |
 | 028 | Export folder, linked clips and keyframes | Accepted |
+| 029 | GPU preview engine (WebCodecs + WebGL2), first version | Accepted |
 
 ---
 
@@ -370,3 +371,18 @@ Each record states the decision, why it was made and what else was considered. R
 - **Keyframes.** `x`, `y`, `scale`, `rotation` and `volume` can be keyframed; each keyframe has a value and an easing (linear, ease = smoothstep, hold) towards the next. Keyframe times are stored in *source* time, so animation stays on the same picture when a clip is trimmed or split. A property with keyframes ignores its static value; setting a static value (Reset, Fill/Fit buttons excluded) removes that property's animation; removing the last keyframe keeps its value. Editing an animated property (slider or preview drag) sets a keyframe at the playhead — one undo step per gesture.
 - **Keyframed export.** FFmpeg filter graphs cannot change frame size mid-stream, so an animated layer is scaled once to its largest size (capped at 4096 px), centred on a transparent canvas big enough for every size and angle (capped at 8192 px), and moved per frame by `perspective` with expressions for its corners (an affine map is a special case of perspective). The overlay places the canvas centre at the animated position. Volume keyframes become a per-frame `volume` expression. Expressions are generated from the same keyframes and match `valueAt` exactly (unit-tested); the parity suite includes a keyframed case (SSIM 0.987). Static clips keep the simpler path, so existing exports are unchanged (argument snapshots).
 - **Bugs fixed on the way:** inspector sliders never committed (their live preview made every value look unchanged), and the frame-step shortcut stole arrow keys from focused sliders.
+
+---
+
+## ADR-029 · GPU preview engine (WebCodecs + WebGL2), first version
+
+**Status.** Accepted (12 Nov 2026, Phase 2 fourth slice). Implements most of ADR-008; supersedes the interim engine of ADR-025 as the default.
+
+**Decisions.**
+- **Decoding.** `VideoSource` opens a proxy with mp4box.js (BSD-3-Clause), reading only the movie header with growing range requests over `recit-media://`, then fetches one group of pictures at a time (the proxies' keyframe interval is 12 and they have no B-frames, so decode order is display order). Seeks restart at the keyframe before the target; sequential requests (playback, stepping forward) continue the running decoder. A few decoded frames and a few blocks are cached. Edit lists are honoured when mapping sample times to presentation time.
+- **Compositing.** `Compositor` draws each layer as a textured quad in WebGL2, placing it with `computeLayout` and the rotation exactly as the export does; textures are mipmapped so large downscales stay smooth. The canvas keeps its last frame, so the picture never blanks while decoding.
+- **Engine.** `PreviewEngine.render(time)` decodes every visible layer and draws when all are ready; a newer request abandons an older one. During playback a layer whose frame is more than 50 ms late keeps its previous picture so time keeps moving. Decoders for clips far from the playhead are closed.
+- **Audio** still plays through media elements synced to the playhead (as in ADR-025). Web Audio with the audio clock as master is the next step.
+- **Fallback.** If WebCodecs or WebGL2 is unavailable or the engine fails, the compatible media-element engine is used automatically (with a notice); it can also be chosen from the preview's right-click menu. End-to-end tests run Chromium's software WebGL (`--enable-unsafe-swiftshader`) so the GPU path is tested in CI.
+- **Tests.** A frame-accuracy test uses a fixture whose frames each have a different brightness and checks the exact frame after stepping forward, backward and jumping; the parity suite now runs against the GPU engine (SSIM 0.995–0.997).
+- **Proxy frame-rate fix.** The proxy rate picked the *first* standard rate within 1% instead of the nearest, so 24, 30 and 60 fps footage got 23.976, 29.97 and 59.94 fps proxies: the preview drifted by a frame every ~33 s. The nearest rate is now used. Proxies are now named `proxy-v2.mp4`; projects with older proxies regenerate them automatically (which also applies the BT.709 tagging of ADR-027) and the old file is deleted.

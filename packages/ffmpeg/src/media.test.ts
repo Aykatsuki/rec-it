@@ -122,7 +122,8 @@ describe('parseProbe', () => {
 
 describe('recipes', () => {
   it('snaps proxy frame rates to standard rates', () => {
-    expect(proxyFrameRate(parseProbe(PHONE))).toEqual({ num: 30000, den: 1001 });
+    // Nominal 30 fps (average 29.97): the nearest standard rate to the nominal rate is 30.
+    expect(proxyFrameRate(parseProbe(PHONE))).toEqual({ num: 30, den: 1 });
     const odd = parseProbe({
       streams: [
         {
@@ -137,12 +138,34 @@ describe('recipes', () => {
       format: { format_name: 'mp4', duration: '1' },
     });
     expect(proxyFrameRate(odd)).toEqual({ num: 15, den: 1 });
+    // Exact rates stay exact: 30 must not become 29.97 (the nearest rate wins, not the first).
+    const at = (r: string) =>
+      proxyFrameRate(
+        parseProbe({
+          streams: [
+            {
+              codec_type: 'video',
+              codec_name: 'h264',
+              width: 2,
+              height: 2,
+              r_frame_rate: r,
+              avg_frame_rate: r,
+            },
+          ],
+          format: { format_name: 'mp4', duration: '1' },
+        }),
+      );
+    expect(at('30/1')).toEqual({ num: 30, den: 1 });
+    expect(at('24/1')).toEqual({ num: 24, den: 1 });
+    expect(at('60/1')).toEqual({ num: 60, den: 1 });
+    expect(at('60000/1001')).toEqual({ num: 60000, den: 1001 });
+    expect(at('2997/100')).toEqual({ num: 30000, den: 1001 });
   });
 
   it('builds proxy arguments with CFR, short GOP, tonemapping and faststart', () => {
     const args = proxyArgs('in.mov', 'out.mp4', parseProbe(PHONE), 'h264_nvenc');
     const joined = args.join(' ');
-    expect(joined).toContain('-fps_mode cfr -r 30000/1001');
+    expect(joined).toContain('-fps_mode cfr -r 30/1');
     expect(joined).toContain('-c:v h264_nvenc');
     expect(joined).toContain('-g 12');
     expect(joined).toContain('tonemap=tonemap=hable');

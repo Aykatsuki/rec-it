@@ -5,7 +5,7 @@ ARCHITECTURE.md, ROADMAP.md and DECISIONS.md before making design changes.
 
 ## Current phase
 
-Phases 0 (foundations) and 1 (media pipeline) are complete. Phase 3 (export, ADR-027) is built; manual checks on the reference PC remain. Phase 2 has three slices done (timeline, interim preview, mouse transforms, context menus, linked clips, keyframes; ADR-025, ADR-026, ADR-028); the WebCodecs/WebGL2 preview engine comes next. Priority: a fully working editor
+Phases 0 (foundations) and 1 (media pipeline) are complete. Phase 3 (export, ADR-027) is built; manual checks on the reference PC remain. Phase 2 has four slices done (timeline, mouse transforms, context menus, linked clips, keyframes, GPU preview engine; ADR-025, ADR-026, ADR-028, ADR-029); Web Audio playback and the exit-criteria measurements come next. Priority: a fully working editor
 (Phases 0–6, Phase 6 = effects) before any Claude features (ADR-019). Reference machine: Windows 11 + RTX 3070 8 GB.
 
 ## Commands
@@ -25,7 +25,8 @@ Phases 0 (foundations) and 1 (media pipeline) are complete. Phase 3 (export, ADR
   proxy/thumbnail/waveform jobs, relink), `services/jobs.ts` (JobQueue with per-kind concurrency).
 - `apps/desktop/src/main/media-protocol.ts` — serves the media cache over `recit-media://` (allow-listed
   files, range requests). Pure helpers in `media-paths.ts`.
-- `apps/desktop/src/renderer` — React UI. No Node, no Electron imports.
+- `apps/desktop/src/renderer` — React UI. No Node, no Electron imports. `engine/` is the GPU preview:
+  `video-source.ts` (mp4box + WebCodecs, range reads), `compositor.ts` (WebGL2), `preview-engine.ts`.
 - `packages/ipc-contract` — every channel and event with zod schemas; typed client/server.
 - `packages/core` — pure domain logic: flicks time maths, timeline model, commands, Immer undo/redo history,
   keyframe interpolation (`valueAt`, `transformAt`, `volumeAt`; keyframe times are *source* time).

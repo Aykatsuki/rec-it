@@ -26,7 +26,12 @@ export async function launch(
 ): Promise<Launched> {
   const app = await electron.launch({
     // Chromium checks --no-sandbox before any app code runs, so it must be a real argument.
-    args: [appDir, ...(process.platform === 'linux' && process.env.CI ? ['--no-sandbox'] : [])],
+    args: [
+      appDir,
+      ...(process.platform === 'linux' && process.env.CI ? ['--no-sandbox'] : []),
+      // CI machines have no GPU; let Chromium use its software WebGL so the GPU preview runs.
+      '--enable-unsafe-swiftshader',
+    ],
     env: {
       ...process.env,
       RECIT_E2E: '1',

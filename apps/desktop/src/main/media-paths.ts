@@ -3,7 +3,7 @@ import { join } from 'node:path';
 
 /** The only files the protocol will serve, with their content types. */
 export const MEDIA_FILES: Readonly<Record<string, string>> = {
-  'proxy.mp4': 'video/mp4',
+  'proxy-v2.mp4': 'video/mp4',
   'proxy.m4a': 'audio/mp4',
   'still.jpg': 'image/jpeg',
   'poster.jpg': 'image/jpeg',
