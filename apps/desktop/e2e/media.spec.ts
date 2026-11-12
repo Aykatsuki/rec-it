@@ -15,7 +15,7 @@ test.describe('media pipeline', () => {
     fx = makeFixtures(bins!.ffmpeg, { longSeconds: 90 });
   });
   test.afterAll(() => {
-    if (fx) rmSync(fx.dir, { recursive: true, force: true });
+    if (fx) rmSync(fx.dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 500 });
   });
 
   const env = (): Record<string, string> =>
@@ -114,8 +114,10 @@ test.describe('media pipeline', () => {
     );
 
     // Hard kill: no clean shutdown at all.
+    // Only the main process is killed: the backend must notice and stop FFmpeg by itself,
+    // otherwise leftovers block the app from starting again on Windows.
     app.process().kill('SIGKILL');
-    await new Promise((r) => setTimeout(r, 500));
+    await new Promise((r) => setTimeout(r, 3000));
 
     ({ app, page } = await launch(userData, env()));
     try {

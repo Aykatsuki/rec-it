@@ -1,4 +1,5 @@
 // Backend entry point, run by Electron as a utilityProcess (ADR-001).
+import { killAllFfmpeg } from '@rec-it/ffmpeg';
 import type { PortLike, SecretName } from '@rec-it/ipc-contract';
 import type { BackendToMain, MainToBackend } from '../shared/backend-messages';
 import { BackendApp } from './app';
@@ -65,3 +66,19 @@ process.on('uncaughtException', (error) => {
 process.on('SIGTERM', () => {
   void (app?.dispose() ?? Promise.resolve()).finally(() => process.exit(0));
 });
+
+// If the main process dies without shutting us down (a crash, or killed from Task Manager),
+// stop FFmpeg and exit. On Windows child processes are not killed with their parent, and
+// leftovers would keep files locked and block Rec-It from starting again.
+const parentPid = process.ppid;
+setInterval(() => {
+  try {
+    process.kill(parentPid, 0);
+  } catch {
+    console.error('main process has gone; stopping');
+    killAllFfmpeg();
+    process.exit(1);
+  }
+}, 500).unref();
+
+process.on('exit', () => killAllFfmpeg());

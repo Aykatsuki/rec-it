@@ -291,3 +291,27 @@ describe.skipIf(!ffmpeg)('media pipeline with real FFmpeg', () => {
     expect(existsSync(out) ? statSync(out).size : 0).toBeGreaterThanOrEqual(0);
   }, 60_000);
 });
+
+describe.skipIf(!ffmpeg)('killAllFfmpeg', () => {
+  it('stops every running FFmpeg process', async () => {
+    const { killAllFfmpeg } = await import('./process');
+    const runs = [1, 2].map(() =>
+      runFfmpeg(ffmpeg!.ffmpeg, [
+        '-re',
+        '-f',
+        'lavfi',
+        '-i',
+        'testsrc2=d=60',
+        '-f',
+        'null',
+        '-',
+      ]).catch((e: unknown) => e),
+    );
+    await new Promise((r) => setTimeout(r, 500));
+    const t0 = Date.now();
+    killAllFfmpeg();
+    const results = await Promise.all(runs);
+    expect(Date.now() - t0).toBeLessThan(2000);
+    expect(results.every((r) => r instanceof Error)).toBe(true);
+  }, 30_000);
+});

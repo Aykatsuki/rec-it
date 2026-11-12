@@ -1,4 +1,13 @@
-import { spawn } from 'node:child_process';
+import { spawn, type ChildProcess } from 'node:child_process';
+
+/** Every FFmpeg process currently running, so they can all be stopped if the app dies. */
+const running = new Set<ChildProcess>();
+
+/** Kills all running FFmpeg processes immediately. Safe to call from an 'exit' handler. */
+export function killAllFfmpeg(): void {
+  for (const child of running) child.kill('SIGKILL');
+  running.clear();
+}
 import { createInterface } from 'node:readline';
 
 export class FfmpegError extends Error {
@@ -66,6 +75,7 @@ export function runFfmpeg(
       windowsHide: true,
       stdio: ['ignore', 'pipe', 'pipe'],
     });
+    running.add(child);
     let stderrTail = '';
     let cancelled = false;
 
@@ -96,10 +106,12 @@ export function runFfmpeg(
     });
 
     child.on('error', (error) => {
+      running.delete(child);
       signal?.removeEventListener('abort', onAbort);
       reject(error);
     });
     child.on('close', (code) => {
+      running.delete(child);
       signal?.removeEventListener('abort', onAbort);
       if (cancelled) return reject(new CancelledError());
       if (code === 0) {
