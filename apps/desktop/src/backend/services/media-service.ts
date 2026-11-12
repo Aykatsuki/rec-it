@@ -34,6 +34,8 @@ import { JobQueue, type JobContext, type JobUpdate } from './jobs';
 export interface Toolchain {
   bins: FfmpegBinaries;
   encoder: H264Encoder;
+  /** HDR tone-mapping is available (FFmpeg built with zimg). */
+  tonemap: boolean;
 }
 
 export interface MediaServiceOptions {
@@ -319,7 +321,7 @@ export class MediaService {
     const row = this.row(assetId);
     if (!existsSync(row.originalPath))
       throw new Error('The original file is missing. Use "Locate" to find it.');
-    const { bins, encoder } = await this.o.toolchain();
+    const { bins, encoder, tonemap } = await this.o.toolchain();
     const dir = this.assetDir(assetId);
     await mkdir(dir, { recursive: true });
 
@@ -350,7 +352,7 @@ export class MediaService {
 
     if (kind === 'proxy') {
       await write(FILES.proxy, (tmp) =>
-        runFfmpeg(bins.ffmpeg, proxyArgs(row.originalPath, tmp, probe, encoder), {
+        runFfmpeg(bins.ffmpeg, proxyArgs(row.originalPath, tmp, probe, encoder, { tonemap }), {
           signal: ctx.signal,
           durationSec: probe.durationSec,
           onProgress: ctx.progress,

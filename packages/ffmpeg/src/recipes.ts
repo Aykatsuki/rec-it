@@ -79,15 +79,21 @@ function encoderArgs(encoder: H264Encoder): string[] {
 const TONEMAP =
   'zscale=t=linear:npl=100,format=gbrpf32le,zscale=p=bt709,tonemap=tonemap=hable:desat=0,zscale=t=bt709:m=bt709:r=tv';
 
+export interface ProxyOptions {
+  /** Tone-map HDR to SDR (needs FFmpeg built with zimg). Without it HDR proxies look washed out. */
+  tonemap?: boolean;
+}
+
 export function proxyArgs(
   input: string,
   output: string,
   probe: ProbeInfo,
   encoder: H264Encoder,
+  options: ProxyOptions = { tonemap: true },
 ): string[] {
   const rate = proxyFrameRate(probe);
   const filters: string[] = [];
-  if (probe.video?.hdr) filters.push(TONEMAP);
+  if (probe.video?.hdr && options.tonemap) filters.push(TONEMAP);
   // FFmpeg auto-rotates phone footage, so the proxy is stored upright.
   filters.push(
     `scale=w='min(${PROXY_LONG_EDGE},iw)':h='min(${PROXY_LONG_EDGE},ih)':force_original_aspect_ratio=decrease:force_divisible_by=2`,

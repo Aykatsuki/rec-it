@@ -13,7 +13,7 @@ import {
   spriteLayout,
   waveformPcmArgs,
 } from './recipes';
-import { findTestFfmpeg, makeFixtures, type Fixtures } from './testing';
+import { findTestFfmpeg, hasFilter, makeFixtures, type Fixtures } from './testing';
 
 const PHONE = {
   streams: [
@@ -225,7 +225,8 @@ describe.skipIf(!ffmpeg)('media pipeline with real FFmpeg', () => {
       const probe = await probeFile(ffmpeg!.ffprobe, input);
       const out = join(fx.dir, `${name}.proxy.mp4`);
       const progress: number[] = [];
-      await runFfmpeg(ffmpeg!.ffmpeg, proxyArgs(input, out, probe, 'libx264'), {
+      const tonemap = hasFilter(ffmpeg!.ffmpeg, 'zscale');
+      await runFfmpeg(ffmpeg!.ffmpeg, proxyArgs(input, out, probe, 'libx264', { tonemap }), {
         durationSec: probe.durationSec,
         onProgress: (p) => progress.push(p),
       });

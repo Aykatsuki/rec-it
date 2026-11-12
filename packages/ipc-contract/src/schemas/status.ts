@@ -16,6 +16,7 @@ export const ffmpegStatusSchema = z.object({
   /** Result of a real one-frame NVENC test encode; null when NVENC is not compiled in. */
   nvencUsable: z.boolean().nullable().default(null),
   hasLibass: z.boolean().default(false),
+  hasZimg: z.boolean().default(false),
   message: z.string().optional(),
 });
 export type FfmpegStatus = z.output<typeof ffmpegStatusSchema>;

@@ -23,6 +23,11 @@ export function findTestFfmpeg(): FfmpegBinaries | null {
   }
 }
 
+export function hasFilter(ffmpeg: string, name: string): boolean {
+  const out = execFileSync(ffmpeg, ['-hide_banner', '-filters'], { encoding: 'utf8' });
+  return new RegExp(`\\s${name}\\s`).test(out);
+}
+
 function hasEncoder(ffmpeg: string, name: string): boolean {
   const out = execFileSync(ffmpeg, ['-hide_banner', '-encoders'], { encoding: 'utf8' });
   return new RegExp(`\\s${name}\\s`).test(out);

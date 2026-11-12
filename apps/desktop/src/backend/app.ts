@@ -59,6 +59,7 @@ export class BackendApp {
     hwaccels: [],
     nvencUsable: null,
     hasLibass: false,
+    hasZimg: false,
   };
   private ffmpegBins: FfmpegBinaries;
   private sidecarStatus: SidecarStatus = { state: 'checking', gpus: [] };
@@ -185,7 +186,7 @@ export class BackendApp {
           'FFmpeg is not available. Run "pnpm fetch-ffmpeg" and restart Rec-It.',
       );
     }
-    return { bins: this.ffmpegBins, encoder };
+    return { bins: this.ffmpegBins, encoder, tonemap: this.ffmpeg.hasZimg };
   }
 
   status(): SystemStatus {

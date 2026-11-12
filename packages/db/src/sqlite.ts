@@ -11,13 +11,19 @@ export interface OpenOptions {
 /** Opens a SQLite database with the pragmas Rec-It relies on. Use ":memory:" in tests. */
 export function openDatabase(path: string, options: OpenOptions = {}): Database {
   const db = new DatabaseSync(path, { readOnly: options.readOnly ?? false });
-  db.exec('PRAGMA foreign_keys = ON;');
-  if (path !== ':memory:' && !options.readOnly) {
-    // WAL gives crash safety and lets readers proceed during writes (ARCHITECTURE §17).
-    db.exec('PRAGMA journal_mode = WAL;');
-    db.exec('PRAGMA synchronous = NORMAL;');
+  try {
+    db.exec('PRAGMA foreign_keys = ON;');
+    if (path !== ':memory:' && !options.readOnly) {
+      // WAL gives crash safety and lets readers proceed during writes (ARCHITECTURE §17).
+      db.exec('PRAGMA journal_mode = WAL;');
+      db.exec('PRAGMA synchronous = NORMAL;');
+    }
+    db.exec('PRAGMA busy_timeout = 5000;');
+  } catch (error) {
+    // Not a database (or unreadable): release the file handle, which Windows would keep locked.
+    db.close();
+    throw error;
   }
-  db.exec('PRAGMA busy_timeout = 5000;');
   return db;
 }
 

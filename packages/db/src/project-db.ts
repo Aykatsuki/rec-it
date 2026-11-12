@@ -135,8 +135,13 @@ export class ProjectDatabase {
     let db: Database;
     try {
       db = openDatabase(path);
+    } catch {
+      throw new ProjectFileError('This file is not a Rec-It project.');
+    }
+    try {
       db.prepare('SELECT 1 FROM sqlite_master LIMIT 1').get();
     } catch {
+      db.close();
       throw new ProjectFileError('This file is not a Rec-It project.');
     }
     try {
