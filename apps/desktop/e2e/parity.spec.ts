@@ -28,8 +28,12 @@ function ssim(ffmpeg: string, a: string, b: string): number {
       '-i',
       b,
       '-filter_complex',
-      // The outer 2 px are left out: the preview box is rounded to whole CSS pixels.
-      '[0:v]crop=iw-4:ih-4:2:2,format=yuv420p[x];[1:v]crop=iw-4:ih-4:2:2,format=yuv420p[y];[x][y]ssim',
+      // The outer 2 px are left out (the preview box is rounded to whole CSS pixels), and both
+      // images get the same light blur so that differences between the browser's and FFmpeg's
+      // scalers on each OS do not count. A clip one frame off or showing a stale frame still
+      // scores well below the threshold (ADR-027).
+      '[0:v]crop=iw-4:ih-4:2:2,format=yuv420p,gblur=sigma=1.5[x];' +
+        '[1:v]crop=iw-4:ih-4:2:2,format=yuv420p,gblur=sigma=1.5[y];[x][y]ssim',
       '-f',
       'null',
       '-',
