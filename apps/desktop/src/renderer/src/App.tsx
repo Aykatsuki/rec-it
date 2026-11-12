@@ -8,10 +8,15 @@ import { LeftRail } from './layout/LeftRail';
 import { Preview } from './layout/Preview';
 import { RightPanel } from './layout/RightPanel';
 import { StatusBar } from './layout/StatusBar';
-import { Timeline } from './layout/Timeline';
+import { Timeline } from './timeline/Timeline';
+import { ExportDialogHost, openExportDialog } from './timeline/ExportDialog';
+import { SequenceSettingsHost } from './timeline/SequenceSettings';
+import { stepFrames, togglePlay } from './timeline/ProgramMonitor';
+import { deleteSelected, redo, sequenceSeconds, splitAtPlayhead, undo } from './edit';
+import { activeSequence } from './store';
 import { TopBar } from './layout/TopBar';
 import { RightsDialogHost } from './media/RightsDialog';
-import { Toasts } from './notifications';
+import { notify, Toasts } from './notifications';
 import { Welcome } from './project/Welcome';
 import { SettingsDialog, type SettingsTab } from './settings/SettingsDialog';
 import { startBackendSync, useApp } from './store';
@@ -36,6 +41,8 @@ export function App() {
         onClose={() => setSettingsTab(null)}
       />
       <RightsDialogHost />
+      <SequenceSettingsHost />
+      <ExportDialogHost />
       <Toasts />
       {dragging && (
         <div className="drop-overlay" aria-hidden>
@@ -87,26 +94,70 @@ function Workspace() {
 function useShortcuts() {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      const inField = !!(e.target as HTMLElement).closest(
-        'input, textarea, select, [contenteditable]',
+      const target = e.target as HTMLElement;
+      const inField = !!target.closest(
+        'input:not([type=range]), textarea, select, [contenteditable], dialog',
       );
       const mod = e.ctrlKey || e.metaKey;
-      const { project, selectedAssetId } = useApp.getState();
-      if (mod && e.key.toLowerCase() === 'i' && project) {
+      const key = e.key.toLowerCase();
+      const state = useApp.getState();
+      const { project, selectedAssetId, selectedItemIds, focus, monitor } = state;
+      const seq = activeSequence(state);
+
+      if (mod && key === 'i' && project) {
         e.preventDefault();
         void importWithDialog();
-      } else if (mod && e.key.toLowerCase() === 'o') {
+      } else if (mod && key === 'o') {
         e.preventDefault();
         void openProjectWithDialog();
-      } else if (mod && e.key.toLowerCase() === 'n') {
+      } else if (mod && key === 'n') {
         e.preventDefault();
         void backend.invoke('project.close', {});
-      } else if (mod && e.shiftKey && e.key.toLowerCase() === 's') {
+      } else if (mod && e.shiftKey && key === 's') {
         e.preventDefault();
         void saveProjectAs();
-      } else if (!inField && (e.key === 'Delete' || e.key === 'Backspace') && selectedAssetId) {
+      } else if (mod && key === 'e' && project && sequenceSeconds(seq) > 0) {
         e.preventDefault();
-        void backend.invoke('media.remove', { assetIds: [selectedAssetId] });
+        openExportDialog();
+      } else if (inField) {
+        return;
+      } else if (mod && (key === 'y' || (key === 'z' && e.shiftKey))) {
+        e.preventDefault();
+        void redo();
+      } else if (mod && key === 'z') {
+        e.preventDefault();
+        void undo();
+      } else if (e.key === 'Delete' || e.key === 'Backspace') {
+        e.preventDefault();
+        if (focus === 'timeline' && selectedItemIds.length) void deleteSelected(e.shiftKey);
+        else if (selectedAssetId)
+          void backend
+            .invoke('media.remove', { assetIds: [selectedAssetId] })
+            .catch((err: unknown) => notify(String((err as Error).message ?? err), 'warn'));
+      } else if (!seq || monitor === 'source') {
+        return;
+      } else if (e.code === 'Space') {
+        e.preventDefault();
+        togglePlay(seq);
+      } else if (key === 's' && !mod) {
+        e.preventDefault();
+        void splitAtPlayhead();
+      } else if (key === 'n' && !mod) {
+        useApp.setState({ snapping: !state.snapping });
+      } else if (e.key === 'ArrowLeft') {
+        e.preventDefault();
+        stepFrames(seq, e.shiftKey ? -10 : -1);
+      } else if (e.key === 'ArrowRight') {
+        e.preventDefault();
+        stepFrames(seq, e.shiftKey ? 10 : 1);
+      } else if (e.key === 'Home') {
+        state.setPlayhead(0);
+      } else if (e.key === 'End') {
+        state.setPlayhead(sequenceSeconds(seq));
+      } else if (e.key === '+' || e.key === '=') {
+        state.setZoom(state.zoom * 1.5);
+      } else if (e.key === '-') {
+        state.setZoom(state.zoom / 1.5);
       }
     };
     window.addEventListener('keydown', onKey);

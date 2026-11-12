@@ -1,5 +1,12 @@
 import { create } from 'zustand';
-import type { JobSummary, MediaAsset, ProjectInfo } from '@rec-it/ipc-contract';
+import type { Sequence } from '@rec-it/core';
+import type {
+  DocumentState,
+  ExportState,
+  JobSummary,
+  MediaAsset,
+  ProjectInfo,
+} from '@rec-it/ipc-contract';
 import { backend } from './api';
 
 interface AppState {
@@ -8,26 +15,79 @@ interface AppState {
   project: ProjectInfo | null | undefined;
   assets: MediaAsset[];
   jobs: JobSummary[];
+  docState: DocumentState | null;
+  exportState: ExportState;
+
   selectedAssetId: string | null;
+  selectedItemIds: string[];
+  /** Which part of the UI keyboard shortcuts (Delete) act on. */
+  focus: 'media' | 'timeline';
+  /** What the preview shows: the selected media item, or the timeline. */
+  monitor: 'source' | 'program';
+  /** Timeline playhead in seconds. */
+  playhead: number;
+  playing: boolean;
+  /** Timeline zoom in pixels per second. */
+  zoom: number;
+  snapping: boolean;
   mediaView: 'grid' | 'list';
+
   select(id: string | null): void;
+  selectItems(ids: string[]): void;
+  setPlayhead(seconds: number): void;
+  setPlaying(playing: boolean): void;
+  setZoom(pps: number): void;
   setMediaView(view: 'grid' | 'list'): void;
 }
+
+const stored = (key: string) => {
+  try {
+    return localStorage.getItem(key);
+  } catch {
+    return null;
+  }
+};
+const store = (key: string, value: string) => {
+  try {
+    localStorage.setItem(key, value);
+  } catch {
+    // Storage can be unavailable; the setting simply is not remembered.
+  }
+};
 
 export const useApp = create<AppState>((set) => ({
   connected: false,
   project: undefined,
   assets: [],
   jobs: [],
+  docState: null,
+  exportState: { state: 'idle', progress: 0 },
   selectedAssetId: null,
-  mediaView: (localStorage.getItem('recit.mediaView') as 'grid' | 'list' | null) ?? 'grid',
-  select: (id) => set({ selectedAssetId: id }),
+  selectedItemIds: [],
+  focus: 'media',
+  monitor: 'program',
+  playhead: 0,
+  playing: false,
+  zoom: Number(stored('recit.zoom')) || 80,
+  snapping: true,
+  mediaView: (stored('recit.mediaView') as 'grid' | 'list' | null) ?? 'grid',
+  select: (id) =>
+    set({
+      selectedAssetId: id,
+      focus: 'media',
+      monitor: id ? 'source' : 'program',
+      playing: false,
+    }),
+  selectItems: (ids) => set({ selectedItemIds: ids, focus: 'timeline', monitor: 'program' }),
+  setPlayhead: (seconds) => set({ playhead: Math.max(0, seconds), monitor: 'program' }),
+  setPlaying: (playing) => set({ playing, ...(playing ? { monitor: 'program' as const } : {}) }),
+  setZoom: (pps) => {
+    const zoom = Math.min(600, Math.max(4, pps));
+    store('recit.zoom', String(zoom));
+    set({ zoom });
+  },
   setMediaView: (view) => {
-    try {
-      localStorage.setItem('recit.mediaView', view);
-    } catch {
-      // Storage can be unavailable; the view simply is not remembered.
-    }
+    store('recit.mediaView', view);
     set({ mediaView: view });
   },
 }));
@@ -35,22 +95,42 @@ export const useApp = create<AppState>((set) => ({
 export const useSelectedAsset = () =>
   useApp((s) => s.assets.find((a) => a.id === s.selectedAssetId) ?? null);
 
+export function activeSequence(state: Pick<AppState, 'docState'>): Sequence | null {
+  const doc = state.docState?.doc;
+  if (!doc) return null;
+  return (doc.sequences.find((s) => s.id === doc.activeSequenceId) ??
+    doc.sequences[0] ??
+    null) as Sequence | null;
+}
+export const useSequence = () => useApp((s) => activeSequence(s));
+
 /** Connects the store to backend events once, at start-up. */
 export function startBackendSync(): () => void {
   const load = async () => {
-    const [project, assets, jobs] = await Promise.all([
+    const [project, assets, jobs, exportState] = await Promise.all([
       backend.invoke('project.current', {}),
       backend.invoke('media.list', {}),
       backend.invoke('jobs.list', {}),
+      backend.invoke('export.status', {}),
     ]);
-    useApp.setState({ project, assets, jobs });
+    const docState = project ? await backend.invoke('doc.get', {}) : null;
+    useApp.setState({ project, assets, jobs, docState, exportState });
   };
   const offs = [
     backend.onConnectionChange((connected) => {
       useApp.setState({ connected });
       if (connected) void load();
     }),
-    backend.on('project.changed', (project) => useApp.setState({ project, selectedAssetId: null })),
+    backend.on('project.changed', (project) =>
+      useApp.setState({
+        project,
+        selectedAssetId: null,
+        selectedItemIds: [],
+        playhead: 0,
+        playing: false,
+        ...(project ? {} : { docState: null }),
+      }),
+    ),
     backend.on('media.changed', (assets) =>
       useApp.setState((s) => ({
         assets,
@@ -58,6 +138,14 @@ export function startBackendSync(): () => void {
       })),
     ),
     backend.on('jobs.changed', (jobs) => useApp.setState({ jobs })),
+    backend.on('doc.changed', (docState) =>
+      useApp.setState((s) => {
+        const seq = activeSequence({ docState });
+        const alive = new Set(seq?.tracks.flatMap((t) => t.items.map((i) => i.id)) ?? []);
+        return { docState, selectedItemIds: s.selectedItemIds.filter((id) => alive.has(id)) };
+      }),
+    ),
+    backend.on('export.changed', (exportState) => useApp.setState({ exportState })),
   ];
   return () => offs.forEach((off) => off());
 }

@@ -10,3 +10,4 @@ export * from './schemas/settings';
 export * from './schemas/secrets';
 export * from './schemas/status';
 export * from './schemas/media';
+export * from './schemas/timeline';

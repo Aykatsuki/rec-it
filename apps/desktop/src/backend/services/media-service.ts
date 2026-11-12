@@ -1,21 +1,24 @@
 import { existsSync } from 'node:fs';
 import { mkdir, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { extname, join, parse } from 'node:path';
-import { createId } from '@rec-it/core';
+import { createId, type AssetInfo, type Flicks } from '@rec-it/core';
+import type { ExportAsset } from '@rec-it/render-plan';
 import type { AssetRow, ProjectDatabase } from '@rec-it/db';
 import {
   PeakBuilder,
+  audioProxyArgs,
   posterArgs,
   probeFile,
   proxyArgs,
   runFfmpeg,
   spriteArgs,
   spriteLayout,
+  stillArgs,
+  waveformPcmArgs,
   type FfmpegBinaries,
   type H264Encoder,
   type ProbeInfo,
   type SpriteLayout,
-  waveformPcmArgs,
 } from '@rec-it/ffmpeg';
 import {
   IMPORT_EXTENSIONS,
@@ -59,6 +62,8 @@ interface Derived {
 const ALL_JOBS: JobKind[] = ['probe', 'proxy', 'thumbnails', 'waveform'];
 const FILES = {
   proxy: 'proxy.mp4',
+  audioProxy: 'proxy.m4a',
+  still: 'still.jpg',
   poster: 'poster.jpg',
   sprite: 'sprite.jpg',
   waveform: 'waveform.bin',
@@ -69,7 +74,7 @@ const BROADCAST_INTERVAL_MS = 250;
 /** Which jobs apply to which kind of media. */
 function jobsFor(probe: ProbeInfo): Record<Exclude<JobKind, 'probe'>, boolean> {
   return {
-    proxy: probe.kind === 'video',
+    proxy: probe.kind !== 'image',
     thumbnails: probe.kind === 'video' || probe.kind === 'image',
     waveform: probe.kind !== 'image' && !!probe.audio,
   };
@@ -123,11 +128,14 @@ export class MediaService {
         continue;
       }
       if (jobs.probe.state !== 'done') continue;
+      const applicable = jobsFor(probeInfoSchema.parse(row.probe) as ProbeInfo);
       for (const kind of ['proxy', 'thumbnails', 'waveform'] as const) {
         const state = jobs[kind].state;
         const interrupted = state === 'pending' || state === 'running' || state === 'cancelled';
-        const lost = state === 'done' && !this.derivedFilesExist(row.id, kind);
-        if (interrupted || lost) this.schedule(row.id, kind);
+        const lost = state === 'done' && !this.derivedFilesExist(row.id, kind, row.kind);
+        // Projects from Phase 1 skipped audio proxies; they are needed for timeline playback now.
+        const newlyNeeded = state === 'skipped' && applicable[kind];
+        if (interrupted || lost || newlyNeeded) this.schedule(row.id, kind);
       }
     }
     this.broadcast(true);
@@ -278,11 +286,56 @@ export class MediaService {
     return join(this.o.cacheDir, assetId);
   }
 
-  private derivedFilesExist(assetId: string, kind: Exclude<JobKind, 'probe'>): boolean {
+  private derivedFilesExist(
+    assetId: string,
+    kind: Exclude<JobKind, 'probe'>,
+    assetKind: string | null,
+  ): boolean {
     const dir = this.assetDir(assetId);
-    if (kind === 'proxy') return existsSync(join(dir, FILES.proxy));
+    if (kind === 'proxy')
+      return existsSync(join(dir, assetKind === 'audio' ? FILES.audioProxy : FILES.proxy));
     if (kind === 'waveform') return existsSync(join(dir, FILES.waveform));
+    if (assetKind === 'image')
+      return existsSync(join(dir, FILES.poster)) && existsSync(join(dir, FILES.still));
     return existsSync(join(dir, FILES.poster));
+  }
+
+  /** What timeline commands need to know about an asset (undefined until it has been probed). */
+  assetInfo(assetId: string): AssetInfo | undefined {
+    const row = this.o.project.getAsset(assetId);
+    const probe = row?.probe ? probeInfoSchema.safeParse(row.probe).data : undefined;
+    if (!probe) return undefined;
+    return {
+      kind: probe.kind,
+      duration: probe.kind === 'image' ? null : (probe.durationFlicks as Flicks),
+      hasAudio: !!probe.audio,
+      ...(probe.video
+        ? { width: probe.video.displayWidth, height: probe.video.displayHeight }
+        : {}),
+    };
+  }
+
+  /** What export needs: the original file and its displayed size. */
+  exportAsset(assetId: string): ExportAsset | undefined {
+    const row = this.o.project.getAsset(assetId);
+    const probe = row?.probe ? probeInfoSchema.safeParse(row.probe).data : undefined;
+    if (!row || !probe) return undefined;
+    return {
+      path: row.originalPath,
+      kind: probe.kind,
+      hasAudio: !!probe.audio,
+      ...(probe.video
+        ? {
+            width: probe.video.displayWidth,
+            height: probe.video.displayHeight,
+            hdr: probe.video.hdr,
+          }
+        : {}),
+    };
+  }
+
+  isMissing(assetId: string): boolean {
+    return this.missing.has(assetId);
   }
 
   private setJob(assetId: string, kind: JobKind, state: JobState): void {
@@ -350,7 +403,15 @@ export class MediaService {
       }
     };
 
-    if (kind === 'proxy') {
+    if (kind === 'proxy' && probe.kind === 'audio') {
+      await write(FILES.audioProxy, (tmp) =>
+        runFfmpeg(bins.ffmpeg, audioProxyArgs(row.originalPath, tmp), {
+          signal: ctx.signal,
+          durationSec: probe.durationSec,
+          onProgress: ctx.progress,
+        }),
+      );
+    } else if (kind === 'proxy') {
       await write(FILES.proxy, (tmp) =>
         runFfmpeg(bins.ffmpeg, proxyArgs(row.originalPath, tmp, probe, encoder, { tonemap }), {
           signal: ctx.signal,
@@ -363,6 +424,11 @@ export class MediaService {
         runFfmpeg(bins.ffmpeg, posterArgs(row.originalPath, tmp, probe), { signal: ctx.signal }),
       );
       ctx.progress(0.3);
+      if (probe.kind === 'image') {
+        await write(FILES.still, (tmp) =>
+          runFfmpeg(bins.ffmpeg, stillArgs(row.originalPath, tmp), { signal: ctx.signal }),
+        );
+      }
       if (probe.kind === 'video') {
         const layout = spriteLayout(probe.durationSec);
         await write(FILES.sprite, (tmp) =>
@@ -433,7 +499,12 @@ export class MediaService {
       rights: rightsRecordSchema.parse(row.rights),
       jobs,
       urls: {
-        ...(jobs.proxy.state === 'done' ? { proxy: url(FILES.proxy) } : {}),
+        ...(jobs.proxy.state === 'done'
+          ? { proxy: url(row.kind === 'audio' ? FILES.audioProxy : FILES.proxy) }
+          : {}),
+        ...(jobs.thumbnails.state === 'done' && row.kind === 'image'
+          ? { still: url(FILES.still) }
+          : {}),
         ...(jobs.thumbnails.state === 'done' ? { poster: url(FILES.poster) } : {}),
         ...(jobs.waveform.state === 'done' ? { waveform: url(FILES.waveform) } : {}),
         ...(jobs.thumbnails.state === 'done' && derived.sprite

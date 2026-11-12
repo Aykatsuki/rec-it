@@ -20,13 +20,14 @@
     "@rec-it/db": "workspace:*",
     "@rec-it/ffmpeg": "workspace:*",
     "@rec-it/ipc-contract": "workspace:*",
+    "@rec-it/render-plan": "workspace:*",
     "@rec-it/ui": "workspace:*",
     "lucide-react": "^1.72.0",
     "react": "^19.3.0",
     "react-dom": "^19.3.0",
     "react-resizable-panels": "^4.0.0",
-    "zustand": "^5.0.0",
-    "zod": "^4.6.0"
+    "zod": "^4.6.0",
+    "zustand": "^5.0.0"
   },
   "devDependencies": {
     "@playwright/test": "^1.65.0",

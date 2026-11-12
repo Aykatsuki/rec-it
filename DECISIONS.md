@@ -307,3 +307,20 @@ Each record states the decision, why it was made and what else was considered. R
 
 **Known limitation.** If only Rec-It's main process is killed (for example "End process" on that single entry in Task Manager), Chromium's own helper processes (GPU, network, renderer) can stay alive and prevent a new instance from starting until they are ended. Ending the whole app ("End task") does not have this problem. The Windows CI test kills the main process alone, ends the remaining helpers, relaunches, and checks that the FFmpeg processes left by the killed instance are ended by the new one.
 
+
+---
+
+## ADR-025 · First timeline, preview and export slice
+
+**Status.** Accepted (12 Nov 2026, Phases 2–3 first slice).
+
+**Context.** After Phase 1 the user could import footage but could not put it on a timeline, set the resolution or frame rate, or export. A usable end-to-end editor was more valuable than finishing the high-risk Phase 2 preview engine first.
+
+**Decisions.**
+- **Document storage:** the whole timeline document is saved as one JSON row in the project file after every edit (migration 2). Documents for Shorts are small, so this is simpler and safer than storing patches. Patches are kept in memory for undo/redo only (200 steps).
+- **Interim timeline:** built with DOM elements, not the canvas timeline of ADR-015. It is fine for Shorts-sized timelines; the canvas version replaces it when filmstrips, waveforms and 1,000-item timelines arrive.
+- **Interim preview:** one HTML media element per visible clip, synced to a wall clock and laid out with the same `computeLayout` used by export. It is not frame-accurate; the WebCodecs/WebGL2 engine of ADR-008 replaces it.
+- **Audio of video clips:** a video clip carries its own audio (no separate linked audio item yet). Audio-only files get an AAC proxy (`proxy.m4a`) and images a `still.jpg`, both added to the media protocol allow-list.
+- **Editing model:** overwrite edits, snapped to frames; changing the frame rate re-snaps every edit. New sequences default to 1080×1920 at the first clip's frame rate.
+- **Export** uses the original files, not proxies, through one `filter_complex` graph passed as a file. It writes to `<name>.part` and renames on success. One export runs at a time.
+- **Media in use** on a timeline cannot be removed from the project.

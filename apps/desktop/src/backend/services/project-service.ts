@@ -2,7 +2,8 @@ import { mkdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { createId } from '@rec-it/core';
 import { PROJECT_FILE_EXTENSION, ProjectDatabase, type RecentProjects } from '@rec-it/db';
-import type { JobSummary, MediaAsset, ProjectInfo } from '@rec-it/ipc-contract';
+import type { DocumentState, JobSummary, MediaAsset, ProjectInfo } from '@rec-it/ipc-contract';
+import { DocumentService } from './document-service';
 import { uniquePath } from './files';
 import { MediaService, type Toolchain } from './media-service';
 
@@ -14,11 +15,13 @@ export interface ProjectServiceOptions {
   onProjectChanged: (project: ProjectInfo | null) => void;
   onAssetsChanged: (assets: MediaAsset[]) => void;
   onJobsChanged: (jobs: JobSummary[]) => void;
+  onDocumentChanged: (state: DocumentState) => void;
 }
 
 interface OpenProject {
   db: ProjectDatabase;
   media: MediaService;
+  document: DocumentService;
   info: ProjectInfo;
 }
 
@@ -36,6 +39,12 @@ export class ProjectService {
   media(): MediaService {
     if (!this.current) throw new Error('No project is open.');
     return this.current.media;
+  }
+
+  /** The open project's timeline; throws if no project is open. */
+  document(): DocumentService {
+    if (!this.current) throw new Error('No project is open.');
+    return this.current.document;
   }
 
   get defaultDirectory(): string {
@@ -133,9 +142,17 @@ export class ProjectService {
         if (this.current?.db === db) this.o.onJobsChanged(jobs);
       },
     });
-    this.current = { db, media, info };
+    const document = new DocumentService(
+      db,
+      (id) => media.assetInfo(id),
+      (state) => {
+        if (this.current?.db === db) this.o.onDocumentChanged(state);
+      },
+    );
+    this.current = { db, media, document, info };
     this.o.recent.touch(db.path, meta.name);
     this.o.onProjectChanged(info);
+    this.o.onDocumentChanged(document.state());
     await media.resume();
     return info;
   }

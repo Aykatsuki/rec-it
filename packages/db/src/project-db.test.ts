@@ -85,6 +85,18 @@ describe('ProjectDatabase', () => {
     expect(() => ProjectDatabase.open(join(dir, 'other.db'))).toThrow(ProjectFileError);
   });
 
+  it('stores the timeline document', () => {
+    const path = join(tempDir(), 'doc.recit');
+    const db = ProjectDatabase.create(path, { id: 'p', name: 'p', createdAt: 'now' });
+    expect(db.loadDocument()).toBeNull();
+    db.saveDocument({ sequences: [1] });
+    db.saveDocument({ sequences: [1, 2] });
+    db.close();
+    const again = ProjectDatabase.open(path);
+    open.push(again);
+    expect(again.loadDocument()).toEqual({ sequences: [1, 2] });
+  });
+
   it('copies itself for Save As', () => {
     const dir = tempDir();
     const db = ProjectDatabase.create(join(dir, 'a.recit'), {

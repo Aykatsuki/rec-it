@@ -13,6 +13,7 @@ import {
 import type { MediaAsset } from '@rec-it/ipc-contract';
 import { backend } from '../api';
 import { locateAsset } from '../actions';
+import { ASSET_MIME, addToTimeline } from '../edit';
 import { formatDuration, JOB_LABELS, resolutionLabel } from '../format';
 
 /** The job currently holding the asset up, for the progress bar. */
@@ -109,6 +110,17 @@ export function AssetCard({
       aria-selected={selected}
       tabIndex={0}
       onClick={onSelect}
+      onDoubleClick={() => void addToTimeline(asset)}
+      draggable={asset.status === 'ready'}
+      onDragStart={(e) => {
+        e.dataTransfer.setData(ASSET_MIME, asset.id);
+        e.dataTransfer.effectAllowed = 'copy';
+      }}
+      title={
+        asset.status === 'ready'
+          ? 'Drag onto the timeline, or double-click to add it at the end'
+          : undefined
+      }
       onKeyDown={(e) => {
         if (e.key === 'Enter' || e.key === ' ') onSelect();
       }}
