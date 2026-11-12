@@ -117,20 +117,30 @@ test.describe('media pipeline', () => {
     // Hard kill: no clean shutdown at all.
     // Only the main process is killed: the backend must notice and stop FFmpeg by itself,
     // otherwise leftovers block the app from starting again on Windows.
-    const mainPid = app.process().pid;
+    const mainPid = app.process().pid!;
     app.process().kill('SIGKILL');
 
-    // Relaunching must work within a few seconds of a crash.
+    if (process.platform === 'win32') {
+      // Windows does not kill child processes with their parent. Within the heartbeat timeout
+      // the backend must stop its FFmpeg jobs (so media files are not left locked).
+      const ffmpegRunning = () =>
+        execFileSync('tasklist', ['/FI', 'IMAGENAME eq ffmpeg.exe', '/FO', 'CSV', '/NH'], {
+          encoding: 'utf8',
+        }).includes('ffmpeg.exe');
+      await expect.poll(ffmpegRunning, { timeout: 15_000, intervals: [1000] }).toBe(false);
+      // Chromium's own helper processes (GPU, network, renderer) can outlive a main process that
+      // was force-killed alone; end them as Task Manager's "End task" would (ADR-024).
+      try {
+        execFileSync('taskkill', ['/F', '/IM', 'electron.exe'], { stdio: 'ignore' });
+      } catch {
+        // none left
+      }
+    }
+    void mainPid;
+
     let relaunched: Awaited<ReturnType<typeof launch>> | null = null;
     for (let attempt = 1; attempt <= 5 && !relaunched; attempt++) {
       await new Promise((r) => setTimeout(r, 2000));
-      if (process.platform === 'win32') {
-        // Diagnostics: show what is still running from the killed instance.
-        const list = execFileSync('tasklist', ['/FO', 'CSV', '/NH'], { encoding: 'utf8' })
-          .split(/\r?\n/)
-          .filter((l) => /electron|ffmpeg|python/i.test(l));
-        console.info(`after kill of ${mainPid}, attempt ${attempt}:\n${list.join('\n')}`);
-      }
       try {
         relaunched = await launch(userData, env());
       } catch (error) {

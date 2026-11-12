@@ -18,7 +18,9 @@ export type MainToBackend =
   /** Carries a MessagePort for one renderer in `ports[0]`. */
   | { type: 'connect'; windowId: number }
   /** Stop jobs, close databases and exit. */
-  | { type: 'shutdown' };
+  | { type: 'shutdown' }
+  /** Sent every second; if they stop, main has died and the backend exits (see backend/index.ts). */
+  | { type: 'heartbeat' };
 
 export type BackendToMain =
   | { type: 'ready' }

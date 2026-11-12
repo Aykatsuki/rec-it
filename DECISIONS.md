@@ -27,6 +27,7 @@ Each record states the decision, why it was made and what else was considered. R
 | 021 | Toolchain baseline and the Linux CI sandbox switch | Accepted |
 | 022 | Assets are committed to the project file immediately | Accepted |
 | 023 | Proxy encoding, derived files and the media protocol | Accepted |
+| 024 | Backend heartbeat so FFmpeg never outlives a crashed app | Accepted |
 
 ---
 
@@ -289,4 +290,19 @@ Each record states the decision, why it was made and what else was considered. R
 - **Serving:** the renderer reads derived files only through `recit-media://asset/<projectId>/<assetId>/<file>`. IDs are validated, file names come from a four-item allow-list, and range requests are supported so video can seek. Original media files are never served to the renderer.
 - **Cancelling** kills FFmpeg immediately (SIGKILL / TerminateProcess), because a polite stop makes FFmpeg flush its encoder for several seconds.
 - **Shutdown:** main asks the backend to stop jobs and close the project before quitting, because a forced kill on Windows would leave FFmpeg child processes running.
+
+---
+
+## ADR-024 · Backend heartbeat so FFmpeg never outlives a crashed app
+
+**Status.** Accepted (12 Nov 2026, Phase 1).
+
+**Context.** On Windows, killing a process does not kill its children. When Rec-It's main process was force-killed during import, the backend and its FFmpeg jobs kept running. That left media files locked and could stop Rec-It from starting again. Linux hides this because Chromium's helper processes die with their parent there. The crash-recovery end-to-end test found it on Windows CI.
+
+**Decision.**
+- Main sends the backend a heartbeat every second. If none arrives for 5 seconds, the backend kills every FFmpeg process it started and exits. `packages/ffmpeg` keeps a registry of running FFmpeg processes for this, and the backend also kills them on any exit.
+- Normal quitting asks the backend to shut down cleanly first (ADR-023).
+- Checking the parent's process id was tried first and did not work reliably on Windows, so the heartbeat is used on every platform.
+
+**Known limitation.** If only Rec-It's main process is killed (for example "End process" on that single entry in Task Manager), Chromium's own helper processes (GPU, network, renderer) can stay alive and prevent a new instance from starting until they are ended. Ending the whole app ("End task") does not have this problem. The Windows CI test kills the main process alone, checks that no FFmpeg process is left within the heartbeat timeout, then ends the remaining helpers before relaunching.
 

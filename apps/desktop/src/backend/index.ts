@@ -44,6 +44,9 @@ parentPort.on('message', ({ data, ports }) => {
       if (app) app.setSecrets(data.values);
       else pendingSecrets = data.values;
       break;
+    case 'heartbeat':
+      lastHeartbeat = Date.now();
+      break;
     case 'shutdown':
       void (app?.dispose() ?? Promise.resolve()).finally(() => process.exit(0));
       break;
@@ -68,17 +71,16 @@ process.on('SIGTERM', () => {
 });
 
 // If the main process dies without shutting us down (a crash, or killed from Task Manager),
-// stop FFmpeg and exit. On Windows child processes are not killed with their parent, and
-// leftovers would keep files locked and block Rec-It from starting again.
-const parentPid = process.ppid;
+// its heartbeats stop: stop FFmpeg and exit. On Windows child processes are not killed with
+// their parent, and leftovers would keep media files locked.
+const HEARTBEAT_TIMEOUT_MS = 5000;
+let lastHeartbeat = Date.now();
 setInterval(() => {
-  try {
-    process.kill(parentPid, 0);
-  } catch {
-    console.error('main process has gone; stopping');
+  if (Date.now() - lastHeartbeat > HEARTBEAT_TIMEOUT_MS) {
+    console.error('no heartbeat from the main process; stopping');
     killAllFfmpeg();
     process.exit(1);
   }
-}, 500).unref();
+}, 1000).unref();
 
 process.on('exit', () => killAllFfmpeg());

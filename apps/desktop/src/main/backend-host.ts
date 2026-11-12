@@ -45,6 +45,11 @@ export class BackendHost {
     child.on('exit', (code) => this.onExit(child, code));
 
     this.send({ type: 'init', config: this.config });
+    const heartbeat = setInterval(
+      () => this.child === child && child.postMessage({ type: 'heartbeat' }),
+      1000,
+    );
+    child.once('exit', () => clearInterval(heartbeat));
     void this.pushSecrets();
     for (const contents of this.clients) this.connect(contents);
   }
