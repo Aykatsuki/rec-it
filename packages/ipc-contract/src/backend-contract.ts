@@ -116,7 +116,12 @@ export const backendContract = defineContract({
       input: z
         .object({ fileName: z.string().min(1).max(255), directory: filePathSchema.optional() })
         .strict(),
-      output: z.object({ directory: z.string(), fileName: z.string(), path: z.string(), exists: z.boolean() }),
+      output: z.object({
+        directory: z.string(),
+        fileName: z.string(),
+        path: z.string(),
+        exists: z.boolean(),
+      }),
     },
     /** Saves the frame at `time` (seconds) as PNG or JPEG, rendered exactly like the export. */
     'export.frame': {

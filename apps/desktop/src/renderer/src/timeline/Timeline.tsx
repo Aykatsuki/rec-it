@@ -10,6 +10,7 @@ import {
   Eye,
   EyeOff,
   Film,
+  Link2,
   Lock,
   LockOpen,
   Magnet,
@@ -33,7 +34,10 @@ import {
   addToTimeline,
   deleteSelected,
   edit,
+  isLinked,
   itemEndSec,
+  keyframeTimes,
+  linkedPartners,
   redo,
   sequenceSeconds,
   splitAtPlayhead,
@@ -389,7 +393,7 @@ function TimelineBody({ seq }: { seq: Sequence }) {
       const [l, t] = [b.left - r.left, b.top - r.top];
       if (l < bx && l + b.width > ax && t < by && t + b.height > ay) ids.add(el.dataset.itemId!);
     });
-    useApp.getState().selectItems([...ids]);
+    useApp.getState().selectItems([...ids, ...linkedPartners(seq, [...ids])]);
   };
 
   const beginItemDrag = (
@@ -403,14 +407,16 @@ function TimelineBody({ seq }: { seq: Sequence }) {
     if (track.locked) return;
     (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
     const { selectedItemIds, selectItems } = useApp.getState();
+    // Clicking a linked clip selects its partner too; Alt-click selects just the one clip.
+    const withPartners = e.altKey ? [item.id] : [item.id, ...linkedPartners(seq, [item.id])];
     if (e.shiftKey || e.ctrlKey) {
       selectItems(
         selectedItemIds.includes(item.id)
-          ? selectedItemIds.filter((i) => i !== item.id)
-          : [...selectedItemIds, item.id],
+          ? selectedItemIds.filter((i) => !withPartners.includes(i))
+          : [...new Set([...selectedItemIds, ...withPartners])],
       );
     } else if (!selectedItemIds.includes(item.id)) {
-      selectItems([item.id]);
+      selectItems(withPartners);
     }
     useApp.getState().setPlaying(false);
     const start = toSeconds(item.start);
@@ -598,6 +604,7 @@ function TimelineBody({ seq }: { seq: Sequence }) {
                     asset={byId.get(item.assetId)}
                     zoom={zoom}
                     view={view}
+                    linked={isLinked(seq, item)}
                     selected={selected.includes(item.id)}
                     dimmed={dimmed}
                     onPointerDown={(e, mode) => beginItemDrag(e, track, item, mode)}
@@ -716,11 +723,13 @@ function ItemView({
   asset,
   zoom,
   view,
+  linked,
   selected,
   dimmed,
   onPointerDown,
   onContextMenu,
 }: {
+  linked: boolean;
   item: TimelineItem;
   track: Track;
   asset: MediaAsset | undefined;
@@ -777,8 +786,26 @@ function ItemView({
         </div>
       )}
       <span className="tl__item-label">
+        {linked && <Link2 size={11} aria-label="Linked" />}
         {item.muted && <VolumeX size={11} />} {asset?.name ?? 'Missing media'}
       </span>
+      {item.keyframes &&
+        keyframeTimes(item)
+          .filter((t) => t >= toSeconds(item.start) && t <= itemEndSec(item))
+          .map((t) => (
+            <span
+              key={t}
+              className="tl__kf"
+              data-testid="timeline-keyframe"
+              title={`Keyframe at ${t.toFixed(2)} s`}
+              style={{ left: (t - toSeconds(item.start)) * zoom }}
+              onPointerDown={(e) => {
+                e.stopPropagation();
+                useApp.getState().setPlaying(false);
+                useApp.getState().setPlayhead(t);
+              }}
+            />
+          ))}
       <span
         className="tl__handle tl__handle--start"
         onPointerDown={(e) => onPointerDown(e, 'start')}

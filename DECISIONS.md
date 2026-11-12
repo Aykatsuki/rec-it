@@ -31,6 +31,7 @@ Each record states the decision, why it was made and what else was considered. R
 | 025 | First timeline, preview and export slice | Accepted |
 | 026 | Direct manipulation, context menus and an effects phase | Accepted |
 | 027 | Export settings, two-pass loudness and preview/export parity | Accepted |
+| 028 | Export folder, linked clips and keyframes | Accepted |
 
 ---
 
@@ -356,3 +357,16 @@ Each record states the decision, why it was made and what else was considered. R
 - **Frames as images** use the same graph as the export (`planFrame`), so a saved still is exactly what the video contains.
 - **Golden-frame parity in CI.** An end-to-end test builds three cases (fill; fit with offset and rotation; a rotated still over video), screenshots the preview at a moment inside each, exports, and compares with SSIM (≥ 0.98, outer 2 px excluded, both images lightly blurred with σ = 1.5 so the browser's and FFmpeg's scalers on different OSes do not count; a stale or one-frame-off clip still scores about 0.97). Fixtures use flat colours and a moving box, so the score reflects layout, colour and timing rather than scaler differences on noise. This found three preview bugs, now fixed: proxies were untagged and shown with the wrong colour matrix (proxies are now BT.709 and tagged; proxies made earlier keep a slight colour shift until regenerated); paused seeks landed one frame early (seeks now aim a quarter-frame into the frame); and a paused clip seeked while invisible showed a stale frame when it appeared (it is re-seeked once visible; hidden layers use opacity instead of visibility).
 - **Scope moved.** Speed changes and fades, listed under Phase 3 originally, are part of Phase 6 (effects, ADR-026).
+
+---
+
+## ADR-028 · Export folder, linked clips and keyframes
+
+**Status.** Accepted (12 Nov 2026, Phase 2 third slice).
+
+**Decisions.**
+- **Export destination.** The export window shows the folder and an editable file name instead of opening a save dialog every time. The folder is the last one exported to (app setting `exportDirectory`), falling back to the user's Videos folder, and "Change…" picks another. File names are cleaned for Windows; an existing file is pointed out and the button says "Replace and export". Saved frames start in the same folder.
+- **Linked clips.** Items carry an optional `linkId`. Clips sharing one move (keeping their own tracks), trim to the same edge (each limited by its own media), split (the right-hand pieces get a new shared link) and delete together. Detach audio creates a linked pair. An overwrite that cuts a linked clip in two keeps only the first part linked. Selecting a linked clip selects its partner; Alt-click selects one side. The inspector and transform box work on the picture clip of a linked group.
+- **Keyframes.** `x`, `y`, `scale`, `rotation` and `volume` can be keyframed; each keyframe has a value and an easing (linear, ease = smoothstep, hold) towards the next. Keyframe times are stored in *source* time, so animation stays on the same picture when a clip is trimmed or split. A property with keyframes ignores its static value; setting a static value (Reset, Fill/Fit buttons excluded) removes that property's animation; removing the last keyframe keeps its value. Editing an animated property (slider or preview drag) sets a keyframe at the playhead — one undo step per gesture.
+- **Keyframed export.** FFmpeg filter graphs cannot change frame size mid-stream, so an animated layer is scaled once to its largest size (capped at 4096 px), centred on a transparent canvas big enough for every size and angle (capped at 8192 px), and moved per frame by `perspective` with expressions for its corners (an affine map is a special case of perspective). The overlay places the canvas centre at the animated position. Volume keyframes become a per-frame `volume` expression. Expressions are generated from the same keyframes and match `valueAt` exactly (unit-tested); the parity suite includes a keyframed case (SSIM 0.987). Static clips keep the simpler path, so existing exports are unchanged (argument snapshots).
+- **Bugs fixed on the way:** inspector sliders never committed (their live preview made every value look unchanged), and the frame-step shortcut stole arrow keys from focused sliders.

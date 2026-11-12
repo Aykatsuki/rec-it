@@ -3,6 +3,9 @@
 import {
   computeLayout,
   flicksToSeconds,
+  hasKeyframes,
+  type Keyframe,
+  type Transform,
   sequenceDuration,
   type Sequence,
   type TimelineItem,
@@ -219,7 +222,108 @@ function audibleItems(
   return seq.tracks
     .filter((t) => !t.muted)
     .flatMap((t) => t.items)
-    .filter((i) => !i.muted && i.volume > 0 && assets(i.assetId)?.hasAudio);
+    .filter(
+      (i) => !i.muted && (i.volume > 0 || hasKeyframes(i, 'volume')) && assets(i.assetId)?.hasAudio,
+    );
+}
+
+const num = (n: number) => (Math.abs(n) < 1e-9 ? '0' : n.toFixed(6).replace(/\.?0+$/, ''));
+
+/**
+ * FFmpeg expression for a keyframed value as a function of source time `T` (an expression in
+ * seconds). Mirrors valueAt() in @rec-it/core: hold before the first and after the last key.
+ */
+export function keyframeExpr(keys: readonly Keyframe[], T: string): string {
+  const k = keys.map((key) => ({ t: flicksToSeconds(key.t), v: key.v, e: key.e }));
+  let expr = num(k.at(-1)!.v);
+  for (let i = k.length - 2; i >= 0; i--) {
+    const a = k[i]!;
+    const b = k[i + 1]!;
+    const p = `((${T}-${num(a.t)})/${num(b.t - a.t)})`;
+    const eased = a.e === 'hold' ? '0' : a.e === 'ease' ? `(${p}*${p}*(3-2*${p}))` : p;
+    const seg = a.e === 'hold' ? num(a.v) : `(${num(a.v)}+${num(b.v - a.v)}*${eased})`;
+    expr = `if(lt(${T},${num(b.t)}),${seg},${expr})`;
+  }
+  return `if(lt(${T},${num(k[0]!.t)}),${num(k[0]!.v)},${expr})`;
+}
+
+/** A transform property as an expression: its keyframes, or its constant value. */
+function propExpr(item: TimelineItem, p: 'x' | 'y' | 'scale' | 'rotation', T: string): string {
+  const keys = item.keyframes?.[p];
+  return keys?.length ? keyframeExpr(keys, T) : num(item.transform[p]);
+}
+
+/** Largest picture size Rec-It renders an animated layer at (memory and speed). */
+const MAX_LAYER = 4096;
+/** Largest transparent canvas for an animated layer. */
+const MAX_CANVAS = 8192;
+
+/**
+ * Filters for a layer whose position, size or rotation is keyframed. Frame sizes cannot change
+ * inside an FFmpeg graph, so the picture is scaled once (to its largest size), placed in the
+ * middle of a transparent canvas big enough for every size and angle it takes, and moved per
+ * frame with `perspective` (an affine map is a special case). The overlay then places the
+ * canvas centre where the clip's centre is.
+ */
+function animatedLayer(
+  item: TimelineItem,
+  asset: { width: number; height: number },
+  W: number,
+  H: number,
+  fpsValue: number,
+): { filters: string[]; overlayX: string; overlayY: string } {
+  const t: Transform = item.transform;
+  const base =
+    t.fit === 'fill'
+      ? Math.max(W / asset.width, H / asset.height)
+      : Math.min(W / asset.width, H / asset.height);
+  const scales = item.keyframes?.scale?.length ? item.keyframes.scale.map((k) => k.v) : [t.scale];
+  const sMax = Math.max(...scales, 0.05);
+  const fit = Math.min(1, MAX_LAYER / (Math.max(asset.width, asset.height) * base * sMax));
+  const sUse = sMax * fit;
+  const wB = even(asset.width * base * sUse);
+  const hB = even(asset.height * base * sUse);
+  const rotates = !!item.keyframes?.rotation?.length || Math.abs(t.rotation) > 1e-9;
+  const wMax = asset.width * base * sMax;
+  const hMax = asset.height * base * sMax;
+  const Dw = Math.min(MAX_CANVAS, even((rotates ? Math.hypot(wMax, hMax) : wMax) + 6));
+  const Dh = Math.min(MAX_CANVAS, even((rotates ? Math.hypot(wMax, hMax) : hMax) + 6));
+
+  // Source time for perspective (frame counter) and for overlay (timeline time t).
+  const srcIn = flicksToSeconds(item.sourceIn);
+  const start = flicksToSeconds(item.start);
+  const Tp = `(${num(srcIn)}+in/${num(fpsValue)})`;
+  const To = `(t-${num(start)}+${num(srcIn)})`;
+  const k = `(${propExpr(item, 'scale', Tp)}/${num(sUse)})`;
+  const r = `(${propExpr(item, 'rotation', Tp)}*PI/180)`;
+  const corner = (px: number, py: number) => [
+    `${num(Dw / 2)}+${k}*(${num(px)}*cos(${r})-${num(py)}*sin(${r}))`,
+    `${num(Dh / 2)}+${k}*(${num(px)}*sin(${r})+${num(py)}*cos(${r}))`,
+  ];
+  const [x0, y0] = corner(-Dw / 2, -Dh / 2);
+  const [x1, y1] = corner(Dw / 2, -Dh / 2);
+  const [x2, y2] = corner(-Dw / 2, Dh / 2);
+  const [x3, y3] = corner(Dw / 2, Dh / 2);
+  return {
+    filters: [
+      `scale=${wB}:${hB}:flags=bicubic:out_color_matrix=bt709:out_range=tv`,
+      'setsar=1',
+      'format=yuva420p',
+      `pad=${Dw}:${Dh}:(ow-iw)/2:(oh-ih)/2:color=black@0`,
+      `perspective=x0='${x0}':y0='${y0}':x1='${x1}':y1='${y1}':x2='${x2}':y2='${y2}':x3='${x3}':y3='${y3}':sense=destination:eval=frame:interpolation=linear`,
+    ],
+    overlayX: `'W/2+(${propExpr(item, 'x', To)})*W-w/2'`,
+    overlayY: `'H/2+(${propExpr(item, 'y', To)})*H-h/2'`,
+  };
+}
+
+/** Static volume, or a per-frame expression of source time when volume is keyframed. */
+function volumeFilter(item: TimelineItem): string {
+  const keys = item.keyframes?.volume;
+  if (!keys?.length) return `volume=${item.volume.toFixed(3)}`;
+  // After an input seek, audio timestamps start at 0 at the clip's first sample.
+  const T = `(t+${num(flicksToSeconds(item.sourceIn))})`;
+  return `volume=volume='${keyframeExpr(keys, T)}':eval=frame`;
 }
 
 interface GraphParts {
@@ -275,6 +379,33 @@ function buildGraph(
       if (!asset.width || !asset.height)
         throw new ExportPlanError('Some media has no frame size; it may still be processing.');
       const k = addInput(item, asset);
+      const start = sec(flicksToSeconds(item.start));
+      if (
+        hasKeyframes(item, 'x') ||
+        hasKeyframes(item, 'y') ||
+        hasKeyframes(item, 'scale') ||
+        hasKeyframes(item, 'rotation')
+      ) {
+        const a = animatedLayer(
+          item,
+          { width: asset.width, height: asset.height },
+          W,
+          H,
+          seq.fps.num / seq.fps.den,
+        );
+        const chain = [
+          ...(asset.hdr && options.tonemap ? [TONEMAP] : []),
+          `fps=${fps}`,
+          ...a.filters,
+          `setpts=PTS-STARTPTS+${start}/TB`,
+        ];
+        graph.push(`[${k}:v]${chain.join(',')}[v${n}]`);
+        graph.push(
+          `[${last}][v${n}]overlay=x=${a.overlayX}:y=${a.overlayY}:eval=frame:eof_action=pass:repeatlast=0[o${n}]`,
+        );
+        last = `o${n}`;
+        return;
+      }
       const { width, height, rotation, bounds } = computeLayout(
         asset.width,
         asset.height,
@@ -282,7 +413,6 @@ function buildGraph(
         H,
         item.transform,
       );
-      const start = sec(flicksToSeconds(item.start));
       const chain = [
         ...(asset.hdr && options.tonemap ? [TONEMAP] : []),
         `fps=${fps}`,
@@ -318,7 +448,7 @@ function buildGraph(
     const delayMs = Math.round(flicksToSeconds(item.start) * 1000);
     graph.push(
       `[${k}:a]aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo,` +
-        `volume=${item.volume.toFixed(3)},adelay=${delayMs}:all=1[a${n}]`,
+        `${volumeFilter(item)},adelay=${delayMs}:all=1[a${n}]`,
     );
     audioLabels.push(`[a${n}]`);
   });

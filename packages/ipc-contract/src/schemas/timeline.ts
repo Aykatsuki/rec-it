@@ -26,6 +26,10 @@ const transformPatchSchema = z
   })
   .strict();
 
+const keyframeProperty = z.enum(['x', 'y', 'scale', 'rotation', 'volume']);
+const easing = z.enum(['linear', 'ease', 'hold']);
+const keyframeSchema = z.object({ t: flicks, v: z.number().min(-3600).max(3600), e: easing });
+
 export const timelineItemSchema = z.object({
   id,
   assetId: id,
@@ -35,6 +39,8 @@ export const timelineItemSchema = z.object({
   volume: z.number().min(0).max(2),
   muted: z.boolean(),
   transform: transformSchema,
+  keyframes: z.partialRecord(keyframeProperty, z.array(keyframeSchema).max(10_000)).optional(),
+  linkId: id.optional(),
 });
 
 export const trackSchema = z.object({
@@ -110,6 +116,36 @@ const singleCommandSchema = z.discriminatedUnion('type', [
     transform: transformPatchSchema.optional(),
   }),
   z.object({ type: z.literal('item.move'), ...seqId, itemId: id, trackId: id, start: flicks }),
+  z.object({
+    type: z.literal('item.link'),
+    ...seqId,
+    itemIds: z.array(id).min(2).max(100),
+    linkId: id.optional(),
+  }),
+  z.object({ type: z.literal('item.unlink'), ...seqId, itemIds: z.array(id).min(1).max(1000) }),
+  z.object({
+    type: z.literal('keyframe.set'),
+    ...seqId,
+    itemId: id,
+    property: keyframeProperty,
+    t: flicks,
+    value: z.number().min(-3600).max(3600),
+    easing: easing.optional(),
+  }),
+  z.object({
+    type: z.literal('keyframe.remove'),
+    ...seqId,
+    itemId: id,
+    property: keyframeProperty,
+    t: flicks,
+  }),
+  z.object({
+    type: z.literal('keyframe.clear'),
+    ...seqId,
+    itemId: id,
+    property: keyframeProperty,
+    t: flicks,
+  }),
   z.object({
     type: z.literal('item.moveMany'),
     ...seqId,

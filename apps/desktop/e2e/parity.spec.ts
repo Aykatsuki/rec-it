@@ -102,7 +102,7 @@ test.describe('preview and export match', () => {
   const env = (): Record<string, string> =>
     bins!.source === 'path' ? {} : { RECIT_FFMPEG_PATH: bins!.ffmpeg };
 
-  test('golden frames: fill, fit with offset and rotation, layered still', async () => {
+  test('golden frames: fill, fit with offset and rotation, layered still, keyframes', async () => {
     const userData = tempUserData();
     const shots = join(userData, 'shots');
     mkdirSync(shots);
@@ -159,6 +159,33 @@ test.describe('preview and export match', () => {
                 duration: 2 * S,
                 transform: { fit: 'fit', scale: 0.7, x: 0.08, y: -0.05, rotation: 30 },
               },
+              // 6–8 s: keyframed — grows, turns and slides across (perspective path in export).
+              {
+                type: 'item.add',
+                sequenceId: seq.id,
+                trackId: v1!.id,
+                assetId: clip,
+                id: 'item_case4',
+                start: 6 * S,
+                sourceIn: 0.5 * S,
+                duration: 2 * S,
+                transform: { fit: 'fit' },
+              },
+              ...[
+                ['scale', 0.5 * S, 0.5],
+                ['scale', 2.5 * S, 1.1],
+                ['rotation', 0.5 * S, 0],
+                ['rotation', 2.5 * S, 60],
+                ['x', 0.5 * S, -0.2],
+                ['x', 2.5 * S, 0.2],
+              ].map(([property, t, value]) => ({
+                type: 'keyframe.set',
+                sequenceId: seq.id,
+                itemId: 'item_case4',
+                property,
+                t,
+                value,
+              })),
               // 4–6 s: a still on V2 over the video, rotated the other way.
               {
                 type: 'item.add',
@@ -182,9 +209,9 @@ test.describe('preview and export match', () => {
           },
         });
       }, s);
-      await expect(page.getByTestId('timeline-item')).toHaveCount(4);
+      await expect(page.getByTestId('timeline-item')).toHaveCount(5);
 
-      const times = [1, 3, 5];
+      const times = [1, 3, 5, 7];
       const stage = page.locator('.program');
       for (const t of times) {
         await page.getByTestId('ruler').click({ position: { x: t * ZOOM, y: 10 } });

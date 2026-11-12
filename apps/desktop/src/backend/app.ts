@@ -340,6 +340,7 @@ export function fingerprint(value: string): string {
 /** Makes a safe file name (Windows rules) with the given extension. */
 export function cleanFileName(name: string, ext: string): string {
   let base = name
+    // eslint-disable-next-line no-control-regex -- control characters are not allowed in file names
     .replace(/[<>:"/\\|?*\u0000-\u001f]/g, '')
     .replace(/[. ]+$/, '')
     .trim();

@@ -8,6 +8,7 @@ import {
   History,
   emptyDocument,
   secondsToFlicks,
+  valueAt,
   type AssetInfo,
   type Command,
 } from '@rec-it/core';
@@ -17,6 +18,7 @@ import {
   ExportPlanError,
   parseLoudnorm,
   pickExportEncoder,
+  keyframeExpr,
   planExport,
   planFrame,
   planLoudnessAnalysis,
@@ -473,6 +475,69 @@ describe.skipIf(!bins)('export renders correct frames (real FFmpeg)', () => {
     expect(colour(pixel(out, 1, 88, 158))).toBe('red');
   }, 90_000);
 
+  it('animates position, size and rotation with keyframes', async () => {
+    const { out } = await render(
+      ({ v1 }) =>
+        [
+          { type: 'item.add', trackId: v1, assetId: 'red', start: 0, id: 'r' },
+          { type: 'item.update', itemId: 'r', transform: { fit: 'fit' } },
+          // Grows from 30% to 100% and turns 90° over two seconds, then holds.
+          { type: 'keyframe.set', itemId: 'r', property: 'scale', t: 0, value: 0.3 },
+          { type: 'keyframe.set', itemId: 'r', property: 'scale', t: s(2), value: 1 },
+          { type: 'keyframe.set', itemId: 'r', property: 'rotation', t: 0, value: 0 },
+          { type: 'keyframe.set', itemId: 'r', property: 'rotation', t: s(2), value: 90 },
+          { type: 'keyframe.set', itemId: 'r', property: 'y', t: 0, value: -0.3 },
+          { type: 'keyframe.set', itemId: 'r', property: 'y', t: s(2), value: 0 },
+        ] as unknown as Omit<Command, 'sequenceId'>[],
+    );
+    // Start: a small band above the centre (y -0.3 → centre at 128 px of 640).
+    expect(colour(pixel(out, 0.05, 176, 124))).toBe('red');
+    expect(colour(pixel(out, 0.05, 176, 316))).toBe('black');
+    expect(colour(pixel(out, 0.05, 20, 124))).toBe('black');
+    // End: full-size band turned upright and centred, as in the static rotation test.
+    expect(colour(pixel(out, 2.5, 176, 150))).toBe('red');
+    expect(colour(pixel(out, 2.5, 176, 480))).toBe('red');
+    expect(colour(pixel(out, 2.5, 20, 316))).toBe('black');
+  }, 60_000);
+
+  it('fades volume with keyframes', async () => {
+    const { out } = await render(
+      ({ a1, v1 }) =>
+        [
+          { type: 'item.add', trackId: v1, assetId: 'blue', start: 0 },
+          { type: 'item.add', trackId: a1, assetId: 'tone', start: 0, duration: s(3), id: 't' },
+          { type: 'keyframe.set', itemId: 't', property: 'volume', t: 0, value: 0 },
+          { type: 'keyframe.set', itemId: 't', property: 'volume', t: s(2), value: 1 },
+        ] as unknown as Omit<Command, 'sequenceId'>[],
+      { loudness: null },
+    );
+    const level = (from: number) => {
+      const r = spawnSync(
+        bins!.ffmpeg,
+        [
+          '-hide_banner',
+          '-ss',
+          String(from),
+          '-t',
+          '0.3',
+          '-i',
+          out,
+          '-af',
+          'volumedetect',
+          '-f',
+          'null',
+          '-',
+        ],
+        { encoding: 'utf8' },
+      );
+      return Number(/mean_volume: (-?[\d.]+) dB/.exec(r.stderr)?.[1] ?? -99);
+    };
+    // Near-silent at the start, about 12 dB louder half-way, full level at the end.
+    expect(level(0)).toBeLessThan(-35);
+    expect(level(1)).toBeGreaterThan(level(0.2) + 8);
+    expect(level(2.4)).toBeGreaterThan(level(1));
+  }, 60_000);
+
   it('renders a single frame with the export graph', async () => {
     const h = new History(emptyDocument());
     h.execute(
@@ -544,5 +609,31 @@ describe('pickExportEncoder', () => {
       'hevc_amf',
     );
     expect(pickExportEncoder('hevc', 'auto', { encoders: {}, nvencUsable: null })).toBeNull();
+  });
+});
+
+describe('keyframeExpr', () => {
+  it('matches valueAt for linear, eased and held segments', () => {
+    const keys = [
+      { t: s(1), v: 0, e: 'linear' as const },
+      { t: s(2), v: 10, e: 'ease' as const },
+      { t: s(3), v: 20, e: 'hold' as const },
+      { t: s(4), v: 0, e: 'linear' as const },
+    ];
+    const expr = keyframeExpr(keys, 'T');
+    // Evaluate FFmpeg's expression syntax with a tiny JS translation.
+    const evaluate = (T: number) =>
+      Function(
+        'T',
+        'lt',
+        'if_',
+        `return ${expr.replace(/if\(/g, 'if_(')}`,
+      )(
+        T,
+        (a: number, b: number) => (a < b ? 1 : 0),
+        (c: number, a: number, b: number) => (c ? a : b),
+      ) as number;
+    for (const sec of [0, 1, 1.25, 1.5, 2, 2.3, 2.7, 3, 3.5, 4, 5])
+      expect(evaluate(sec)).toBeCloseTo(valueAt(keys, s(sec)), 6);
   });
 });

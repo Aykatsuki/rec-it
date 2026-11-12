@@ -2,12 +2,13 @@ import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } f
 import {
   computeLayout,
   normalizeAngle,
+  transformAt,
   type Sequence,
   type TimelineItem,
   type Track,
   type Transform,
 } from '@rec-it/core';
-import { edit } from '../edit';
+import { commitTransform, primaryClip, toFlicks } from '../edit';
 import { useApp } from '../store';
 
 /** A clip that is on screen at the playhead. */
@@ -37,10 +38,12 @@ interface Drag {
 /** Snap distance in screen pixels. */
 const SNAP_PX = 6;
 
+/** What a clip looks like now: the transform being dragged, else its (keyframed) transform at `at` seconds. */
 export const transformFor = (
   item: TimelineItem,
   draft: { itemId: string; transform: Transform } | null,
-): Transform => (draft?.itemId === item.id ? draft.transform : item.transform);
+  at: number = useApp.getState().playhead,
+): Transform => (draft?.itemId === item.id ? draft.transform : transformAt(item, toFlicks(at)));
 
 function centreOf(layer: VisibleLayer, seq: Sequence, t: Transform) {
   const l = computeLayout(layer.srcW, layer.srcH, seq.width, seq.height, t);
@@ -77,13 +80,16 @@ export function TransformOverlay({
   const selected = useApp((s) => s.selectedItemIds);
   const draft = useApp((s) => s.draftTransform);
   const snapping = useApp((s) => s.snapping);
+  // Keyframed clips change shape as the playhead moves.
+  const playhead = useApp((s) => s.playhead);
   const surface = useRef<HTMLDivElement>(null);
   const drag = useRef<Drag | null>(null);
   const [guides, setGuides] = useState<{ v: boolean; h: boolean }>({ v: false, h: false });
   const [label, setLabel] = useState<string | null>(null);
   const k = box.w / seq.width || 1;
 
-  const target = selected.length === 1 ? layers.find((l) => l.item.id === selected[0]) : undefined;
+  const primary = primaryClip(seq, selected);
+  const target = primary ? layers.find((l) => l.item.id === primary.item.id) : undefined;
 
   const toSeq = (e: { clientX: number; clientY: number }) => {
     const rect = surface.current!.getBoundingClientRect();
@@ -93,7 +99,7 @@ export function TransformOverlay({
   const topmostAt = (p: { x: number; y: number }) =>
     [...layers]
       .sort((a, b) => b.layer - a.layer)
-      .find((l) => hits(l, seq, transformFor(l.item, draft), p));
+      .find((l) => hits(l, seq, transformFor(l.item, draft, playhead), p));
 
   const cancel = () => {
     drag.current = null;
@@ -223,12 +229,8 @@ export function TransformOverlay({
     setLabel(null);
     const draftNow = useApp.getState().draftTransform;
     if (d.changed && draftNow?.itemId === d.layer.item.id) {
-      await edit({
-        type: 'item.update',
-        sequenceId: seq.id,
-        itemId: d.layer.item.id,
-        transform: draftNow.transform,
-      });
+      // Animated properties get a keyframe at the playhead; others change their fixed value.
+      await commitTransform(seq, d.layer.item, draftNow.transform, useApp.getState().playhead);
     }
     // Keep the draft until the edited document has arrived, so the clip does not jump back.
     if (useApp.getState().draftTransform === draftNow) useApp.getState().setDraftTransform(null);
@@ -236,7 +238,7 @@ export function TransformOverlay({
 
   let frame = null;
   if (target) {
-    const t = transformFor(target.item, draft);
+    const t = transformFor(target.item, draft, playhead);
     const l = computeLayout(target.srcW, target.srcH, seq.width, seq.height, t);
     const corners: Corner[] = ['nw', 'ne', 'se', 'sw'];
     frame = (

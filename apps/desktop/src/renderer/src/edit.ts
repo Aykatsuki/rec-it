@@ -1,13 +1,19 @@
 // Timeline editing helpers used by the timeline, inspector and shortcuts.
 import {
   FLICKS_PER_SECOND,
+  hasKeyframes,
   normalizeAngle,
+  sourceTimeAt,
+  transformAt,
+  volumeAt,
+  type Keyframe,
   sequenceDuration,
   type Rational,
   type Sequence,
   type TimelineItem,
   type Track,
   type Transform,
+  type KeyframeProperty,
 } from '@rec-it/core';
 import type { CommandInput, MediaAsset } from '@rec-it/ipc-contract';
 import { backend } from './api';
@@ -172,6 +178,8 @@ export function copySelected(): boolean {
     volume: item.volume,
     muted: item.muted,
     transform: { ...item.transform },
+    ...(item.keyframes ? { keyframes: structuredClone(item.keyframes) } : {}),
+    ...(item.linkId ? { linkKey: item.linkId } : {}),
   }));
   useApp.setState({ clipboard });
   return true;
@@ -220,7 +228,26 @@ export async function paste(at?: number, trackId?: string): Promise<void> {
       muted: clip.muted,
       transform: clip.transform,
     });
+    for (const [property, keys] of Object.entries(clip.keyframes ?? {}))
+      for (const k of keys ?? [])
+        commands.push({
+          type: 'keyframe.set',
+          sequenceId: seq.id,
+          itemId: id,
+          property: property as KeyframeProperty,
+          t: k.t,
+          value: k.v,
+          easing: k.e,
+        });
   }
+  // Pasted copies of linked clips are linked to each other (not to the originals).
+  const groups = new Map<string, string[]>();
+  clips.forEach((clip, i) => {
+    if (clip.linkKey && ids[i])
+      groups.set(clip.linkKey, [...(groups.get(clip.linkKey) ?? []), ids[i]!]);
+  });
+  for (const itemIds of groups.values())
+    if (itemIds.length > 1) commands.push({ type: 'item.link', sequenceId: seq.id, itemIds });
   if (commands.length && (await edit({ type: 'batch', commands } as CommandInput)))
     state.selectItems(ids);
 }
@@ -309,6 +336,8 @@ export async function detachAudio(itemId: string): Promise<void> {
       volume: item.volume,
     },
     { type: 'item.update', sequenceId: seq.id, itemId: item.id, muted: true },
+    // Linked, so the picture and its sound stay in sync when edited.
+    { type: 'item.link', sequenceId: seq.id, itemIds: [item.id, id] },
   );
   if (await edit({ type: 'batch', commands } as CommandInput)) useApp.getState().selectItems([id]);
 }
@@ -343,4 +372,175 @@ export function clipsAtPlayhead(seq: Sequence | null): string[] {
     .flatMap((tr) => tr.items)
     .filter((i) => t > i.start && t < i.start + i.duration)
     .map((i) => i.id);
+}
+
+/** Clips linked to any of `ids` (not including them). */
+export function linkedPartners(seq: Sequence | null, ids: string[]): string[] {
+  const all = (seq?.tracks ?? []).flatMap((t) => t.items);
+  const links = new Set(all.filter((i) => ids.includes(i.id) && i.linkId).map((i) => i.linkId));
+  return all.filter((i) => i.linkId && links.has(i.linkId) && !ids.includes(i.id)).map((i) => i.id);
+}
+
+/** True when the item has a linked partner on the timeline. */
+export function isLinked(seq: Sequence | null, item: TimelineItem): boolean {
+  return !!item.linkId && linkedPartners(seq, [item.id]).length > 0;
+}
+
+export async function linkSelected(link: boolean): Promise<void> {
+  const seq = activeSequence(useApp.getState());
+  const ids = useApp.getState().selectedItemIds;
+  if (!seq || !ids.length) return;
+  await edit(
+    link
+      ? { type: 'item.link', sequenceId: seq.id, itemIds: ids }
+      : { type: 'item.unlink', sequenceId: seq.id, itemIds: ids },
+  );
+}
+
+/**
+ * The clip the inspector and transform box work on: the only selected clip, or — when the
+ * selection is one linked group — its picture (video-track) clip.
+ */
+export function primaryClip(
+  seq: Sequence | null,
+  ids: string[],
+): { track: Track; item: TimelineItem } | null {
+  if (ids.length === 1) return findItem(seq, ids[0]!);
+  const found = ids.map((id) => findItem(seq, id)).filter((f) => f !== null);
+  if (found.length !== ids.length || !found.length) return null;
+  const link = found[0]!.item.linkId;
+  if (!link || !found.every((f) => f.item.linkId === link)) return null;
+  return found.find((f) => f.track.kind === 'video') ?? found[0]!;
+}
+
+// ---------------------------------------------------------------------------------------------
+// Keyframes. Times are timeline seconds (usually the playhead); keyframes are stored in source
+// time so they stay on the same picture when a clip is trimmed (see @rec-it/core).
+
+const TRANSFORM_KEYS = ['x', 'y', 'scale', 'rotation'] as const;
+
+/** Keyframe of `property` at timeline time `at`, if there is one (within half a frame). */
+export function keyframeAt(
+  seq: Sequence,
+  item: TimelineItem,
+  property: KeyframeProperty,
+  at: number,
+): Keyframe | undefined {
+  const t = sourceTimeAt(item, toFlicks(at));
+  const half = (FLICKS_PER_SECOND * seq.fps.den) / seq.fps.num / 2;
+  return item.keyframes?.[property]?.find((k) => Math.abs(k.t - t) <= half);
+}
+
+/**
+ * Commits a transform change made at timeline time `at` as one undo step: animated properties
+ * get a keyframe there, the others change their static value.
+ */
+export async function commitTransform(
+  seq: Sequence,
+  item: TimelineItem,
+  next: Partial<Transform>,
+  at: number,
+): Promise<boolean> {
+  const current = transformAt(item, toFlicks(at));
+  const t = sourceTimeAt(item, toFlicks(at));
+  const commands: CommandInput[] = [];
+  const statics: Partial<Transform> = {};
+  if (next.fit !== undefined && next.fit !== item.transform.fit) statics.fit = next.fit;
+  for (const p of TRANSFORM_KEYS) {
+    const v = next[p];
+    if (v === undefined || Math.abs(v - current[p]) < 1e-9) continue;
+    if (hasKeyframes(item, p))
+      commands.push({
+        type: 'keyframe.set',
+        sequenceId: seq.id,
+        itemId: item.id,
+        property: p,
+        t,
+        value: v,
+      });
+    else statics[p] = v;
+  }
+  if (Object.keys(statics).length)
+    commands.push({ type: 'item.update', sequenceId: seq.id, itemId: item.id, transform: statics });
+  if (!commands.length) return true;
+  return edit(commands.length === 1 ? commands[0]! : ({ type: 'batch', commands } as CommandInput));
+}
+
+/** Sets the volume at `at`: a keyframe when volume is animated, otherwise the clip volume. */
+export async function commitVolume(
+  seq: Sequence,
+  item: TimelineItem,
+  value: number,
+  at: number,
+): Promise<boolean> {
+  if (Math.abs(value - volumeAt(item, toFlicks(at))) < 1e-9) return true;
+  return hasKeyframes(item, 'volume')
+    ? edit({
+        type: 'keyframe.set',
+        sequenceId: seq.id,
+        itemId: item.id,
+        property: 'volume',
+        t: sourceTimeAt(item, toFlicks(at)),
+        value,
+      })
+    : edit({ type: 'item.update', sequenceId: seq.id, itemId: item.id, volume: value });
+}
+
+/** The keyframe button: adds a keyframe at `at` with the current value, or removes the one there. */
+export async function toggleKeyframe(
+  seq: Sequence,
+  item: TimelineItem,
+  property: KeyframeProperty,
+  at: number,
+): Promise<void> {
+  const existing = keyframeAt(seq, item, property, at);
+  if (existing) {
+    await edit({
+      type: 'keyframe.remove',
+      sequenceId: seq.id,
+      itemId: item.id,
+      property,
+      t: existing.t,
+    });
+    return;
+  }
+  const value =
+    property === 'volume'
+      ? volumeAt(item, toFlicks(at))
+      : transformAt(item, toFlicks(at))[property];
+  await edit({
+    type: 'keyframe.set',
+    sequenceId: seq.id,
+    itemId: item.id,
+    property,
+    t: sourceTimeAt(item, toFlicks(at)),
+    value,
+  });
+}
+
+/** Timeline times (seconds) of an item's keyframes, optionally for one property. */
+export function keyframeTimes(item: TimelineItem, property?: KeyframeProperty): number[] {
+  const lists = property
+    ? [item.keyframes?.[property] ?? []]
+    : Object.values(item.keyframes ?? {}).map((k) => k ?? []);
+  const times = new Set<number>();
+  for (const keys of lists)
+    for (const k of keys) times.add(toSeconds(item.start + (k.t - item.sourceIn)));
+  return [...times].sort((a, b) => a - b);
+}
+
+/** Moves the playhead to the previous or next keyframe of the item inside the clip. */
+export function jumpToKeyframe(item: TimelineItem, dir: -1 | 1, property?: KeyframeProperty): void {
+  const { playhead, setPlayhead, setPlaying } = useApp.getState();
+  const inside = keyframeTimes(item, property).filter(
+    (t) => t >= toSeconds(item.start) - 1e-6 && t < itemEndSec(item),
+  );
+  const target =
+    dir < 0
+      ? inside.filter((t) => t < playhead - 1e-4).at(-1)
+      : inside.find((t) => t > playhead + 1e-4);
+  if (target !== undefined) {
+    setPlaying(false);
+    setPlayhead(target);
+  }
 }

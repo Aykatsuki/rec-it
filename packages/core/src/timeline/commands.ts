@@ -1,5 +1,5 @@
 import { createId } from '../ids';
-import { snapToFrame, secondsToFlicks, type Flicks, type Rational } from '../time';
+import { frameDuration, snapToFrame, secondsToFlicks, type Flicks, type Rational } from '../time';
 import {
   DEFAULT_TRANSFORM,
   itemEnd,
@@ -11,6 +11,9 @@ import {
   type Track,
   type TrackKind,
   type Transform,
+  type Easing,
+  type KeyframeProperty,
+  valueAt,
 } from './model';
 
 /** Default length for still images dropped on the timeline. */
@@ -65,7 +68,48 @@ export type Command =
       sequenceId: string;
       moves: { itemId: string; trackId: string; start: number }[];
     }
-  | { type: 'item.trim'; sequenceId: string; itemId: string; edge: 'start' | 'end'; time: number }
+  | {
+      type: 'item.trim';
+      sequenceId: string;
+      itemId: string;
+      edge: 'start' | 'end';
+      time: number;
+      /** Internal: trim this clip only, not its linked partners. */
+      solo?: boolean;
+    }
+  /** Links clips (at least two) so they edit together; `linkId` is generated if omitted. */
+  | { type: 'item.link'; sequenceId: string; itemIds: string[]; linkId?: string }
+  /** Unlinks these clips and their partners. */
+  | { type: 'item.unlink'; sequenceId: string; itemIds: string[] }
+  /** Adds or replaces the keyframe at source time `t` (snapped to the frame grid). */
+  | {
+      type: 'keyframe.set';
+      sequenceId: string;
+      itemId: string;
+      property: KeyframeProperty;
+      t: number;
+      value: number;
+      easing?: Easing;
+    }
+  /**
+   * Removes the keyframe at `t`. Removing the last one keeps its value as the static value, so
+   * nothing jumps.
+   */
+  | {
+      type: 'keyframe.remove';
+      sequenceId: string;
+      itemId: string;
+      property: KeyframeProperty;
+      t: number;
+    }
+  /** Removes all keyframes of a property, keeping the value at `t` as the static value. */
+  | {
+      type: 'keyframe.clear';
+      sequenceId: string;
+      itemId: string;
+      property: KeyframeProperty;
+      t: number;
+    }
   | { type: 'item.split'; sequenceId: string; time: number; itemIds?: string[] }
   | { type: 'item.remove'; sequenceId: string; itemIds: string[]; ripple?: boolean }
   | {
@@ -107,6 +151,8 @@ function unlocked(track: Track): void {
   if (track.locked) fail(`Track ${track.name} is locked.`);
 }
 
+const frameOf = (seq: Sequence) => frameDuration(seq.fps);
+
 const snap = (seq: Sequence, t: number) =>
   Math.max(0, snapToFrame(Math.round(t) as Flicks, seq.fps)) as Flicks;
 
@@ -132,6 +178,8 @@ function clearRange(track: Track, start: number, end: number, exceptId?: string)
       next.push({
         ...item,
         id: a < start ? createId('item') : item.id,
+        // An overwrite that cuts a linked clip in two keeps only the first part linked.
+        ...(a < start ? { linkId: undefined } : {}),
         start: end as Flicks,
         duration: (b - end) as Flicks,
         sourceIn: (item.sourceIn + (end - a)) as Flicks,
@@ -257,27 +305,37 @@ export function applyCommand(doc: ProjectDocument, command: Command, assets: Ass
       return;
     }
     case 'item.move': {
-      const seq = sequenceOf(doc, command.sequenceId);
-      const from = findItem(seq, command.itemId);
-      const to = trackOf(seq, command.trackId);
-      unlocked(from.track);
-      unlocked(to);
-      if (to.kind !== from.track.kind) {
-        const asset = assets(from.item.assetId);
-        if (!asset) fail('That media is missing.');
-        else checkPlacement(to, asset.kind, asset.hasAudio);
-      }
-      const item = { ...from.item, start: snap(seq, command.start) };
-      from.track.items.splice(from.index, 1);
-      clearRange(to, item.start, itemEnd(item));
-      to.items.push(item);
-      sortItems(to);
+      // Same as moving a group of one (linked partners follow).
+      applyCommand(
+        doc,
+        {
+          type: 'item.moveMany',
+          sequenceId: command.sequenceId,
+          moves: [{ itemId: command.itemId, trackId: command.trackId, start: command.start }],
+        },
+        assets,
+      );
       return;
     }
     case 'item.moveMany': {
       const seq = sequenceOf(doc, command.sequenceId);
+      // Linked partners move by the same amount, staying on their own tracks.
+      const moves = [...command.moves];
+      const moving = new Set(moves.map((m) => m.itemId));
+      for (const move of command.moves) {
+        const { item } = findItem(seq, move.itemId);
+        for (const p of partnersOf(seq, item)) {
+          if (moving.has(p.item.id)) continue;
+          moving.add(p.item.id);
+          moves.push({
+            itemId: p.item.id,
+            trackId: p.track.id,
+            start: Math.max(0, p.item.start + (move.start - item.start)),
+          });
+        }
+      }
       // Take every moving clip out first so they cannot overwrite each other on the way.
-      const lifted = command.moves.map((move) => {
+      const lifted = moves.map((move) => {
         const from = findItem(seq, move.itemId);
         const to = trackOf(seq, move.trackId);
         unlocked(from.track);
@@ -289,8 +347,7 @@ export function applyCommand(doc: ProjectDocument, command: Command, assets: Ass
         }
         return { item: { ...from.item, start: snap(seq, move.start) }, to };
       });
-      const ids = new Set(command.moves.map((m) => m.itemId));
-      for (const track of seq.tracks) track.items = track.items.filter((i) => !ids.has(i.id));
+      for (const track of seq.tracks) track.items = track.items.filter((i) => !moving.has(i.id));
       for (const { item, to } of lifted) {
         clearRange(to, item.start, itemEnd(item));
         to.items.push(item);
@@ -307,34 +364,27 @@ export function applyCommand(doc: ProjectDocument, command: Command, assets: Ass
       return;
     }
     case 'item.trim': {
+      trimOne(doc, command, assets);
+      if (command.solo) return;
+      // Linked partners get the same edge, each limited by its own media and neighbours.
       const seq = sequenceOf(doc, command.sequenceId);
-      const { track, item, index } = findItem(seq, command.itemId);
-      unlocked(track);
-      const asset = assets(item.assetId);
-      const sourceEnd = asset?.duration ?? Infinity;
-      const minLen = Math.max(snap(seq, MIN_DURATION), 1);
-      const prevEnd = index > 0 ? itemEnd(track.items[index - 1]!) : 0;
-      const nextStart = track.items[index + 1]?.start ?? Infinity;
-      const time = snap(seq, command.time);
-      if (command.edge === 'start') {
-        // The earliest possible start is limited by the source's first frame and the previous clip.
-        const earliest = Math.max(prevEnd, item.start - item.sourceIn);
-        const newStart = Math.min(Math.max(time, earliest), itemEnd(item) - minLen);
-        const delta = newStart - item.start;
-        item.sourceIn = (item.sourceIn + delta) as Flicks;
-        item.duration = (item.duration - delta) as Flicks;
-        item.start = newStart as Flicks;
-      } else {
-        const latest = Math.min(nextStart, item.start + (sourceEnd - item.sourceIn));
-        const newEnd = Math.max(Math.min(time, latest), item.start + minLen);
-        item.duration = (newEnd - item.start) as Flicks;
-      }
+      const { item } = findItem(seq, command.itemId);
+      const edge = command.edge === 'start' ? item.start : itemEnd(item);
+      for (const p of partnersOf(seq, item))
+        trimOne(doc, { ...command, itemId: p.item.id, time: edge, solo: true }, assets);
       return;
     }
     case 'item.split': {
       const seq = sequenceOf(doc, command.sequenceId);
       const time = snap(seq, command.time);
       const only = command.itemIds ? new Set(command.itemIds) : null;
+      if (only)
+        for (const id of [...only]) {
+          const found = seq.tracks.flatMap((t) => t.items).find((i) => i.id === id);
+          if (found) for (const p of partnersOf(seq, found)) only.add(p.item.id);
+        }
+      // The right-hand pieces of linked clips are linked to each other with a new id.
+      const newLinks = new Map<string, string>();
       let split = 0;
       for (const track of seq.tracks) {
         if (track.locked) continue;
@@ -347,12 +397,18 @@ export function applyCommand(doc: ProjectDocument, command: Command, assets: Ass
           }
           const first = time - item.start;
           next.push({ ...item, duration: first as Flicks });
+          let linkId = item.linkId;
+          if (linkId) {
+            if (!newLinks.has(linkId)) newLinks.set(linkId, createId('link'));
+            linkId = newLinks.get(linkId);
+          }
           next.push({
             ...item,
             id: createId('item'),
             start: time,
             duration: (item.duration - first) as Flicks,
             sourceIn: (item.sourceIn + first) as Flicks,
+            ...(linkId ? { linkId } : {}),
           });
           split++;
         }
@@ -364,6 +420,9 @@ export function applyCommand(doc: ProjectDocument, command: Command, assets: Ass
     case 'item.remove': {
       const seq = sequenceOf(doc, command.sequenceId);
       const ids = new Set(command.itemIds);
+      for (const track of seq.tracks)
+        for (const item of track.items)
+          if (ids.has(item.id)) for (const p of partnersOf(seq, item)) ids.add(p.item.id);
       for (const track of seq.tracks) {
         const removed = track.items.filter((i) => ids.has(i.id));
         if (!removed.length) continue;
@@ -381,10 +440,85 @@ export function applyCommand(doc: ProjectDocument, command: Command, assets: Ass
       }
       return;
     }
+    case 'item.link': {
+      const seq = sequenceOf(doc, command.sequenceId);
+      const items = [...new Set(command.itemIds)].map((id) => findItem(seq, id));
+      if (items.length < 2) fail('Select at least two clips to link.');
+      const linkId = command.linkId ?? createId('link');
+      for (const { track, item } of items) {
+        unlocked(track);
+        item.linkId = linkId;
+      }
+      return;
+    }
+    case 'item.unlink': {
+      const seq = sequenceOf(doc, command.sequenceId);
+      for (const id of command.itemIds) {
+        const { track, item } = findItem(seq, id);
+        unlocked(track);
+        for (const p of partnersOf(seq, item)) delete p.item.linkId;
+        delete item.linkId;
+      }
+      return;
+    }
+    case 'keyframe.set': {
+      const seq = sequenceOf(doc, command.sequenceId);
+      const { track, item } = findItem(seq, command.itemId);
+      unlocked(track);
+      const half = Math.floor(frameOf(seq) / 2);
+      // Snap to the sequence's frame grid as seen on the timeline.
+      const local = snap(seq, item.start + (command.t - item.sourceIn)) - item.start;
+      const t = (item.sourceIn + local) as Flicks;
+      const [lo, hi] = KEY_LIMITS[command.property];
+      const v = Math.min(hi, Math.max(lo, command.value));
+      if (!Number.isFinite(v)) fail('That value is not a number.');
+      item.keyframes ??= {};
+      const keys = (item.keyframes[command.property] ??= []);
+      const at = keys.findIndex((k) => Math.abs(k.t - t) <= half);
+      const easing = command.easing ?? (at >= 0 ? keys[at]!.e : 'linear');
+      if (at >= 0) keys[at] = { t: keys[at]!.t, v, e: easing };
+      else keys.push({ t, v, e: easing });
+      keys.sort((a, b) => a.t - b.t);
+      return;
+    }
+    case 'keyframe.remove': {
+      const seq = sequenceOf(doc, command.sequenceId);
+      const { track, item } = findItem(seq, command.itemId);
+      unlocked(track);
+      const keys = item.keyframes?.[command.property];
+      const half = Math.floor(frameOf(seq) / 2);
+      const at = keys?.findIndex((k) => Math.abs(k.t - command.t) <= half) ?? -1;
+      if (!keys || at < 0) fail('There is no keyframe there.');
+      const [removed] = keys!.splice(at, 1);
+      if (!keys!.length) {
+        delete item.keyframes![command.property];
+        setStatic(item, command.property, removed!.v);
+      }
+      if (item.keyframes && !Object.keys(item.keyframes).length) delete item.keyframes;
+      return;
+    }
+    case 'keyframe.clear': {
+      const seq = sequenceOf(doc, command.sequenceId);
+      const { track, item } = findItem(seq, command.itemId);
+      unlocked(track);
+      const keys = item.keyframes?.[command.property];
+      if (!keys?.length) return;
+      setStatic(item, command.property, valueAt(keys, command.t));
+      delete item.keyframes![command.property];
+      if (!Object.keys(item.keyframes!).length) delete item.keyframes;
+      return;
+    }
     case 'item.update': {
       const seq = sequenceOf(doc, command.sequenceId);
       const { track, item } = findItem(seq, command.itemId);
       unlocked(track);
+      // A static value replaces that property's animation.
+      const replaced = [
+        ...(command.volume !== undefined ? ['volume'] : []),
+        ...Object.keys(command.transform ?? {}).filter((k) => k !== 'fit'),
+      ] as KeyframeProperty[];
+      for (const p of replaced) delete item.keyframes?.[p];
+      if (item.keyframes && !Object.keys(item.keyframes).length) delete item.keyframes;
       if (command.volume !== undefined) item.volume = clampVolume(command.volume);
       if (command.muted !== undefined) item.muted = command.muted;
       if (command.transform)
@@ -392,6 +526,60 @@ export function applyCommand(doc: ProjectDocument, command: Command, assets: Ass
       return;
     }
   }
+}
+
+/** Trims one clip (no linked partners). */
+function trimOne(
+  doc: ProjectDocument,
+  command: Extract<Command, { type: 'item.trim' }>,
+  assets: AssetLookup,
+): void {
+  const seq = sequenceOf(doc, command.sequenceId);
+  const { track, item, index } = findItem(seq, command.itemId);
+  unlocked(track);
+  const asset = assets(item.assetId);
+  const sourceEnd = asset?.duration ?? Infinity;
+  const minLen = Math.max(snap(seq, MIN_DURATION), 1);
+  const prevEnd = index > 0 ? itemEnd(track.items[index - 1]!) : 0;
+  const nextStart = track.items[index + 1]?.start ?? Infinity;
+  const time = snap(seq, command.time);
+  if (command.edge === 'start') {
+    // The earliest possible start is limited by the source's first frame and the previous clip.
+    const earliest = Math.max(prevEnd, item.start - item.sourceIn);
+    const newStart = Math.min(Math.max(time, earliest), itemEnd(item) - minLen);
+    const delta = newStart - item.start;
+    item.sourceIn = (item.sourceIn + delta) as Flicks;
+    item.duration = (item.duration - delta) as Flicks;
+    item.start = newStart as Flicks;
+  } else {
+    const latest = Math.min(nextStart, item.start + (sourceEnd - item.sourceIn));
+    const newEnd = Math.max(Math.min(time, latest), item.start + minLen);
+    item.duration = (newEnd - item.start) as Flicks;
+  }
+}
+
+/** Other clips linked to `item`. */
+function partnersOf(seq: Sequence, item: TimelineItem): { track: Track; item: TimelineItem }[] {
+  if (!item.linkId) return [];
+  return seq.tracks.flatMap((track) =>
+    track.items
+      .filter((i) => i.linkId === item.linkId && i.id !== item.id)
+      .map((i) => ({ track, item: i })),
+  );
+}
+
+const KEY_LIMITS: Record<KeyframeProperty, [number, number]> = {
+  x: [-2, 2],
+  y: [-2, 2],
+  scale: [0.05, 10],
+  rotation: [-3600, 3600],
+  volume: [0, 2],
+};
+
+/** Sets a property's static value (used when its last keyframe goes away). */
+function setStatic(item: TimelineItem, p: KeyframeProperty, v: number): void {
+  if (p === 'volume') item.volume = clampVolume(v);
+  else item.transform = cleanTransform({ ...item.transform, [p]: v });
 }
 
 const clampVolume = (v: number) => Math.min(2, Math.max(0, v));

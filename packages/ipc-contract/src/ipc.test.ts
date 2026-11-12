@@ -154,6 +154,7 @@ describe('contracts', () => {
       transcriptionDevice: 'auto',
       cacheDirectory: null,
       reopenLastProject: true,
+      exportDirectory: null,
     });
     expect(settingsPatchSchema.safeParse({ aiEnabled: false }).success).toBe(true);
     expect(settingsPatchSchema.safeParse({ isAdmin: true }).success).toBe(false);
