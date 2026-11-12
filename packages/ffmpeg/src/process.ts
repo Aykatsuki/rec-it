@@ -3,10 +3,25 @@ import { spawn, type ChildProcess } from 'node:child_process';
 /** Every FFmpeg process currently running, so they can all be stopped if the app dies. */
 const running = new Set<ChildProcess>();
 
+let tracker: ((pids: number[]) => void) | null = null;
+
+/**
+ * Called with the current FFmpeg process ids whenever one starts or ends. The backend writes
+ * them to disk so a later start can end FFmpeg processes orphaned by a crash (ADR-024).
+ */
+export function setFfmpegTracker(fn: ((pids: number[]) => void) | null): void {
+  tracker = fn;
+}
+
+function track(): void {
+  tracker?.([...running].map((c) => c.pid).filter((p): p is number => typeof p === 'number'));
+}
+
 /** Kills all running FFmpeg processes immediately. Safe to call from an 'exit' handler. */
 export function killAllFfmpeg(): void {
   for (const child of running) child.kill('SIGKILL');
   running.clear();
+  track();
 }
 import { createInterface } from 'node:readline';
 
@@ -76,6 +91,7 @@ export function runFfmpeg(
       stdio: ['ignore', 'pipe', 'pipe'],
     });
     running.add(child);
+    track();
     let stderrTail = '';
     let cancelled = false;
 
@@ -107,11 +123,13 @@ export function runFfmpeg(
 
     child.on('error', (error) => {
       running.delete(child);
+      track();
       signal?.removeEventListener('abort', onAbort);
       reject(error);
     });
     child.on('close', (code) => {
       running.delete(child);
+      track();
       signal?.removeEventListener('abort', onAbort);
       if (cancelled) return reject(new CancelledError());
       if (code === 0) {

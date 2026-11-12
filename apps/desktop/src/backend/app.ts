@@ -22,7 +22,10 @@ import {
 import { RecentProjects, SettingsRepository, openAppDatabase, type AppDatabase } from '@rec-it/db';
 import {
   detectFfmpeg,
+  killOrphanedFfmpeg,
   resolveFfmpegBinaries,
+  setFfmpegTracker,
+  writePidFile,
   type FfmpegBinaries,
   type H264Encoder,
 } from '@rec-it/ffmpeg';
@@ -95,6 +98,12 @@ export class BackendApp {
 
   /** Runs start-up checks, then reopens the last project if enabled. */
   async start(): Promise<void> {
+    // End FFmpeg processes orphaned by a previous crash, then track ours (ADR-024).
+    const pidFile = join(this.config.userDataDir, 'ffmpeg-pids.json');
+    const killed = await killOrphanedFfmpeg(pidFile);
+    if (killed.length)
+      console.warn(`ended ${killed.length} FFmpeg process(es) left by a previous crash`);
+    setFfmpegTracker((pids) => writePidFile(pidFile, pids));
     void this.refresh();
     if (this.settings.getAll().reopenLastProject) await this.projects.reopenLast();
   }

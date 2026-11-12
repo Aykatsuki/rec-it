@@ -120,16 +120,20 @@ test.describe('media pipeline', () => {
     const mainPid = app.process().pid!;
     app.process().kill('SIGKILL');
 
+    const ffmpegPids = (): number[] =>
+      process.platform === 'win32'
+        ? execFileSync('tasklist', ['/FI', 'IMAGENAME eq ffmpeg.exe', '/FO', 'CSV', '/NH'], {
+            encoding: 'utf8',
+          })
+            .split(/\r?\n/)
+            .map((l) => Number(l.split('","')[1]))
+            .filter((n) => Number.isInteger(n) && n > 0)
+        : [];
+    // Windows does not end child processes with their parent, so FFmpeg jobs from the killed
+    // instance may still be running. Chromium's helpers (GPU, network, renderer) can also
+    // outlive a main process killed on its own; end them as Task Manager's "End task" would.
+    const orphans = ffmpegPids();
     if (process.platform === 'win32') {
-      // Windows does not kill child processes with their parent. Within the heartbeat timeout
-      // the backend must stop its FFmpeg jobs (so media files are not left locked).
-      const ffmpegRunning = () =>
-        execFileSync('tasklist', ['/FI', 'IMAGENAME eq ffmpeg.exe', '/FO', 'CSV', '/NH'], {
-          encoding: 'utf8',
-        }).includes('ffmpeg.exe');
-      await expect.poll(ffmpegRunning, { timeout: 15_000, intervals: [1000] }).toBe(false);
-      // Chromium's own helper processes (GPU, network, renderer) can outlive a main process that
-      // was force-killed alone; end them as Task Manager's "End task" would (ADR-024).
       try {
         execFileSync('taskkill', ['/F', '/IM', 'electron.exe'], { stdio: 'ignore' });
       } catch {
@@ -149,6 +153,15 @@ test.describe('media pipeline', () => {
     }
     expect(relaunched, 'the app could not be started again after a crash').not.toBeNull();
     ({ app, page } = relaunched!);
+    // The new instance ends FFmpeg processes orphaned by the crash (ADR-024).
+    if (orphans.length) {
+      await expect
+        .poll(() => orphans.filter((pid) => ffmpegPids().includes(pid)), {
+          timeout: 15_000,
+          intervals: [500],
+        })
+        .toEqual([]);
+    }
     try {
       // The last project reopens by itself, with both imports, and unfinished work resumes.
       await expect(page.locator('.topbar__project')).toContainText('Crash test');

@@ -315,3 +315,29 @@ describe.skipIf(!ffmpeg)('killAllFfmpeg', () => {
     expect(results.every((r) => r instanceof Error)).toBe(true);
   }, 30_000);
 });
+
+describe.skipIf(!ffmpeg)('orphaned FFmpeg clean-up', () => {
+  it('ends FFmpeg processes left by a crashed run, and nothing else', async () => {
+    const { spawn } = await import('node:child_process');
+    const { mkdtempSync, readFileSync: read } = await import('node:fs');
+    const { tmpdir } = await import('node:os');
+    const { killOrphanedFfmpeg, isFfmpegProcess, writePidFile } = await import('./orphans');
+    const orphan = spawn(
+      ffmpeg!.ffmpeg,
+      ['-re', '-f', 'lavfi', '-i', 'testsrc2=d=60', '-f', 'null', '-'],
+      {
+        stdio: 'ignore',
+      },
+    );
+    const exited = new Promise((r) => orphan.once('exit', r));
+    await new Promise((r) => setTimeout(r, 300));
+    expect(await isFfmpegProcess(orphan.pid!)).toBe(true);
+    expect(await isFfmpegProcess(process.pid)).toBe(false);
+
+    const file = join(mkdtempSync(join(tmpdir(), 'recit-pids-')), 'ffmpeg-pids.json');
+    writePidFile(file, [orphan.pid!, process.pid, 999_999]);
+    expect(await killOrphanedFfmpeg(file)).toEqual([orphan.pid]);
+    await exited;
+    expect(JSON.parse(read(file, 'utf8'))).toEqual([]);
+  }, 30_000);
+});
