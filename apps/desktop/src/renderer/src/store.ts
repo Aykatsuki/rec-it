@@ -162,14 +162,20 @@ export function startBackendSync(): () => void {
       if (connected) void load();
     }),
     backend.on('project.changed', (project) =>
-      useApp.setState({
-        project,
-        selectedAssetId: null,
-        selectedItemIds: [],
-        playhead: 0,
-        playing: false,
-        ...(project ? {} : { docState: null }),
-      }),
+      useApp.setState((s) =>
+        // Updates to the same project (rename, save, recent list) keep the selection and
+        // playhead; only opening, creating or closing a project resets them.
+        s.project?.id === project?.id && project
+          ? { project }
+          : {
+              project,
+              selectedAssetId: null,
+              selectedItemIds: [],
+              playhead: 0,
+              playing: false,
+              ...(project ? {} : { docState: null }),
+            },
+      ),
     ),
     backend.on('media.changed', (assets) =>
       useApp.setState((s) => ({
