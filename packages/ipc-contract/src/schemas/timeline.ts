@@ -66,7 +66,12 @@ export const commandSchema = z.discriminatedUnion('type', [
     height: z.number().int().optional(),
     fps: rational.optional(),
   }),
-  z.object({ type: z.literal('track.add'), ...seqId, kind: z.enum(['video', 'audio']), id: id.optional() }),
+  z.object({
+    type: z.literal('track.add'),
+    ...seqId,
+    kind: z.enum(['video', 'audio']),
+    id: id.optional(),
+  }),
   z.object({
     type: z.literal('track.update'),
     ...seqId,
@@ -86,9 +91,25 @@ export const commandSchema = z.discriminatedUnion('type', [
     duration: flicks.optional(),
   }),
   z.object({ type: z.literal('item.move'), ...seqId, itemId: id, trackId: id, start: flicks }),
-  z.object({ type: z.literal('item.trim'), ...seqId, itemId: id, edge: z.enum(['start', 'end']), time: flicks }),
-  z.object({ type: z.literal('item.split'), ...seqId, time: flicks, itemIds: z.array(id).optional() }),
-  z.object({ type: z.literal('item.remove'), ...seqId, itemIds: z.array(id).min(1), ripple: z.boolean().optional() }),
+  z.object({
+    type: z.literal('item.trim'),
+    ...seqId,
+    itemId: id,
+    edge: z.enum(['start', 'end']),
+    time: flicks,
+  }),
+  z.object({
+    type: z.literal('item.split'),
+    ...seqId,
+    time: flicks,
+    itemIds: z.array(id).optional(),
+  }),
+  z.object({
+    type: z.literal('item.remove'),
+    ...seqId,
+    itemIds: z.array(id).min(1),
+    ripple: z.boolean().optional(),
+  }),
   z.object({
     type: z.literal('item.update'),
     ...seqId,

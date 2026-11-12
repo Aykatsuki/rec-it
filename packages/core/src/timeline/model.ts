@@ -95,8 +95,17 @@ export interface Layout {
 }
 
 /** Where a source of `srcW`×`srcH` lands in a `frameW`×`frameH` frame. Shared by preview and export. */
-export function computeLayout(srcW: number, srcH: number, frameW: number, frameH: number, t: Transform): Layout {
-  const base = t.fit === 'fill' ? Math.max(frameW / srcW, frameH / srcH) : Math.min(frameW / srcW, frameH / srcH);
+export function computeLayout(
+  srcW: number,
+  srcH: number,
+  frameW: number,
+  frameH: number,
+  t: Transform,
+): Layout {
+  const base =
+    t.fit === 'fill'
+      ? Math.max(frameW / srcW, frameH / srcH)
+      : Math.min(frameW / srcW, frameH / srcH);
   const s = base * t.scale;
   // Even sizes keep H.264's chroma subsampling happy and match FFmpeg's scale filter.
   const width = Math.max(2, Math.round((srcW * s) / 2) * 2);

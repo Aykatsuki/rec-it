@@ -16,7 +16,8 @@ test.describe('timeline editing and export', () => {
   test.afterAll(() => {
     if (fx) rmSync(fx.dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 500 });
   });
-  const env = (): Record<string, string> => (bins!.source === 'path' ? {} : { RECIT_FFMPEG_PATH: bins!.ffmpeg });
+  const env = (): Record<string, string> =>
+    bins!.source === 'path' ? {} : { RECIT_FFMPEG_PATH: bins!.ffmpeg };
 
   test('drag clips onto the timeline, edit, undo, change settings and export', async () => {
     const userData = tempUserData();
@@ -27,10 +28,14 @@ test.describe('timeline editing and export', () => {
       await page.getByRole('button', { name: 'Import footage' }).click();
       await page.getByLabel(/I have the right/).check();
       await page.getByRole('button', { name: 'Import 3 files' }).click();
-      await expect(page.locator('[data-testid=asset-card][data-status=ready]')).toHaveCount(3, { timeout: 60_000 });
+      await expect(page.locator('[data-testid=asset-card][data-status=ready]')).toHaveCount(3, {
+        timeout: 60_000,
+      });
 
       // Dragging the first clip onto the empty timeline creates a 9:16 sequence.
-      await page.locator('[data-testid=asset-card][data-name="clip h264.mp4"]').dragTo(page.getByTestId('timeline-drop'));
+      await page
+        .locator('[data-testid=asset-card][data-name="clip h264.mp4"]')
+        .dragTo(page.getByTestId('timeline-drop'));
       await expect(page.getByTestId('timeline-item')).toHaveCount(1);
       await expect(page.getByTestId('sequence-settings')).toContainText('1080×1920 · 30 fps');
 
@@ -65,16 +70,31 @@ test.describe('timeline editing and export', () => {
       // Export.
       const out = join(userData, 'export test.mp4');
       await app.evaluate(({ dialog }, path) => {
-        dialog.showSaveDialog = (async () => ({ canceled: false, filePath: path })) as typeof dialog.showSaveDialog;
+        dialog.showSaveDialog = (async () => ({
+          canceled: false,
+          filePath: path,
+        })) as typeof dialog.showSaveDialog;
       }, out);
       await page.getByTestId('export-button').click();
       await page.getByLabel(/Draft/).check();
       await page.getByRole('button', { name: 'Export…' }).click();
-      await expect(page.getByTestId('export-status')).toHaveAttribute('data-state', 'done', { timeout: 120_000 });
+      await expect(page.getByTestId('export-status')).toHaveAttribute('data-state', 'done', {
+        timeout: 120_000,
+      });
       expect(existsSync(out)).toBe(true);
       const probe = execFileSync(
         bins!.ffprobe,
-        ['-v', 'error', '-select_streams', 'v:0', '-show_entries', 'stream=width,height,r_frame_rate', '-of', 'csv=p=0', out],
+        [
+          '-v',
+          'error',
+          '-select_streams',
+          'v:0',
+          '-show_entries',
+          'stream=width,height,r_frame_rate',
+          '-of',
+          'csv=p=0',
+          out,
+        ],
         { encoding: 'utf8' },
       ).trim();
       expect(probe).toBe('1080,1080,25/1');
@@ -91,7 +111,9 @@ test.describe('timeline editing and export', () => {
     await page.getByRole('button', { name: 'Import footage' }).click();
     await page.getByLabel(/I have the right/).check();
     await page.getByRole('button', { name: 'Import' }).last().click();
-    await expect(page.locator('[data-testid=asset-card][data-status=ready]')).toHaveCount(1, { timeout: 60_000 });
+    await expect(page.locator('[data-testid=asset-card][data-status=ready]')).toHaveCount(1, {
+      timeout: 60_000,
+    });
     await page.locator('[data-testid=asset-card]').dblclick();
     await page.locator('[data-testid=asset-card]').dblclick();
     await expect(page.getByTestId('timeline-item')).toHaveCount(2);

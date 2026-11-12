@@ -2,7 +2,13 @@ import { describe, expect, it } from 'vitest';
 import { FRAME_RATES, frameDuration, secondsToFlicks, type Flicks } from '../time';
 import { CommandError, checkInvariants, type Command } from './commands';
 import { History } from './history';
-import { computeLayout, emptyDocument, sequenceDuration, type AssetInfo, type ProjectDocument } from './model';
+import {
+  computeLayout,
+  emptyDocument,
+  sequenceDuration,
+  type AssetInfo,
+  type ProjectDocument,
+} from './model';
 
 const s = (seconds: number) => secondsToFlicks(seconds);
 const ASSETS: Record<string, AssetInfo> = {
@@ -15,7 +21,17 @@ const lookup = (id: string) => ASSETS[id];
 
 function setup() {
   const h = new History(emptyDocument());
-  h.execute({ type: 'sequence.create', id: 'seq', name: 'Short', width: 1080, height: 1920, fps: FRAME_RATES.fps30 }, lookup);
+  h.execute(
+    {
+      type: 'sequence.create',
+      id: 'seq',
+      name: 'Short',
+      width: 1080,
+      height: 1920,
+      fps: FRAME_RATES.fps30,
+    },
+    lookup,
+  );
   const seq = () => h.doc.sequences[0]!;
   const track = (name: string) => seq().tracks.find((t) => t.name === name)!;
   type WithoutSequence<T> = T extends unknown ? Omit<T, 'sequenceId'> : never;
@@ -28,7 +44,12 @@ describe('timeline commands', () => {
   it('creates a 9:16 sequence with two video and two audio tracks', () => {
     const { seq } = setup();
     expect(seq()).toMatchObject({ width: 1080, height: 1920 });
-    expect(seq().tracks.map((t) => `${t.kind}:${t.name}`)).toEqual(['video:V2', 'video:V1', 'audio:A1', 'audio:A2']);
+    expect(seq().tracks.map((t) => `${t.kind}:${t.name}`)).toEqual([
+      'video:V2',
+      'video:V1',
+      'audio:A1',
+      'audio:A2',
+    ]);
   });
 
   it('adds clips at their full length, stills at 5 s, snapped to frames', () => {
@@ -43,10 +64,16 @@ describe('timeline commands', () => {
 
   it('refuses wrong track kinds and locked tracks', () => {
     const { run, track, h } = setup();
-    expect(() => run({ type: 'item.add', trackId: track('V1').id, assetId: 'song', start: 0 })).toThrow(CommandError);
-    expect(() => run({ type: 'item.add', trackId: track('A1').id, assetId: 'silent', start: 0 })).toThrow(/no sound/);
+    expect(() =>
+      run({ type: 'item.add', trackId: track('V1').id, assetId: 'song', start: 0 }),
+    ).toThrow(CommandError);
+    expect(() =>
+      run({ type: 'item.add', trackId: track('A1').id, assetId: 'silent', start: 0 }),
+    ).toThrow(/no sound/);
     run({ type: 'track.update', trackId: track('V1').id, locked: true });
-    expect(() => run({ type: 'item.add', trackId: track('V1').id, assetId: 'clip10', start: 0 })).toThrow(/locked/);
+    expect(() =>
+      run({ type: 'item.add', trackId: track('V1').id, assetId: 'clip10', start: 0 }),
+    ).toThrow(/locked/);
     checkInvariants(h.doc);
   });
 
@@ -125,7 +152,7 @@ describe('timeline commands', () => {
     const { h, seq } = setup();
     const start = h.doc;
     let seed = 42;
-    const rnd = () => ((seed = (seed * 1103515245 + 12345) % 2 ** 31) / 2 ** 31);
+    const rnd = () => (seed = (seed * 1103515245 + 12345) % 2 ** 31) / 2 ** 31;
     const pick = <T>(xs: T[]): T => xs[Math.floor(rnd() * xs.length)]!;
     let applied = 0;
     for (let i = 0; i < 3000; i++) {
@@ -133,13 +160,36 @@ describe('timeline commands', () => {
       const items = tracks.flatMap((t) => t.items);
       const t = (rnd() * 40 * 705_600_000) as Flicks;
       const commands: Command[] = [
-        { type: 'item.add', sequenceId: 'seq', trackId: pick(tracks).id, assetId: pick(Object.keys(ASSETS)), start: t },
+        {
+          type: 'item.add',
+          sequenceId: 'seq',
+          trackId: pick(tracks).id,
+          assetId: pick(Object.keys(ASSETS)),
+          start: t,
+        },
         ...(items.length
           ? ([
-              { type: 'item.move', sequenceId: 'seq', itemId: pick(items).id, trackId: pick(tracks).id, start: t },
-              { type: 'item.trim', sequenceId: 'seq', itemId: pick(items).id, edge: pick(['start', 'end'] as const), time: t },
+              {
+                type: 'item.move',
+                sequenceId: 'seq',
+                itemId: pick(items).id,
+                trackId: pick(tracks).id,
+                start: t,
+              },
+              {
+                type: 'item.trim',
+                sequenceId: 'seq',
+                itemId: pick(items).id,
+                edge: pick(['start', 'end'] as const),
+                time: t,
+              },
               { type: 'item.split', sequenceId: 'seq', time: t },
-              { type: 'item.remove', sequenceId: 'seq', itemIds: [pick(items).id], ripple: rnd() > 0.5 },
+              {
+                type: 'item.remove',
+                sequenceId: 'seq',
+                itemIds: [pick(items).id],
+                ripple: rnd() > 0.5,
+              },
             ] as Command[])
           : []),
       ];
@@ -158,7 +208,16 @@ describe('timeline commands', () => {
     const docs: ProjectDocument[] = [h2.doc];
     for (let i = 0; i < 50; i++) {
       try {
-        h2.execute({ type: 'item.add', sequenceId: 'seq', trackId: pick(seq().tracks).id, assetId: 'clip10', start: (rnd() * 20 * 705_600_000) as Flicks }, lookup);
+        h2.execute(
+          {
+            type: 'item.add',
+            sequenceId: 'seq',
+            trackId: pick(seq().tracks).id,
+            assetId: 'clip10',
+            start: (rnd() * 20 * 705_600_000) as Flicks,
+          },
+          lookup,
+        );
         docs.push(h2.doc);
       } catch {
         // wrong track kind

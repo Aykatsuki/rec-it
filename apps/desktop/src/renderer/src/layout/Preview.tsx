@@ -177,7 +177,9 @@ function SourceMonitor({ asset }: { asset: MediaAsset }) {
             {asset.urls.waveform && (
               <WaveformStrip url={asset.urls.waveform} className="preview__waveform" />
             )}
-            {asset.urls.proxy && <audio controls src={asset.urls.proxy} className="preview__audio-player" />}
+            {asset.urls.proxy && (
+              <audio controls src={asset.urls.proxy} className="preview__audio-player" />
+            )}
           </div>
         ) : (
           <div className="preview__pending">

@@ -292,7 +292,8 @@ export class ProjectDatabase {
 
   /** The stored timeline document, or null if the project has none yet. */
   loadDocument(): unknown {
-    const row = this.db.prepare('SELECT json FROM document WHERE id = 1').get() as { json: string } | undefined;
+    const row = this.db.prepare('SELECT json FROM document WHERE id = 1').get() as
+      { json: string } | undefined;
     return row ? (JSON.parse(row.json) as unknown) : null;
   }
 

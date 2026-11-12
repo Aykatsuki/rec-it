@@ -18,7 +18,8 @@ export interface ExportAsset {
   hdr?: boolean;
 }
 
-export type ExportEncoder = 'h264_nvenc' | 'libx264' | 'h264_qsv' | 'h264_amf' | 'h264_videotoolbox';
+export type ExportEncoder =
+  'h264_nvenc' | 'libx264' | 'h264_qsv' | 'h264_amf' | 'h264_videotoolbox';
 export type ExportQuality = 'draft' | 'standard' | 'high';
 
 export interface ExportOptions {
@@ -52,17 +53,61 @@ function videoEncoderArgs(encoder: ExportEncoder, quality: ExportQuality): strin
   const q = { draft: 0, standard: 1, high: 2 }[quality];
   switch (encoder) {
     case 'h264_nvenc':
-      return ['-c:v', 'h264_nvenc', '-preset', ['p2', 'p5', 'p7'][q]!, '-tune', 'hq', '-rc', 'vbr',
-        '-cq', ['28', '20', '17'][q]!, '-b:v', '0', '-maxrate', ['8M', '20M', '35M'][q]!, '-bufsize', '40M',
-        '-profile:v', 'high', '-spatial-aq', '1'];
+      return [
+        '-c:v',
+        'h264_nvenc',
+        '-preset',
+        ['p2', 'p5', 'p7'][q]!,
+        '-tune',
+        'hq',
+        '-rc',
+        'vbr',
+        '-cq',
+        ['28', '20', '17'][q]!,
+        '-b:v',
+        '0',
+        '-maxrate',
+        ['8M', '20M', '35M'][q]!,
+        '-bufsize',
+        '40M',
+        '-profile:v',
+        'high',
+        '-spatial-aq',
+        '1',
+      ];
     case 'libx264':
-      return ['-c:v', 'libx264', '-preset', ['veryfast', 'medium', 'slow'][q]!, '-crf', ['26', '19', '16'][q]!,
-        '-profile:v', 'high'];
+      return [
+        '-c:v',
+        'libx264',
+        '-preset',
+        ['veryfast', 'medium', 'slow'][q]!,
+        '-crf',
+        ['26', '19', '16'][q]!,
+        '-profile:v',
+        'high',
+      ];
     case 'h264_qsv':
-      return ['-c:v', 'h264_qsv', '-preset', ['veryfast', 'medium', 'slow'][q]!, '-global_quality', ['28', '21', '18'][q]!];
+      return [
+        '-c:v',
+        'h264_qsv',
+        '-preset',
+        ['veryfast', 'medium', 'slow'][q]!,
+        '-global_quality',
+        ['28', '21', '18'][q]!,
+      ];
     case 'h264_amf':
-      return ['-c:v', 'h264_amf', '-quality', ['speed', 'balanced', 'quality'][q]!, '-rc', 'cqp',
-        '-qp_i', ['28', '20', '17'][q]!, '-qp_p', ['30', '22', '19'][q]!];
+      return [
+        '-c:v',
+        'h264_amf',
+        '-quality',
+        ['speed', 'balanced', 'quality'][q]!,
+        '-rc',
+        'cqp',
+        '-qp_i',
+        ['28', '20', '17'][q]!,
+        '-qp_p',
+        ['30', '22', '19'][q]!,
+      ];
     case 'h264_videotoolbox':
       return ['-c:v', 'h264_videotoolbox', '-q:v', ['50', '65', '75'][q]!];
   }
@@ -76,7 +121,10 @@ function visualItems(seq: Sequence): TimelineItem[] {
     .flatMap((t) => t.items);
 }
 
-function audibleItems(seq: Sequence, assets: (id: string) => ExportAsset | undefined): TimelineItem[] {
+function audibleItems(
+  seq: Sequence,
+  assets: (id: string) => ExportAsset | undefined,
+): TimelineItem[] {
   return seq.tracks
     .filter((t) => !t.muted)
     .flatMap((t) => t.items)
@@ -90,7 +138,8 @@ export function planExport(
   options: ExportOptions,
 ): ExportPlan {
   const total = flicksToSeconds(sequenceDuration(seq));
-  if (total <= 0) throw new ExportPlanError('The timeline is empty. Add some clips before exporting.');
+  if (total <= 0)
+    throw new ExportPlanError('The timeline is empty. Add some clips before exporting.');
   const fps = `${seq.fps.num}/${seq.fps.den}`;
   const W = seq.width;
   const H = seq.height;
@@ -98,14 +147,19 @@ export function planExport(
   const inputArgs: string[] = [];
   const graph: string[] = [];
   let inputIndex = 0;
-  const need = (id: string) => assets(id) ?? (() => {
-    throw new ExportPlanError('A clip on the timeline refers to media that is no longer in the project.');
-  })();
+  const need = (id: string) =>
+    assets(id) ??
+    (() => {
+      throw new ExportPlanError(
+        'A clip on the timeline refers to media that is no longer in the project.',
+      );
+    })();
 
   // One input per use, trimmed with an accurate input seek (-ss before -i).
   const addInput = (item: TimelineItem, asset: ExportAsset): number => {
     const dur = sec(flicksToSeconds(item.duration));
-    if (asset.kind === 'image') inputArgs.push('-loop', '1', '-framerate', fps, '-t', dur, '-i', asset.path);
+    if (asset.kind === 'image')
+      inputArgs.push('-loop', '1', '-framerate', fps, '-t', dur, '-i', asset.path);
     else inputArgs.push('-ss', sec(flicksToSeconds(item.sourceIn)), '-t', dur, '-i', asset.path);
     return inputIndex++;
   };
@@ -115,9 +169,16 @@ export function planExport(
   visualItems(seq).forEach((item, n) => {
     const asset = need(item.assetId);
     if (asset.kind === 'audio') return;
-    if (!asset.width || !asset.height) throw new ExportPlanError('Some media has no frame size; it may still be processing.');
+    if (!asset.width || !asset.height)
+      throw new ExportPlanError('Some media has no frame size; it may still be processing.');
     const k = addInput(item, asset);
-    const { width, height, left, top } = computeLayout(asset.width, asset.height, W, H, item.transform);
+    const { width, height, left, top } = computeLayout(
+      asset.width,
+      asset.height,
+      W,
+      H,
+      item.transform,
+    );
     const start = sec(flicksToSeconds(item.start));
     const chain = [
       ...(asset.hdr && options.tonemap ? [TONEMAP] : []),
@@ -148,22 +209,33 @@ export function planExport(
   const loud = options.loudnessLufs === undefined ? -14 : options.loudnessLufs;
   const finish = `apad=whole_dur=${sec(total)},atrim=0:${sec(total)}${loud === null ? '' : `,loudnorm=I=${loud}:TP=-1.5:LRA=11`},aresample=48000`;
   if (audioLabels.length) {
-    graph.push(`${audioLabels.join('')}amix=inputs=${audioLabels.length}:normalize=0:duration=longest,${finish}[aout]`);
+    graph.push(
+      `${audioLabels.join('')}amix=inputs=${audioLabels.length}:normalize=0:duration=longest,${finish}[aout]`,
+    );
   } else {
     graph.push(`anullsrc=r=48000:cl=stereo,atrim=0:${sec(total)}[aout]`);
   }
 
   const outputArgs = [
-    '-map', '[vout]',
-    '-map', '[aout]',
+    '-map',
+    '[vout]',
+    '-map',
+    '[aout]',
     ...videoEncoderArgs(options.encoder, options.quality),
-    '-pix_fmt', 'yuv420p',
-    '-r', fps,
-    '-c:a', 'aac',
-    '-b:a', options.quality === 'draft' ? '128k' : '192k',
-    '-ar', '48000',
-    '-t', sec(total),
-    '-movflags', '+faststart',
+    '-pix_fmt',
+    'yuv420p',
+    '-r',
+    fps,
+    '-c:a',
+    'aac',
+    '-b:a',
+    options.quality === 'draft' ? '128k' : '192k',
+    '-ar',
+    '48000',
+    '-t',
+    sec(total),
+    '-movflags',
+    '+faststart',
   ];
   return { inputArgs, filterGraph: graph.join(';\n'), outputArgs, durationSec: total };
 }

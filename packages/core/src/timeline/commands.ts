@@ -18,10 +18,31 @@ export const STILL_DURATION = secondsToFlicks(5);
 const MIN_DURATION = secondsToFlicks(0.04);
 
 export type Command =
-  | { type: 'sequence.create'; id?: string; name: string; width: number; height: number; fps: Rational }
-  | { type: 'sequence.update'; sequenceId: string; name?: string; width?: number; height?: number; fps?: Rational }
+  | {
+      type: 'sequence.create';
+      id?: string;
+      name: string;
+      width: number;
+      height: number;
+      fps: Rational;
+    }
+  | {
+      type: 'sequence.update';
+      sequenceId: string;
+      name?: string;
+      width?: number;
+      height?: number;
+      fps?: Rational;
+    }
   | { type: 'track.add'; sequenceId: string; kind: TrackKind; id?: string }
-  | { type: 'track.update'; sequenceId: string; trackId: string; muted?: boolean; hidden?: boolean; locked?: boolean }
+  | {
+      type: 'track.update';
+      sequenceId: string;
+      trackId: string;
+      muted?: boolean;
+      hidden?: boolean;
+      locked?: boolean;
+    }
   | {
       type: 'item.add';
       sequenceId: string;
@@ -73,7 +94,8 @@ function unlocked(track: Track): void {
   if (track.locked) fail(`Track ${track.name} is locked.`);
 }
 
-const snap = (seq: Sequence, t: number) => Math.max(0, snapToFrame(Math.round(t) as Flicks, seq.fps)) as Flicks;
+const snap = (seq: Sequence, t: number) =>
+  Math.max(0, snapToFrame(Math.round(t) as Flicks, seq.fps)) as Flicks;
 
 function sortItems(track: Track): void {
   track.items.sort((a, b) => a.start - b.start);
@@ -110,7 +132,8 @@ function clearRange(track: Track, start: number, end: number, exceptId?: string)
 function checkPlacement(track: Track, kind: 'video' | 'audio' | 'image', hasAudio: boolean): void {
   if (track.kind === 'video' && kind === 'audio') fail('Audio files go on an audio track.');
   if (track.kind === 'audio' && kind === 'image') fail('Images go on a video track.');
-  if (track.kind === 'audio' && kind === 'video' && !hasAudio) fail('This video has no sound to put on an audio track.');
+  if (track.kind === 'audio' && kind === 'video' && !hasAudio)
+    fail('This video has no sound to put on an audio track.');
 }
 
 function nextTrackNumber(seq: Sequence, kind: TrackKind): number {
@@ -168,7 +191,11 @@ export function applyCommand(doc: ProjectDocument, command: Command, assets: Ass
     case 'track.add': {
       const seq = sequenceOf(doc, command.sequenceId);
       const n = nextTrackNumber(seq, command.kind);
-      const track = blankTrack(command.kind, `${command.kind === 'video' ? 'V' : 'A'}${n}`, command.id);
+      const track = blankTrack(
+        command.kind,
+        `${command.kind === 'video' ? 'V' : 'A'}${n}`,
+        command.id,
+      );
       if (command.kind === 'video') seq.tracks.unshift(track);
       else seq.tracks.push(track);
       return;
@@ -291,7 +318,9 @@ export function applyCommand(doc: ProjectDocument, command: Command, assets: Ass
         if (command.ripple) {
           // Close the gaps: shift later items left by the removed lengths before them.
           for (const item of track.items) {
-            const shift = removed.filter((r) => r.start < item.start).reduce((n, r) => n + r.duration, 0);
+            const shift = removed
+              .filter((r) => r.start < item.start)
+              .reduce((n, r) => n + r.duration, 0);
             item.start = (item.start - shift) as Flicks;
           }
         }
@@ -319,7 +348,15 @@ export function applyCommand(doc: ProjectDocument, command: Command, assets: Ass
 }
 
 function blankTrack(kind: TrackKind, name: string, id?: string): Track {
-  return { id: id ?? createId('track'), kind, name, muted: false, hidden: false, locked: false, items: [] };
+  return {
+    id: id ?? createId('track'),
+    kind,
+    name,
+    muted: false,
+    hidden: false,
+    locked: false,
+    items: [],
+  };
 }
 
 function validSize(width: number, height: number): void {
@@ -344,7 +381,8 @@ export function checkInvariants(doc: ProjectDocument): void {
       for (let i = 0; i < track.items.length; i++) {
         const item = track.items[i]!;
         if (!Number.isSafeInteger(item.start) || item.start < 0) fail(`Bad start on ${item.id}`);
-        if (!Number.isSafeInteger(item.duration) || item.duration <= 0) fail(`Bad duration on ${item.id}`);
+        if (!Number.isSafeInteger(item.duration) || item.duration <= 0)
+          fail(`Bad duration on ${item.id}`);
         if (item.sourceIn < 0) fail(`Bad sourceIn on ${item.id}`);
         const prev = track.items[i - 1];
         if (prev && itemEnd(prev) > item.start) fail(`Overlap on ${track.name} at ${item.id}`);

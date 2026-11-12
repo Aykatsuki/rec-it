@@ -10,7 +10,12 @@ import {
   rightsInputSchema,
 } from './schemas/media';
 import { settingsPatchSchema, settingsSchema } from './schemas/settings';
-import { commandSchema, documentStateSchema, exportQualitySchema, exportStateSchema } from './schemas/timeline';
+import {
+  commandSchema,
+  documentStateSchema,
+  exportQualitySchema,
+  exportStateSchema,
+} from './schemas/timeline';
 import { systemStatusSchema } from './schemas/status';
 
 const empty = z.object({}).strict();
@@ -85,14 +90,21 @@ export const backendContract = defineContract({
 
     // Timeline document (ARCHITECTURE §7). Every edit is a validated command; undo is exact.
     'doc.get': { input: empty, output: documentStateSchema },
-    'doc.execute': { input: z.object({ command: commandSchema }).strict(), output: documentStateSchema },
+    'doc.execute': {
+      input: z.object({ command: commandSchema }).strict(),
+      output: documentStateSchema,
+    },
     'doc.undo': { input: empty, output: documentStateSchema },
     'doc.redo': { input: empty, output: documentStateSchema },
 
     // Export (ARCHITECTURE §10).
     'export.start': {
       input: z
-        .object({ sequenceId: z.string().min(1).max(100), path: filePathSchema, quality: exportQualitySchema })
+        .object({
+          sequenceId: z.string().min(1).max(100),
+          path: filePathSchema,
+          quality: exportQualitySchema,
+        })
         .strict(),
       output: exportStateSchema,
     },

@@ -131,15 +131,47 @@ export function proxyArgs(
 
 /** Audio-only preview copy: AAC in MP4, 48 kHz stereo, playable by the preview. */
 export function audioProxyArgs(input: string, output: string): string[] {
-  return ['-i', input, '-map', '0:a:0', '-vn', '-c:a', 'aac', '-b:a', '160k', '-ar', '48000', '-ac', '2',
-    '-movflags', '+faststart', '-f', 'mp4', output];
+  return [
+    '-i',
+    input,
+    '-map',
+    '0:a:0',
+    '-vn',
+    '-c:a',
+    'aac',
+    '-b:a',
+    '160k',
+    '-ar',
+    '48000',
+    '-ac',
+    '2',
+    '-movflags',
+    '+faststart',
+    '-f',
+    'mp4',
+    output,
+  ];
 }
 
 /** Preview copy of a still image: JPEG, at most 1920 px on the long edge. */
 export function stillArgs(input: string, output: string): string[] {
-  return ['-i', input, '-frames:v', '1', '-vf',
+  return [
+    '-i',
+    input,
+    '-frames:v',
+    '1',
+    '-vf',
     "scale=w='min(1920,iw)':h='min(1920,ih)':force_original_aspect_ratio=decrease:force_divisible_by=2",
-    '-c:v', 'mjpeg', '-q:v', '2', '-update', '1', '-f', 'image2', output];
+    '-c:v',
+    'mjpeg',
+    '-q:v',
+    '2',
+    '-update',
+    '1',
+    '-f',
+    'image2',
+    output,
+  ];
 }
 
 export interface SpriteLayout {
