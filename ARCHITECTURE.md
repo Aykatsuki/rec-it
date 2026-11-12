@@ -180,7 +180,7 @@ rec-it/
 │   ├── ffmpeg/          # Spawn wrapper, ffprobe parser, progress parser, encoder detection
 │   ├── captions/        # Caption model → ASS compiler; style and animation presets
 │   ├── tools/           # Tool definitions (zod), project summariser, tool instructions for Claude
-│   ├── agent-panel/     # Optional in-app panel using the Claude Agent SDK (Phase 6b)
+│   ├── agent-panel/     # Optional in-app panel using the Claude Agent SDK (Phase 7b)
 │   ├── youtube/         # Data API v3 client, quota ledger, cache with expiry
 │   ├── db/              # SQLite schemas, migrations, repositories
 │   └── ui/              # Design tokens + components (dark theme)
@@ -584,9 +584,9 @@ Rec-It is free and does not pay for AI. It also does not sign in to Claude on th
 
 | Route | How it works | Billing | Status |
 |-------|--------------|---------|--------|
-| **A. MCP connector (default)** | Rec-It ships `recit-mcp`, a local MCP server installed into the Claude desktop app as a one-click desktop extension (`.mcpb`). The user chats with Claude in the Claude app; Claude calls Rec-It's tools; edits appear live in Rec-It. | The user's normal Claude plan (local MCP tools need Pro or higher) | First-party, clearly permitted. Built in Phase 6a. |
+| **A. MCP connector (default)** | Rec-It ships `recit-mcp`, a local MCP server installed into the Claude desktop app as a one-click desktop extension (`.mcpb`). The user chats with Claude in the Claude app; Claude calls Rec-It's tools; edits appear live in Rec-It. | The user's normal Claude plan (local MCP tools need Pro or higher) | First-party, clearly permitted. Built in Phase 7a. |
 | **B. Claude Code** | The same `recit-mcp` server added to Claude Code (`claude mcp add`). Useful for scripted batch work. | The user's Claude plan, under Claude Code's rules | Free side effect of Route A. |
-| **C. In-app panel (optional)** | A chat panel inside Rec-It using the Claude Agent SDK. Authenticates with the user's own Claude Code sign-in or an API key the user supplies. Rec-It never collects credentials. | Agent SDK usage on the user's plan, or API pay-as-you-go | Phase 6b, built only if Anthropic's policy for third-party Agent SDK apps is clear at that time. |
+| **C. In-app panel (optional)** | A chat panel inside Rec-It using the Claude Agent SDK. Authenticates with the user's own Claude Code sign-in or an API key the user supplies. Rec-It never collects credentials. | Agent SDK usage on the user's plan, or API pay-as-you-go | Phase 7b, built only if Anthropic's policy for third-party Agent SDK apps is clear at that time. |
 
 Route A is the design centre: the chat lives in the Claude app, the editing happens in Rec-It, and Rec-It never touches a login, token or bill.
 
@@ -681,7 +681,7 @@ The default quota is 10,000 units per day per Google Cloud project, so about 100
 
 Research output for the user and for Claude: top videos for a topic with views, view velocity (views per day since publishing), duration, title patterns and channel size, so Claude can summarise what is working in a niche and suggest angles. Claude can also be asked to compare the user's candidate titles with what performs well.
 
-YouTube's API developer policies restrict how long API data can be stored and require displaying data accurately. The cache stores results with a fetch timestamp and expires them (default 7 days, well inside the policy limit) — to be re-verified against the current policy when Phase 8 starts.
+YouTube's API developer policies restrict how long API data can be stored and require displaying data accurately. The cache stores results with a fetch timestamp and expires them (default 7 days, well inside the policy limit) — to be re-verified against the current policy when Phase 9 starts.
 
 ### 15.2 Rights-aware importing (ADR-012)
 
@@ -774,7 +774,7 @@ All schemas have numbered migrations in `packages/db`; projects record the schem
 | Preview | WebCodecs (built in), `mp4box`, `jassub` | |
 | Validation | `zod`, `zod-to-json-schema` | |
 | Storage | `node:sqlite` (built into Node 24 / Electron 45) | No native module to rebuild (ADR-020) |
-| AI | `@modelcontextprotocol/sdk` (MCP server in the bridge), `@anthropic-ai/claude-agent-sdk` (optional panel, Phase 6b) | |
+| AI | `@modelcontextprotocol/sdk` (MCP server in the bridge), `@anthropic-ai/claude-agent-sdk` (optional panel, Phase 7b) | |
 | Hashing | `xxhash-wasm` | |
 | Media | FFmpeg 7.x / FFprobe GPL static builds (libx264, NVENC, libass) | Licensing: ADR-007 |
 | Python | `faster-whisper`, `scenedetect`, `mediapipe`, `numpy`, `soundfile` | Packaged with a standalone Python build |

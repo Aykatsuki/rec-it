@@ -5,8 +5,8 @@ ARCHITECTURE.md, ROADMAP.md and DECISIONS.md before making design changes.
 
 ## Current phase
 
-Phases 0 (foundations) and 1 (media pipeline) are complete. First slices of Phase 2 (timeline, interim preview) and Phase 3 (export) are done (ADR-025); the rest of Phase 2 comes next. Priority: a fully working editor
-(Phases 0–5) before any Claude features (ADR-019). Reference machine: Windows 11 + RTX 3070 8 GB.
+Phases 0 (foundations) and 1 (media pipeline) are complete. First slices of Phase 2 (timeline, interim preview, mouse transforms, context menus; ADR-025, ADR-026) and Phase 3 (export) are done; the rest of Phase 2 comes next. Priority: a fully working editor
+(Phases 0–6, Phase 6 = effects) before any Claude features (ADR-019). Reference machine: Windows 11 + RTX 3070 8 GB.
 
 ## Commands
 
@@ -30,7 +30,8 @@ Phases 0 (foundations) and 1 (media pipeline) are complete. First slices of Phas
 - `packages/core` — pure domain logic: flicks time maths, timeline model, commands, Immer undo/redo history.
 - `packages/render-plan` — Sequence → FFmpeg export plan (inputs, filter graph, output args).
 - Backend `services/document-service.ts` (timeline document + undo, saved per edit) and `services/export-service.ts`.
-- Renderer `timeline/` — Timeline, SequenceSettings, ClipInspector, ProgramMonitor, ExportDialog; edits go through `edit.ts`.
+- Renderer `timeline/` — Timeline, SequenceSettings, ClipInspector, ProgramMonitor, TransformOverlay, ExportDialog,
+  `menus.tsx` (right-click menus); edits go through `edit.ts`. `ui/ContextMenu.tsx` is the generic menu.
 - `packages/db` — `node:sqlite` (ADR-020), migrations, repositories.
 - `packages/ffmpeg` — binary resolution, capability detection, ffprobe parsing, abortable runner, proxy /
   sprite / poster / waveform recipes. `@rec-it/ffmpeg/testing` generates synthetic fixtures for tests.

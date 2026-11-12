@@ -185,6 +185,29 @@ describe('timeline commands', () => {
               },
               { type: 'item.split', sequenceId: 'seq', time: t },
               {
+                type: 'item.moveMany',
+                sequenceId: 'seq',
+                moves: [pick(items), pick(items)]
+                  .filter((x, k, all) => all.findIndex((y) => y.id === x.id) === k)
+                  .map((x) => ({
+                    itemId: x.id,
+                    trackId: pick(tracks).id,
+                    start: (x.start + t / 4) as Flicks,
+                  })),
+              },
+              {
+                type: 'batch',
+                commands: [
+                  {
+                    type: 'item.update',
+                    sequenceId: 'seq',
+                    itemId: pick(items).id,
+                    transform: { rotation: rnd() * 720 - 360, scale: rnd() * 3 },
+                  },
+                  { type: 'item.split', sequenceId: 'seq', time: t },
+                ],
+              },
+              {
                 type: 'item.remove',
                 sequenceId: 'seq',
                 itemIds: [pick(items).id],
@@ -230,7 +253,9 @@ describe('timeline commands', () => {
 
 describe('computeLayout', () => {
   it('fills a 9:16 frame from 16:9 by cropping the sides', () => {
-    expect(computeLayout(1920, 1080, 1080, 1920, { fit: 'fill', scale: 1, x: 0, y: 0 })).toEqual({
+    expect(
+      computeLayout(1920, 1080, 1080, 1920, { fit: 'fill', scale: 1, x: 0, y: 0, rotation: 0 }),
+    ).toMatchObject({
       width: 3414,
       height: 1920,
       left: -1167,
@@ -238,11 +263,117 @@ describe('computeLayout', () => {
     });
   });
   it('fits with bars, and moves by a fraction of the frame', () => {
-    expect(computeLayout(1920, 1080, 1080, 1920, { fit: 'fit', scale: 1, x: 0.1, y: 0 })).toEqual({
+    expect(
+      computeLayout(1920, 1080, 1080, 1920, { fit: 'fit', scale: 1, x: 0.1, y: 0, rotation: 0 }),
+    ).toMatchObject({
       width: 1080,
       height: 608,
       left: 108,
       top: 656,
     });
+  });
+  it('rotates around the centre and reports the rotated bounds', () => {
+    const l = computeLayout(1000, 500, 1000, 1000, {
+      fit: 'fit',
+      scale: 1,
+      x: 0,
+      y: 0,
+      rotation: 90,
+    });
+    expect(l).toMatchObject({ width: 1000, height: 500, left: 0, top: 250, rotation: 90 });
+    expect(l.bounds).toEqual({ width: 500, height: 1000, left: 250, top: 0 });
+    expect(
+      computeLayout(10, 10, 10, 10, { fit: 'fit', scale: 1, x: 0, y: 0, rotation: 270 }).rotation,
+    ).toBe(-90);
+  });
+});
+
+describe('group edits', () => {
+  const assets = (id: string) =>
+    id === 'img'
+      ? { kind: 'image' as const, duration: null, hasAudio: false, width: 10, height: 10 }
+      : undefined;
+  const fps = FRAME_RATES.fps30;
+  const setup = () => {
+    const h = new History(emptyDocument());
+    h.execute(
+      { type: 'sequence.create', id: 's', name: 'S', width: 1080, height: 1920, fps },
+      assets,
+    );
+    const v1 = h.doc.sequences[0]!.tracks.find((t) => t.name === 'V1')!.id;
+    const s = (sec: number) => secondsToFlicks(sec);
+    h.execute(
+      {
+        type: 'batch',
+        commands: [
+          {
+            type: 'item.add',
+            sequenceId: 's',
+            trackId: v1,
+            assetId: 'img',
+            start: s(0),
+            id: 'a',
+            duration: s(1),
+          },
+          {
+            type: 'item.add',
+            sequenceId: 's',
+            trackId: v1,
+            assetId: 'img',
+            start: s(1),
+            id: 'b',
+            duration: s(1),
+          },
+        ],
+      },
+      assets,
+    );
+    return { h, v1, s };
+  };
+
+  it('applies a batch as one undo step', () => {
+    const { h } = setup();
+    expect(h.doc.sequences[0]!.tracks.flatMap((t) => t.items)).toHaveLength(2);
+    h.undo();
+    expect(h.doc.sequences[0]!.tracks.flatMap((t) => t.items)).toHaveLength(0);
+  });
+
+  it('moves several clips together without them overwriting each other', () => {
+    const { h, v1, s } = setup();
+    h.execute(
+      {
+        type: 'item.moveMany',
+        sequenceId: 's',
+        moves: [
+          { itemId: 'a', trackId: v1, start: s(0.5) },
+          { itemId: 'b', trackId: v1, start: s(1.5) },
+        ],
+      },
+      assets,
+    );
+    const items = h.doc.sequences[0]!.tracks.find((t) => t.id === v1)!.items;
+    expect(items.map((i) => [i.id, i.start, i.duration])).toEqual([
+      ['a', s(0.5), s(1)],
+      ['b', s(1.5), s(1)],
+    ]);
+    checkInvariants(h.doc);
+  });
+
+  it('rolls back a whole batch when one part fails', () => {
+    const { h, v1 } = setup();
+    const before = h.doc;
+    expect(() =>
+      h.execute(
+        {
+          type: 'batch',
+          commands: [
+            { type: 'item.update', sequenceId: 's', itemId: 'a', transform: { rotation: 45 } },
+            { type: 'item.move', sequenceId: 's', itemId: 'missing', trackId: v1, start: 0 },
+          ],
+        },
+        assets,
+      ),
+    ).toThrow(CommandError);
+    expect(h.doc).toBe(before);
   });
 });

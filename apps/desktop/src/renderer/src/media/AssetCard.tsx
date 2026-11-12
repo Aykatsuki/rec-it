@@ -1,3 +1,5 @@
+import { openContextMenu } from '../ui/ContextMenu';
+import { assetMenu } from '../timeline/menus';
 import { useEffect, useState, type MouseEvent } from 'react';
 import {
   AlertTriangle,
@@ -111,6 +113,10 @@ export function AssetCard({
       tabIndex={0}
       onClick={onSelect}
       onDoubleClick={() => void addToTimeline(asset)}
+      onContextMenu={(e) => {
+        onSelect();
+        openContextMenu(e, assetMenu(asset));
+      }}
       draggable={asset.status === 'ready'}
       onDragStart={(e) => {
         e.dataTransfer.setData(ASSET_MIME, asset.id);

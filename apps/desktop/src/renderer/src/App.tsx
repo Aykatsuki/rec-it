@@ -11,8 +11,20 @@ import { StatusBar } from './layout/StatusBar';
 import { Timeline } from './timeline/Timeline';
 import { ExportDialogHost, openExportDialog } from './timeline/ExportDialog';
 import { SequenceSettingsHost } from './timeline/SequenceSettings';
-import { stepFrames, togglePlay } from './timeline/ProgramMonitor';
-import { deleteSelected, redo, sequenceSeconds, splitAtPlayhead, undo } from './edit';
+import { shuttle, stepFrames, togglePlay } from './timeline/ProgramMonitor';
+import { ContextMenuHost } from './ui/ContextMenu';
+import {
+  copySelected,
+  cutSelected,
+  deleteSelected,
+  duplicateSelected,
+  paste,
+  redo,
+  selectAll,
+  sequenceSeconds,
+  splitAtPlayhead,
+  undo,
+} from './edit';
 import { activeSequence } from './store';
 import { TopBar } from './layout/TopBar';
 import { RightsDialogHost } from './media/RightsDialog';
@@ -43,6 +55,7 @@ export function App() {
       <RightsDialogHost />
       <SequenceSettingsHost />
       <ExportDialogHost />
+      <ContextMenuHost />
       <Toasts />
       {dragging && (
         <div className="drop-overlay" aria-hidden>
@@ -127,6 +140,22 @@ function useShortcuts() {
       } else if (mod && key === 'z') {
         e.preventDefault();
         void undo();
+      } else if (mod && key === 'c' && focus === 'timeline') {
+        if (copySelected()) e.preventDefault();
+      } else if (mod && key === 'x' && focus === 'timeline') {
+        e.preventDefault();
+        void cutSelected();
+      } else if (mod && key === 'v' && seq) {
+        e.preventDefault();
+        void paste();
+      } else if (mod && key === 'd' && focus === 'timeline') {
+        e.preventDefault();
+        void duplicateSelected();
+      } else if (mod && key === 'a' && focus === 'timeline' && seq) {
+        e.preventDefault();
+        selectAll();
+      } else if (e.key === 'Escape' && focus === 'timeline') {
+        state.selectItems([]);
       } else if (e.key === 'Delete' || e.key === 'Backspace') {
         e.preventDefault();
         if (focus === 'timeline' && selectedItemIds.length) void deleteSelected(e.shiftKey);
@@ -142,6 +171,9 @@ function useShortcuts() {
       } else if (key === 's' && !mod) {
         e.preventDefault();
         void splitAtPlayhead();
+      } else if ((key === 'j' || key === 'k' || key === 'l') && !mod) {
+        e.preventDefault();
+        shuttle(seq, key);
       } else if (key === 'n' && !mod) {
         useApp.setState({ snapping: !state.snapping });
       } else if (e.key === 'ArrowLeft') {

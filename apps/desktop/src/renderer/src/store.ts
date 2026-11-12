@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import type { Sequence } from '@rec-it/core';
+import type { Sequence, Transform } from '@rec-it/core';
 import type {
   DocumentState,
   ExportState,
@@ -27,10 +27,16 @@ interface AppState {
   /** Timeline playhead in seconds. */
   playhead: number;
   playing: boolean;
+  /** Playback speed while playing: 1 normal, 2/4/8 fast forward, negative plays backwards (J/K/L). */
+  rate: number;
   /** Timeline zoom in pixels per second. */
   zoom: number;
   snapping: boolean;
   mediaView: 'grid' | 'list';
+  /** A transform being dragged (preview or inspector) before it is committed as an edit. */
+  draftTransform: { itemId: string; transform: Transform } | null;
+  /** Clips copied with Ctrl+C, ready to paste. */
+  clipboard: ClipboardClip[];
 
   select(id: string | null): void;
   selectItems(ids: string[]): void;
@@ -38,6 +44,21 @@ interface AppState {
   setPlaying(playing: boolean): void;
   setZoom(pps: number): void;
   setMediaView(view: 'grid' | 'list'): void;
+  setDraftTransform(draft: { itemId: string; transform: Transform } | null): void;
+}
+
+export interface ClipboardClip {
+  assetId: string;
+  /** Track index among tracks of the same kind (0 = top video / first audio). */
+  trackKind: 'video' | 'audio';
+  trackIndex: number;
+  /** Offset from the earliest copied clip, in flicks. */
+  offset: number;
+  sourceIn: number;
+  duration: number;
+  volume: number;
+  muted: boolean;
+  transform: Transform;
 }
 
 const stored = (key: string) => {
@@ -68,9 +89,13 @@ export const useApp = create<AppState>((set) => ({
   monitor: 'program',
   playhead: 0,
   playing: false,
+  rate: 1,
   zoom: Number(stored('recit.zoom')) || 80,
   snapping: true,
   mediaView: (stored('recit.mediaView') as 'grid' | 'list' | null) ?? 'grid',
+  draftTransform: null,
+  clipboard: [],
+  setDraftTransform: (draftTransform) => set({ draftTransform }),
   select: (id) =>
     set({
       selectedAssetId: id,
@@ -80,7 +105,8 @@ export const useApp = create<AppState>((set) => ({
     }),
   selectItems: (ids) => set({ selectedItemIds: ids, focus: 'timeline', monitor: 'program' }),
   setPlayhead: (seconds) => set({ playhead: Math.max(0, seconds), monitor: 'program' }),
-  setPlaying: (playing) => set({ playing, ...(playing ? { monitor: 'program' as const } : {}) }),
+  setPlaying: (playing) =>
+    set({ playing, ...(playing ? { monitor: 'program' as const } : { rate: 1 }) }),
   setZoom: (pps) => {
     const zoom = Math.min(600, Math.max(4, pps));
     store('recit.zoom', String(zoom));

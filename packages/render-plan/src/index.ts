@@ -172,7 +172,7 @@ export function planExport(
     if (!asset.width || !asset.height)
       throw new ExportPlanError('Some media has no frame size; it may still be processing.');
     const k = addInput(item, asset);
-    const { width, height, left, top } = computeLayout(
+    const { width, height, rotation, bounds } = computeLayout(
       asset.width,
       asset.height,
       W,
@@ -186,10 +186,17 @@ export function planExport(
       `scale=${width}:${height}:flags=bicubic`,
       'setsar=1',
       'format=yuva420p',
+      ...(rotation
+        ? [
+            `rotate=a=${((rotation * Math.PI) / 180).toFixed(6)}:ow=${bounds.width}:oh=${bounds.height}:c=none:bilinear=1`,
+          ]
+        : []),
       `setpts=PTS-STARTPTS+${start}/TB`,
     ];
     graph.push(`[${k}:v]${chain.join(',')}[v${n}]`);
-    graph.push(`[${last}][v${n}]overlay=x=${left}:y=${top}:eof_action=pass:repeatlast=0[o${n}]`);
+    graph.push(
+      `[${last}][v${n}]overlay=x=${bounds.left}:y=${bounds.top}:eof_action=pass:repeatlast=0[o${n}]`,
+    );
     last = `o${n}`;
   });
   graph.push(`[${last}]format=yuv420p[vout]`);

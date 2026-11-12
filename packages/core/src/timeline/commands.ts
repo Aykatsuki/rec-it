@@ -3,6 +3,7 @@ import { snapToFrame, secondsToFlicks, type Flicks, type Rational } from '../tim
 import {
   DEFAULT_TRANSFORM,
   itemEnd,
+  normalizeAngle,
   type AssetLookup,
   type ProjectDocument,
   type Sequence,
@@ -35,6 +36,8 @@ export type Command =
       fps?: Rational;
     }
   | { type: 'track.add'; sequenceId: string; kind: TrackKind; id?: string }
+  /** Deletes a track and every clip on it. The last video or audio track cannot be deleted. */
+  | { type: 'track.remove'; sequenceId: string; trackId: string }
   | {
       type: 'track.update';
       sequenceId: string;
@@ -52,8 +55,16 @@ export type Command =
       id?: string;
       sourceIn?: number;
       duration?: number;
+      volume?: number;
+      muted?: boolean;
+      transform?: Partial<Transform>;
     }
   | { type: 'item.move'; sequenceId: string; itemId: string; trackId: string; start: number }
+  | {
+      type: 'item.moveMany';
+      sequenceId: string;
+      moves: { itemId: string; trackId: string; start: number }[];
+    }
   | { type: 'item.trim'; sequenceId: string; itemId: string; edge: 'start' | 'end'; time: number }
   | { type: 'item.split'; sequenceId: string; time: number; itemIds?: string[] }
   | { type: 'item.remove'; sequenceId: string; itemIds: string[]; ripple?: boolean }
@@ -64,7 +75,9 @@ export type Command =
       volume?: number;
       muted?: boolean;
       transform?: Partial<Transform>;
-    };
+    }
+  /** Several commands applied as one undo step. Fails as a whole if any part fails. */
+  | { type: 'batch'; commands: Command[] };
 
 export class CommandError extends Error {
   override name = 'CommandError';
@@ -200,6 +213,15 @@ export function applyCommand(doc: ProjectDocument, command: Command, assets: Ass
       else seq.tracks.push(track);
       return;
     }
+    case 'track.remove': {
+      const seq = sequenceOf(doc, command.sequenceId);
+      const track = trackOf(seq, command.trackId);
+      unlocked(track);
+      if (seq.tracks.filter((t) => t.kind === track.kind).length <= 1)
+        fail(`A sequence needs at least one ${track.kind} track.`);
+      seq.tracks = seq.tracks.filter((t) => t.id !== track.id);
+      return;
+    }
     case 'track.update': {
       const track = trackOf(sequenceOf(doc, command.sequenceId), command.trackId);
       if (command.muted !== undefined) track.muted = command.muted;
@@ -227,9 +249,9 @@ export function applyCommand(doc: ProjectDocument, command: Command, assets: Ass
         start,
         duration: (end - start) as Flicks,
         sourceIn,
-        volume: 1,
-        muted: false,
-        transform: { ...DEFAULT_TRANSFORM },
+        volume: clampVolume(command.volume ?? 1),
+        muted: command.muted ?? false,
+        transform: cleanTransform({ ...DEFAULT_TRANSFORM, ...command.transform }),
       });
       sortItems(track);
       return;
@@ -250,6 +272,38 @@ export function applyCommand(doc: ProjectDocument, command: Command, assets: Ass
       clearRange(to, item.start, itemEnd(item));
       to.items.push(item);
       sortItems(to);
+      return;
+    }
+    case 'item.moveMany': {
+      const seq = sequenceOf(doc, command.sequenceId);
+      // Take every moving clip out first so they cannot overwrite each other on the way.
+      const lifted = command.moves.map((move) => {
+        const from = findItem(seq, move.itemId);
+        const to = trackOf(seq, move.trackId);
+        unlocked(from.track);
+        unlocked(to);
+        if (to.kind !== from.track.kind) {
+          const asset = assets(from.item.assetId);
+          if (!asset) fail('That media is missing.');
+          else checkPlacement(to, asset.kind, asset.hasAudio);
+        }
+        return { item: { ...from.item, start: snap(seq, move.start) }, to };
+      });
+      const ids = new Set(command.moves.map((m) => m.itemId));
+      for (const track of seq.tracks) track.items = track.items.filter((i) => !ids.has(i.id));
+      for (const { item, to } of lifted) {
+        clearRange(to, item.start, itemEnd(item));
+        to.items.push(item);
+        sortItems(to);
+      }
+      return;
+    }
+    case 'batch': {
+      if (!command.commands.length) fail('Nothing to do.');
+      for (const sub of command.commands) {
+        if (sub.type === 'batch') fail('Batches cannot be nested.');
+        applyCommand(doc, sub, assets);
+      }
       return;
     }
     case 'item.trim': {
@@ -331,20 +385,25 @@ export function applyCommand(doc: ProjectDocument, command: Command, assets: Ass
       const seq = sequenceOf(doc, command.sequenceId);
       const { track, item } = findItem(seq, command.itemId);
       unlocked(track);
-      if (command.volume !== undefined) item.volume = Math.min(2, Math.max(0, command.volume));
+      if (command.volume !== undefined) item.volume = clampVolume(command.volume);
       if (command.muted !== undefined) item.muted = command.muted;
-      if (command.transform) {
-        const t = { ...item.transform, ...command.transform };
-        item.transform = {
-          fit: t.fit === 'fit' ? 'fit' : 'fill',
-          scale: Math.min(10, Math.max(0.05, t.scale)),
-          x: Math.min(2, Math.max(-2, t.x)),
-          y: Math.min(2, Math.max(-2, t.y)),
-        };
-      }
+      if (command.transform)
+        item.transform = cleanTransform({ ...item.transform, ...command.transform });
       return;
     }
   }
+}
+
+const clampVolume = (v: number) => Math.min(2, Math.max(0, v));
+
+function cleanTransform(t: Transform): Transform {
+  return {
+    fit: t.fit === 'fit' ? 'fit' : 'fill',
+    scale: Math.min(10, Math.max(0.05, t.scale)),
+    x: Math.min(2, Math.max(-2, t.x)),
+    y: Math.min(2, Math.max(-2, t.y)),
+    rotation: normalizeAngle(t.rotation ?? 0),
+  };
 }
 
 function blankTrack(kind: TrackKind, name: string, id?: string): Track {

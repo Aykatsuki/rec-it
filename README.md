@@ -4,7 +4,7 @@
 
 Rec-It is a free, open-source, timeline-based video editor (in the style of CapCut and DaVinci Resolve) that Claude can operate. You talk to Claude in your own Claude app; through Rec-It's local MCP connector, Claude can research YouTube topics, analyse your footage, suggest the best clips, generate animated captions, reframe video to vertical 9:16 and make edits on the real timeline. Every edit it makes can be undone. Rec-It has no paid tier and no AI bill of its own: AI usage comes from your existing Claude plan.
 
-> **Status: Phases 0–1 complete, first slices of Phases 2–3 done.** Create projects and import footage; Rec-It makes preview copies, thumbnails and waveforms in the background, using NVENC on NVIDIA GPUs. Drag clips onto a multi-track timeline, move, trim, split and delete them with undo, set the resolution and frame rate, frame each clip (fill/fit, scale, position, volume), preview the edit and export an MP4. The first goal is a fully working video editor (Phases 0–5) that needs no AI at all; Claude features build on top of it afterwards.
+> **Status: Phases 0–1 complete, first slices of Phases 2–3 done.** Create projects and import footage; Rec-It makes preview copies, thumbnails and waveforms in the background, using NVENC on NVIDIA GPUs. Drag clips onto a multi-track timeline; move, trim, split, copy and paste them with undo; move, resize and rotate clips with the mouse in the preview; use right-click menus everywhere; set the resolution and frame rate; preview the edit and export an MP4. Effects and transitions are planned for Phase 6. The first goal is a fully working video editor (Phases 0–5) that needs no AI at all; Claude features build on top of it afterwards.
 
 ## Quick start (Windows)
 
@@ -72,8 +72,8 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for requirements (Node 24, pnpm 10, uv) a
 - Python 3.11+ and [uv](https://github.com/astral-sh/uv)
 - FFmpeg 7.x GPL build with libx264 and NVENC (downloaded by `scripts/fetch-ffmpeg`, not committed)
 - NVIDIA GPU with current drivers (reference machine: RTX 3070 8 GB) for NVENC export and CUDA transcription; CPU fallback for everything
-- For AI features (Phase 6 onwards): the Claude desktop app on a Pro plan or higher
-- For YouTube research (Phase 8): a free Google Cloud project with YouTube Data API v3 enabled
+- For AI features (Phase 7 onwards): the Claude desktop app on a Pro plan or higher
+- For YouTube research (Phase 9): a free Google Cloud project with YouTube Data API v3 enabled
 
 ## Cost to users
 

@@ -4,12 +4,27 @@ const flicks = z.number().int().nonnegative();
 const id = z.string().min(1).max(100);
 const rational = z.object({ num: z.number().int().positive(), den: z.number().int().positive() });
 
-export const transformSchema = z.object({
+const transformShape = {
   fit: z.enum(['fill', 'fit']),
   scale: z.number().min(0.05).max(10),
   x: z.number().min(-2).max(2),
   y: z.number().min(-2).max(2),
+  rotation: z.number().min(-3600).max(3600),
+};
+/** Documents saved before rotation existed load with rotation 0. */
+export const transformSchema = z.object({
+  ...transformShape,
+  rotation: transformShape.rotation.default(0),
 });
+const transformPatchSchema = z
+  .object({
+    fit: transformShape.fit.optional(),
+    scale: transformShape.scale.optional(),
+    x: transformShape.x.optional(),
+    y: transformShape.y.optional(),
+    rotation: transformShape.rotation.optional(),
+  })
+  .strict();
 
 export const timelineItemSchema = z.object({
   id,
@@ -49,7 +64,7 @@ export const projectDocumentSchema = z.object({
 
 const seqId = { sequenceId: id };
 /** Every edit the UI (and later Claude) can make to the timeline. Mirrors core's Command type. */
-export const commandSchema = z.discriminatedUnion('type', [
+const singleCommandSchema = z.discriminatedUnion('type', [
   z.object({
     type: z.literal('sequence.create'),
     id: id.optional(),
@@ -72,6 +87,7 @@ export const commandSchema = z.discriminatedUnion('type', [
     kind: z.enum(['video', 'audio']),
     id: id.optional(),
   }),
+  z.object({ type: z.literal('track.remove'), ...seqId, trackId: id }),
   z.object({
     type: z.literal('track.update'),
     ...seqId,
@@ -89,8 +105,19 @@ export const commandSchema = z.discriminatedUnion('type', [
     id: id.optional(),
     sourceIn: flicks.optional(),
     duration: flicks.optional(),
+    volume: z.number().min(0).max(2).optional(),
+    muted: z.boolean().optional(),
+    transform: transformPatchSchema.optional(),
   }),
   z.object({ type: z.literal('item.move'), ...seqId, itemId: id, trackId: id, start: flicks }),
+  z.object({
+    type: z.literal('item.moveMany'),
+    ...seqId,
+    moves: z
+      .array(z.object({ itemId: id, trackId: id, start: flicks }))
+      .min(1)
+      .max(1000),
+  }),
   z.object({
     type: z.literal('item.trim'),
     ...seqId,
@@ -116,7 +143,15 @@ export const commandSchema = z.discriminatedUnion('type', [
     itemId: id,
     volume: z.number().min(0).max(2).optional(),
     muted: z.boolean().optional(),
-    transform: transformSchema.partial().optional(),
+    transform: transformPatchSchema.optional(),
+  }),
+]);
+
+export const commandSchema = z.union([
+  singleCommandSchema,
+  z.object({
+    type: z.literal('batch'),
+    commands: z.array(singleCommandSchema).min(1).max(1000),
   }),
 ]);
 export type CommandInput = z.input<typeof commandSchema>;
