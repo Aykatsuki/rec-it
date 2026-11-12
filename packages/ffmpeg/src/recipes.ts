@@ -25,10 +25,18 @@ export function proxyFrameRate(probe: ProbeInfo): Rational {
   const avg = v.avgFps.num / v.avgFps.den;
   const nominal = v.fps.num / v.fps.den;
   const target = v.isVfr ? avg : nominal;
+  // The nearest standard rate within 1% (not the first: 30 must not become 29.97).
+  let best: Rational | null = null;
+  let bestError = 0.01;
   for (const rate of STANDARD_RATES) {
     const value = rate.num / rate.den;
-    if (Math.abs(value - target) / value < 0.01) return rate;
+    const error = Math.abs(value - target) / value;
+    if (error < bestError) {
+      best = rate;
+      bestError = error;
+    }
   }
+  if (best) return best;
   return { num: Math.max(1, Math.min(60, Math.round(target))), den: 1 };
 }
 

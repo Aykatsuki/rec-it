@@ -23,6 +23,7 @@
     "@rec-it/render-plan": "workspace:*",
     "@rec-it/ui": "workspace:*",
     "lucide-react": "^1.72.0",
+    "mp4box": "2.5.0",
     "react": "^19.3.0",
     "react-dom": "^19.3.0",
     "react-resizable-panels": "^4.0.0",

@@ -90,7 +90,7 @@ describe.skipIf(!bins)('media pipeline (backend, real FFmpeg)', () => {
     const video = byName('clip h264.mp4');
     expect(video).toMatchObject({ status: 'ready', kind: 'video' });
     expect(video.urls.proxy).toMatch(
-      /^recit-media:\/\/asset\/project_\w+\/asset_\w+\/proxy\.mp4\?v=\d+$/,
+      /^recit-media:\/\/asset\/project_\w+\/asset_\w+\/proxy-v2\.mp4\?v=\d+$/,
     );
     expect(video.urls.sprite).toMatchObject({ columns: 3, rows: 1 });
     expect(video.urls.waveform).toBeDefined();
@@ -120,7 +120,7 @@ describe.skipIf(!bins)('media pipeline (backend, real FFmpeg)', () => {
 
     const files_ = walk(project.cacheDir);
     expect(files_.filter((f) => f.endsWith('.part'))).toEqual([]);
-    expect(files_.filter((f) => f.endsWith('proxy.mp4'))).toHaveLength(fx.hevcRotated ? 5 : 3);
+    expect(files_.filter((f) => f.endsWith('proxy-v2.mp4'))).toHaveLength(fx.hevcRotated ? 5 : 3);
   }, 180_000);
 
   it('refuses duplicates', async () => {

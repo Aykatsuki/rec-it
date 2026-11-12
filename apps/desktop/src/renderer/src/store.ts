@@ -33,6 +33,11 @@ interface AppState {
   zoom: number;
   snapping: boolean;
   mediaView: 'grid' | 'list';
+  /** Preview engine: GPU (WebCodecs + WebGL2, frame-accurate) or the compatible media-element one. */
+  previewEngine: 'gpu' | 'compatible';
+  /** Set when the GPU preview failed this session; choosing it again clears this. */
+  gpuFailed: string | null;
+  setPreviewEngine(engine: 'gpu' | 'compatible'): void;
   /** A transform being dragged (preview or inspector) before it is committed as an edit. */
   draftTransform: { itemId: string; transform: Transform } | null;
   /** Clips copied with Ctrl+C, ready to paste. */
@@ -98,6 +103,12 @@ export const useApp = create<AppState>((set) => ({
   mediaView: (stored('recit.mediaView') as 'grid' | 'list' | null) ?? 'grid',
   draftTransform: null,
   clipboard: [],
+  previewEngine: stored('recit.previewEngine') === 'compatible' ? 'compatible' : 'gpu',
+  gpuFailed: null,
+  setPreviewEngine: (previewEngine) => {
+    store('recit.previewEngine', previewEngine);
+    set({ previewEngine, gpuFailed: null });
+  },
   setDraftTransform: (draftTransform) => set({ draftTransform }),
   select: (id) =>
     set({
@@ -151,14 +162,20 @@ export function startBackendSync(): () => void {
       if (connected) void load();
     }),
     backend.on('project.changed', (project) =>
-      useApp.setState({
-        project,
-        selectedAssetId: null,
-        selectedItemIds: [],
-        playhead: 0,
-        playing: false,
-        ...(project ? {} : { docState: null }),
-      }),
+      useApp.setState((s) =>
+        // Updates to the same project (rename, save, recent list) keep the selection and
+        // playhead; only opening, creating or closing a project resets them.
+        s.project?.id === project?.id && project
+          ? { project }
+          : {
+              project,
+              selectedAssetId: null,
+              selectedItemIds: [],
+              playhead: 0,
+              playing: false,
+              ...(project ? {} : { docState: null }),
+            },
+      ),
     ),
     backend.on('media.changed', (assets) =>
       useApp.setState((s) => ({

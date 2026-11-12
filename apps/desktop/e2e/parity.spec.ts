@@ -211,12 +211,18 @@ test.describe('preview and export match', () => {
       }, s);
       await expect(page.getByTestId('timeline-item')).toHaveCount(5);
 
+      await expect(page.getByTestId('program-monitor')).toHaveAttribute('data-engine', 'gpu');
       const times = [1, 3, 5, 7];
       const stage = page.locator('.program');
       for (const t of times) {
         await page.getByTestId('ruler').click({ position: { x: t * ZOOM, y: 10 } });
         await expect(page.getByTestId('program-time')).toContainText(`00:0${t}.000`);
-        // Let the media elements finish seeking.
+        // Wait for the GPU engine to draw this time (or, in the compatible engine, for the media
+        // elements to finish seeking).
+        await page.waitForFunction((at) => {
+          const c = document.querySelector<HTMLCanvasElement>('[data-testid=program-canvas]');
+          return !c || c.dataset.time === at;
+        }, t.toFixed(3));
         await page.waitForFunction(() =>
           [...document.querySelectorAll<HTMLVideoElement>('.program video')].every(
             (v) => v.readyState >= 2 && !v.seeking,

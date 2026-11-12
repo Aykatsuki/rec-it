@@ -61,7 +61,9 @@ interface Derived {
 
 const ALL_JOBS: JobKind[] = ['probe', 'proxy', 'thumbnails', 'waveform'];
 const FILES = {
-  proxy: 'proxy.mp4',
+  // v2: frame rate snapped to the nearest standard rate and BT.709-tagged (ADR-029). Projects
+  // with older proxies get new ones automatically because this file is missing.
+  proxy: 'proxy-v2.mp4',
   audioProxy: 'proxy.m4a',
   still: 'still.jpg',
   poster: 'poster.jpg',
@@ -419,6 +421,8 @@ export class MediaService {
           onProgress: ctx.progress,
         }),
       );
+      // Remove the proxy from before ADR-029, if any.
+      await rm(join(dir, 'proxy.mp4'), { force: true });
     } else if (kind === 'thumbnails') {
       await write(FILES.poster, (tmp) =>
         runFfmpeg(bins.ffmpeg, posterArgs(row.originalPath, tmp, probe), { signal: ctx.signal }),

@@ -84,7 +84,7 @@ test.describe('media pipeline', () => {
         for (const url of [
           'recit-media://asset/project_x/asset_y/../../../app.db',
           'recit-media://asset/project_x/asset_y/secrets.json',
-          'recit-media://asset/project_x/asset_y/proxy.mp4',
+          'recit-media://asset/project_x/asset_y/proxy-v2.mp4',
         ]) {
           codes.push(
             await fetch(url).then(

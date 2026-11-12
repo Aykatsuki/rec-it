@@ -56,6 +56,11 @@ export default defineConfig({
   renderer: {
     root: resolve(__dirname, 'src/renderer'),
     plugins: [react(), cspPlugin()],
+    // RECIT_REACT_DEV=1 builds the renderer with React's development mode (StrictMode mounts
+    // effects twice, as in `pnpm dev`), so CI can test what developers run.
+    ...(process.env.RECIT_REACT_DEV === '1'
+      ? { define: { 'process.env.NODE_ENV': JSON.stringify('development') } }
+      : {}),
     build: {
       rollupOptions: { input: resolve(__dirname, 'src/renderer/index.html') },
     },
