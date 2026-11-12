@@ -35,7 +35,6 @@ export class PreviewEngine {
   private readonly sources = new Map<string, { url: string; source: Promise<VideoSource> }>();
   private readonly images = new Map<string, Promise<ImageBitmap>>();
   private readonly uploadedImage = new Map<string, string>();
-  private token = 0;
   private disposed = false;
 
   /** `restored` is called when the graphics context comes back after being lost. */
@@ -78,16 +77,51 @@ export class PreviewEngine {
   }
 
   /**
-   * Decodes and draws one frame. When `playing`, a layer whose frame is late keeps its previous
-   * picture. Returns false if a newer render started meanwhile (this one was abandoned).
+   * Draws the frame for these layers. Requests are coalesced: one render runs at a time, and
+   * while it runs only the newest request waits, so a slow machine draws fewer frames instead of
+   * none (a newer request never cancels one that is already decoding). Resolves true when this
+   * request was drawn, false when a newer one replaced it before it started.
    */
-  async render(
+  render(
     frame: { width: number; height: number },
     layers: EngineLayer[],
     pixel: { w: number; h: number },
     playing: boolean,
   ): Promise<boolean> {
-    const token = ++this.token;
+    return new Promise((resolve, reject) => {
+      this.pending?.resolve(false);
+      this.pending = { args: [frame, layers, pixel, playing], resolve, reject };
+      if (!this.busy) void this.pump();
+    });
+  }
+
+  private busy = false;
+  private pending: {
+    args: [{ width: number; height: number }, EngineLayer[], { w: number; h: number }, boolean];
+    resolve: (drawn: boolean) => void;
+    reject: (error: unknown) => void;
+  } | null = null;
+
+  private async pump(): Promise<void> {
+    this.busy = true;
+    while (this.pending && !this.disposed) {
+      const job = this.pending;
+      this.pending = null;
+      try {
+        job.resolve(await this.renderNow(...job.args));
+      } catch (error) {
+        job.reject(error);
+      }
+    }
+    this.busy = false;
+  }
+
+  private async renderNow(
+    frame: { width: number; height: number },
+    layers: EngineLayer[],
+    pixel: { w: number; h: number },
+    playing: boolean,
+  ): Promise<boolean> {
     await Promise.all(
       layers.map(async (layer) => {
         if (layer.kind === 'image') {
@@ -108,12 +142,12 @@ export class PreviewEngine {
             ])
           : await pending;
         if (result === 'late') {
-          // Use it when it arrives only if nothing newer has been drawn.
+          // Keep the previous picture for this layer; release the frame when it arrives.
           void pending.then((f) => f?.close());
           return;
         }
         if (!result) return;
-        if (token !== this.token || this.disposed) {
+        if (this.disposed) {
           result.close();
           return;
         }
@@ -121,7 +155,7 @@ export class PreviewEngine {
         result.close();
       }),
     );
-    if (token !== this.token || this.disposed || this.compositor.isLost) return false;
+    if (this.disposed || this.compositor.isLost) return false;
     this.compositor.retain(new Set(layers.map((l) => l.key)));
     this.compositor.draw(frame.width, frame.height, layers, pixel);
     return true;

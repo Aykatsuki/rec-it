@@ -114,10 +114,14 @@ test.describe('frame accuracy', () => {
       await press('Shift+ArrowRight', 10);
       console.info(`Seek to a new frame drawn in ${Date.now() - t0} ms`);
 
-      // Playback moves the playhead and keeps drawing frames.
+      // Playback moves the playhead and keeps drawing frames — also on a slow machine (the CPU is
+      // throttled 4×), where a render can take longer than a screen refresh.
+      const cdp = await page.context().newCDPSession(page);
+      await cdp.send('Emulation.setCPUThrottlingRate', { rate: 4 });
       await page.keyboard.press('Space');
-      await page.waitForTimeout(1200);
+      await page.waitForTimeout(1500);
       await page.keyboard.press('Space');
+      await cdp.send('Emulation.setCPUThrottlingRate', { rate: 1 });
       const drawn = Number(await page.getByTestId('program-canvas').getAttribute('data-time'));
       expect(drawn).toBeGreaterThan(frame / 30 + 0.5);
 
