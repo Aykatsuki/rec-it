@@ -31,7 +31,9 @@ import {
 } from '@rec-it/ffmpeg';
 import type { BackendConfig } from '../shared/backend-messages';
 import type { Toolchain } from './services/media-service';
+import { ExportService } from './services/export-service';
 import { ProjectService } from './services/project-service';
+import type { Command } from '@rec-it/core';
 import { SidecarClient, checkSidecar } from './services/sidecar';
 
 const BACKEND_VERSION = '0.1.0';
@@ -55,6 +57,7 @@ export class BackendApp {
   private readonly sidecar: SidecarClient | null;
   private readonly servers = new Set<IpcServer<BackendContract>>();
   readonly projects: ProjectService;
+  readonly exports: ExportService;
   private secrets: Partial<Record<SecretName, string>> = {};
   private ffmpeg: FfmpegStatus = {
     state: 'checking',
@@ -92,7 +95,9 @@ export class BackendApp {
       onProjectChanged: (p) => this.emit('project.changed', p),
       onAssetsChanged: (a) => this.emit('media.changed', a),
       onJobsChanged: (j) => this.emit('jobs.changed', j),
+      onDocumentChanged: (d) => this.emit('doc.changed', d),
     });
+    this.exports = new ExportService((state) => this.emit('export.changed', state));
     hooks.onCacheRoot?.(this.cacheRoot());
   }
 
@@ -143,6 +148,12 @@ export class BackendApp {
     'media.list': () => (this.projects.info() ? this.projects.media().list() : []),
     'media.import': ({ paths, rights }) => this.projects.media().import(paths, rights),
     'media.remove': async ({ assetIds }) => {
+      const using = this.projects.document().sequencesUsing(assetIds);
+      if (using.length) {
+        throw new Error(
+          `This media is used in ${using.join(', ')}. Remove its clips from the timeline first.`,
+        );
+      }
       await this.projects.media().remove(assetIds);
       return { ok: true as const };
     },
@@ -158,6 +169,32 @@ export class BackendApp {
     'media.updateRights': ({ assetId, rights }) =>
       this.projects.media().updateRights(assetId, rights),
     'jobs.list': () => (this.projects.info() ? this.projects.media().jobs() : []),
+
+    'doc.get': () => this.projects.document().state(),
+    'doc.execute': ({ command }) => this.projects.document().execute(command as Command),
+    'doc.undo': () => this.projects.document().undo(),
+    'doc.redo': () => this.projects.document().redo(),
+
+    'export.start': ({ sequenceId, path, quality }) => {
+      const seq = this.projects
+        .document()
+        .state()
+        .doc.sequences.find((s) => s.id === sequenceId);
+      if (!seq) throw new Error('That sequence no longer exists.');
+      const media = this.projects.media();
+      return this.exports.start(
+        seq as never,
+        path,
+        quality,
+        () => this.toolchain(),
+        (id) => media.exportAsset(id),
+      );
+    },
+    'export.cancel': () => {
+      this.exports.cancel();
+      return { ok: true as const };
+    },
+    'export.status': () => this.exports.status(),
   };
 
   /** Serves one renderer over its MessagePort. */
@@ -241,6 +278,7 @@ export class BackendApp {
   }
 
   async dispose(): Promise<void> {
+    this.exports.cancel();
     await this.projects.close().catch(() => {});
     for (const server of this.servers) server.dispose();
     this.servers.clear();

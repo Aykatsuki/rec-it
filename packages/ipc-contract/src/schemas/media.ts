@@ -105,6 +105,8 @@ export const mediaAssetSchema = z.object({
   urls: z.object({
     proxy: z.string().optional(),
     poster: z.string().optional(),
+    /** Full-size preview of a still image. */
+    still: z.string().optional(),
     waveform: z.string().optional(),
     sprite: spriteInfoSchema.optional(),
   }),

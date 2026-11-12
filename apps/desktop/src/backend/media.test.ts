@@ -100,7 +100,7 @@ describe.skipIf(!bins)('media pipeline (backend, real FFmpeg)', () => {
     expect(byName('audio.wav')).toMatchObject({
       status: 'ready',
       kind: 'audio',
-      jobs: { proxy: { state: 'skipped' } },
+      jobs: { proxy: { state: 'done' } },
     });
     expect(byName('image.png')).toMatchObject({
       status: 'ready',

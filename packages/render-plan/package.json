@@ -10,5 +10,10 @@
   "scripts": {
     "typecheck": "tsc -p tsconfig.json"
   },
-  "dependencies": {}
+  "dependencies": {
+    "@rec-it/core": "workspace:*"
+  },
+  "devDependencies": {
+    "@rec-it/ffmpeg": "workspace:*"
+  }
 }

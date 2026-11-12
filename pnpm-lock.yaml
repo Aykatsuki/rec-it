@@ -53,6 +53,9 @@ importers:
       '@rec-it/ipc-contract':
         specifier: workspace:*
         version: link:../../packages/ipc-contract
+      '@rec-it/render-plan':
+        specifier: workspace:*
+        version: link:../../packages/render-plan
       '@rec-it/ui':
         specifier: workspace:*
         version: link:../../packages/ui
@@ -73,7 +76,7 @@ importers:
         version: 4.6.7
       zustand:
         specifier: ^5.0.0
-        version: 5.1.0(@types/react@19.3.0)(react@19.3.1)
+        version: 5.1.0(@types/react@19.3.0)(immer@11.2.10)(react@19.3.1)
     devDependencies:
       '@playwright/test':
         specifier: ^1.65.0
@@ -101,7 +104,11 @@ importers:
 
   packages/captions: {}
 
-  packages/core: {}
+  packages/core:
+    dependencies:
+      immer:
+        specifier: ^11.2.0
+        version: 11.2.10
 
   packages/db:
     dependencies:
@@ -121,7 +128,15 @@ importers:
         specifier: ^4.6.0
         version: 4.6.7
 
-  packages/render-plan: {}
+  packages/render-plan:
+    dependencies:
+      '@rec-it/core':
+        specifier: workspace:*
+        version: link:../core
+    devDependencies:
+      '@rec-it/ffmpeg':
+        specifier: workspace:*
+        version: link:../ffmpeg
 
   packages/tools: {}
 
@@ -794,6 +809,9 @@ packages:
   ignore@7.0.14:
     resolution: {integrity: sha512-wCBiZ77u1tuWde6G/nfOtLaCTYcFDU5yCzARzK10y+rLhzYoL7a7yEemcopcc2Mzow7gZOIjnV2ym1NYmdiJOQ==}
     engines: {node: '>= 4'}
+
+  immer@11.2.10:
+    resolution: {integrity: sha512-pzANBj+0A9u+prdhBJ14DVi44vCvVUQzBa8DKt6I0AMCokPHtt722BK9IX5bFC70xUSU9TnzLRIJLTGqIzjEFw==}
 
   imurmurhash@0.1.4:
     resolution: {integrity: sha512-JmXMZ6wuvDmLiHEml9ykzqO6lwFbof0GG4IkcGaENdCRDDmMVnny7s5HsIgHCbaq0w2MyPhDqkhTUgS2LU2PHA==}
@@ -1917,6 +1935,8 @@ snapshots:
 
   ignore@7.0.14: {}
 
+  immer@11.2.10: {}
+
   imurmurhash@0.1.4: {}
 
   is-extglob@2.1.1: {}
@@ -2232,7 +2252,8 @@ snapshots:
 
   zod@4.6.7: {}
 
-  zustand@5.1.0(@types/react@19.3.0)(react@19.3.1):
+  zustand@5.1.0(@types/react@19.3.0)(immer@11.2.10)(react@19.3.1):
     optionalDependencies:
       '@types/react': 19.3.0
+      immer: 11.2.10
       react: 19.3.1

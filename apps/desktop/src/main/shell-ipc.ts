@@ -79,6 +79,21 @@ export function registerShellIpc(
           : await dialog.showSaveDialog(options);
         return { path: result.canceled ? null : (result.filePath ?? null) };
       },
+      'dialog.saveExport': async ({ defaultPath }) => {
+        const options = {
+          title: 'Export video',
+          defaultPath,
+          filters: [{ name: 'MP4 video', extensions: ['mp4'] }],
+        };
+        const result = win
+          ? await dialog.showSaveDialog(win, options)
+          : await dialog.showSaveDialog(options);
+        if (result.canceled || !result.filePath) return { path: null };
+        const path = result.filePath.toLowerCase().endsWith('.mp4')
+          ? result.filePath
+          : `${result.filePath}.mp4`;
+        return { path };
+      },
       'dialog.locateFile': async ({ name }) => {
         const result = await open({ title: `Locate "${name}"`, properties: ['openFile'] });
         return { path: result.canceled ? null : (result.filePaths[0] ?? null) };

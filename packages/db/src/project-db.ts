@@ -36,6 +36,17 @@ export const projectMigrations: readonly Migration[] = [
     ) STRICT;
     CREATE UNIQUE INDEX assets_content_hash ON assets (content_hash);`,
   },
+  {
+    version: 2,
+    name: 'document',
+    // The timeline document (sequences, tracks, clips) as one JSON value, rewritten after each
+    // edit. It is small (tens of KB), so a whole-value write is simpler than a journal (ADR-025).
+    up: `CREATE TABLE document (
+      id INTEGER PRIMARY KEY CHECK (id = 1),
+      json TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    ) STRICT;`,
+  },
 ];
 
 export interface ProjectMeta {
@@ -277,6 +288,22 @@ export class ProjectDatabase {
   copyTo(path: string): void {
     if (existsSync(path)) throw new ProjectFileError(`A file already exists at ${path}`);
     this.db.prepare('VACUUM INTO ?').run(path);
+  }
+
+  /** The stored timeline document, or null if the project has none yet. */
+  loadDocument(): unknown {
+    const row = this.db.prepare('SELECT json FROM document WHERE id = 1').get() as
+      { json: string } | undefined;
+    return row ? (JSON.parse(row.json) as unknown) : null;
+  }
+
+  saveDocument(doc: unknown): void {
+    this.db
+      .prepare(
+        `INSERT INTO document (id, json, updated_at) VALUES (1, ?, ?)
+         ON CONFLICT(id) DO UPDATE SET json = excluded.json, updated_at = excluded.updated_at`,
+      )
+      .run(JSON.stringify(doc), new Date().toISOString());
   }
 
   close(): void {

@@ -84,9 +84,11 @@ The roadmap is ordered so that each phase produces something that works and can 
 
 ---
 
-## Phase 2 · Timeline and preview engine (L, highest risk)
+## Phase 2 · Timeline and preview engine (L, highest risk) — 🟡 first slice done (12 Nov 2026)
 
 **Goal:** a real multi-track editor with accurate playback.
+
+**Done in the first slice (ADR-025):** the data model, commands, invariants and Immer undo/redo in `packages/core`; a working DOM timeline (drag from the media bin, move, trim, split, delete, ripple delete, snapping, zoom, track hide/mute/lock, add tracks); sequence settings (resolution presets and frame rate); clip inspector (fill/fit, scale, position, volume, mute); an interim preview that plays the timeline with one media element per clip; the document saved in the project file. **Still to do:** canvas timeline with filmstrips and waveforms, multi-select, link/unlink audio, J/K/L, keyframes, the WebCodecs/WebGL2 preview engine and the exit criteria below.
 
 **Deliverables**
 - `packages/core`: full data model (ARCHITECTURE §6), flicks time maths, commands, invariants.
@@ -115,9 +117,11 @@ The roadmap is ordered so that each phase produces something that works and can 
 
 ---
 
-## Phase 3 · Export (M) → **Milestone M1**
+## Phase 3 · Export (M) → **Milestone M1** — 🟡 first slice done (12 Nov 2026)
 
 **Goal:** export what you see.
+
+**Done in the first slice:** `packages/render-plan` compiles a sequence to one FFmpeg `filter_complex` (layers, fill/fit/position, stills, audio mix with single-pass `loudnorm` to −14 LUFS); export dialog with three quality presets, progress, cancel and "Show in folder"; NVENC with libx264 fallback; integration tests check pixels, sizes, frame rate and duration of real exports. **Still to do:** two-pass loudness, speed, fades, export presets beyond quality, the golden-frame parity suite and the exit criteria below.
 
 **Deliverables**
 - `packages/ffmpeg`: argument builder, filter-graph escaping, progress parser, encoder detection.

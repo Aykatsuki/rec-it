@@ -5,7 +5,7 @@ ARCHITECTURE.md, ROADMAP.md and DECISIONS.md before making design changes.
 
 ## Current phase
 
-Phases 0 (foundations) and 1 (media pipeline) are complete. Next is Phase 2 (timeline and preview engine). Priority: a fully working editor
+Phases 0 (foundations) and 1 (media pipeline) are complete. First slices of Phase 2 (timeline, interim preview) and Phase 3 (export) are done (ADR-025); the rest of Phase 2 comes next. Priority: a fully working editor
 (Phases 0–5) before any Claude features (ADR-019). Reference machine: Windows 11 + RTX 3070 8 GB.
 
 ## Commands
@@ -27,7 +27,10 @@ Phases 0 (foundations) and 1 (media pipeline) are complete. Next is Phase 2 (tim
   files, range requests). Pure helpers in `media-paths.ts`.
 - `apps/desktop/src/renderer` — React UI. No Node, no Electron imports.
 - `packages/ipc-contract` — every channel and event with zod schemas; typed client/server.
-- `packages/core` — pure domain logic (flicks time maths now; data model in Phase 2).
+- `packages/core` — pure domain logic: flicks time maths, timeline model, commands, Immer undo/redo history.
+- `packages/render-plan` — Sequence → FFmpeg export plan (inputs, filter graph, output args).
+- Backend `services/document-service.ts` (timeline document + undo, saved per edit) and `services/export-service.ts`.
+- Renderer `timeline/` — Timeline, SequenceSettings, ClipInspector, ProgramMonitor, ExportDialog; edits go through `edit.ts`.
 - `packages/db` — `node:sqlite` (ADR-020), migrations, repositories.
 - `packages/ffmpeg` — binary resolution, capability detection, ffprobe parsing, abortable runner, proxy /
   sprite / poster / waveform recipes. `@rec-it/ffmpeg/testing` generates synthetic fixtures for tests.

@@ -4,7 +4,9 @@ import type { MediaAsset } from '@rec-it/ipc-contract';
 import { IconButton } from '@rec-it/ui';
 import { formatDuration } from '../format';
 import { WaveformStrip } from '../media/AssetCard';
-import { useSelectedAsset } from '../store';
+import { useApp, useSelectedAsset, useSequence } from '../store';
+import { addToTimeline } from '../edit';
+import { ProgramMonitor } from '../timeline/ProgramMonitor';
 
 type Aspect = '9:16' | '16:9';
 
@@ -17,12 +19,37 @@ function timecode(seconds: number): string {
 
 export function Preview() {
   const asset = useSelectedAsset();
+  const seq = useSequence();
+  const monitor = useApp((s) => s.monitor);
   const [aspect, setAspect] = useState<Aspect>('9:16');
+  const showSource = monitor === 'source' && !!asset;
   return (
     <section className="panel preview" data-region="preview" aria-label="Preview">
       <header className="panel__header">
-        <h2 className="panel__title">{asset ? `Source · ${asset.name}` : 'Preview'}</h2>
-        {!asset && (
+        <div className="segmented" role="tablist" aria-label="Preview shows">
+          <button
+            type="button"
+            role="tab"
+            aria-selected={showSource}
+            disabled={!asset}
+            onClick={() => asset && useApp.setState({ monitor: 'source' })}
+            title={asset ? `Source: ${asset.name}` : 'Select a media item'}
+          >
+            Source
+          </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={!showSource}
+            onClick={() => useApp.setState({ monitor: 'program' })}
+          >
+            Timeline
+          </button>
+        </div>
+        <h2 className="panel__title preview__title">
+          {showSource ? asset!.name : (seq?.name ?? '')}
+        </h2>
+        {!showSource && !seq && (
           <div className="segmented" role="radiogroup" aria-label="Frame">
             {(['9:16', '16:9'] as const).map((a) => (
               <button
@@ -37,8 +64,24 @@ export function Preview() {
             ))}
           </div>
         )}
+        {showSource && asset!.status === 'ready' && (
+          <button
+            type="button"
+            className="ui-btn ui-btn--sm"
+            onClick={() => void addToTimeline(asset!)}
+            data-testid="add-to-timeline"
+          >
+            Add to timeline
+          </button>
+        )}
       </header>
-      {asset ? <SourceMonitor key={asset.id} asset={asset} /> : <EmptyFrame aspect={aspect} />}
+      {showSource ? (
+        <SourceMonitor key={asset!.id} asset={asset!} />
+      ) : seq ? (
+        <ProgramMonitor seq={seq} />
+      ) : (
+        <EmptyFrame aspect={aspect} />
+      )}
     </section>
   );
 }
@@ -51,7 +94,7 @@ function EmptyFrame({ aspect }: { aspect: Aspect }) {
           {aspect === '9:16' && (
             <div className="preview__safe" aria-hidden title="Shorts UI safe area" />
           )}
-          <span className="preview__placeholder">Select a clip in Media to preview it</span>
+          <span className="preview__placeholder">Drag a clip onto the timeline to start</span>
         </div>
       </div>
       <footer className="transport">
@@ -81,7 +124,12 @@ function SourceMonitor({ asset }: { asset: MediaAsset }) {
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (!canPlay || (e.target as HTMLElement).closest('input, textarea, select')) return;
+      if (
+        !canPlay ||
+        useApp.getState().monitor !== 'source' ||
+        (e.target as HTMLElement).closest('input, textarea, select')
+      )
+        return;
       const v = video.current;
       if (!v) return;
       if (e.code === 'Space') {
@@ -129,7 +177,9 @@ function SourceMonitor({ asset }: { asset: MediaAsset }) {
             {asset.urls.waveform && (
               <WaveformStrip url={asset.urls.waveform} className="preview__waveform" />
             )}
-            <span>Audio playback arrives with the timeline in Phase 2</span>
+            {asset.urls.proxy && (
+              <audio controls src={asset.urls.proxy} className="preview__audio-player" />
+            )}
           </div>
         ) : (
           <div className="preview__pending">

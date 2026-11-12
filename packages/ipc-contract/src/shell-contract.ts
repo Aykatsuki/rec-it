@@ -36,6 +36,10 @@ export const shellContract = defineContract({
       input: z.object({ defaultPath: z.string().max(4096) }).strict(),
       output: z.object({ path: z.string().nullable() }),
     },
+    'dialog.saveExport': {
+      input: z.object({ defaultPath: z.string().max(4096) }).strict(),
+      output: z.object({ path: z.string().nullable() }),
+    },
     'dialog.locateFile': {
       input: z.object({ name: z.string().max(260) }).strict(),
       output: z.object({ path: z.string().nullable() }),

@@ -1296,3 +1296,420 @@ button.statusbar__item:hover {
   width: auto;
   height: 100%;
 }
+
+/* ── Phase 2: timeline, player, inspector, dialogs ───────────────────── */
+.toolgroup {
+  align-items: center;
+}
+.toolgroup__sep {
+  width: 1px;
+  height: 16px;
+  margin: 0 4px;
+  background: var(--border-strong);
+}
+.seq-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 26px;
+  padding: 0 var(--space-3);
+  border: 1px solid var(--border-strong);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text-2);
+  font: var(--text-xs) var(--font-ui);
+  cursor: pointer;
+}
+.seq-chip strong {
+  color: var(--text-1);
+  font-weight: 600;
+}
+.seq-chip:hover {
+  background: var(--surface-3);
+  color: var(--text-1);
+}
+.zoom-slider {
+  width: 90px;
+  accent-color: var(--text-2);
+}
+.timeline__empty {
+  flex: 1;
+  margin: var(--space-2);
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius-lg);
+}
+.timeline__empty[data-over='true'] {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.tl {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  user-select: none;
+}
+.tl__inner {
+  position: relative;
+  min-height: 100%;
+}
+.tl__ruler-row {
+  position: sticky;
+  top: 0;
+  z-index: 4;
+  display: flex;
+  height: 28px;
+  background: var(--surface-1);
+  border-bottom: 1px solid var(--border);
+}
+.tl__corner {
+  position: sticky;
+  left: 0;
+  z-index: 5;
+  flex: none;
+  width: 156px;
+  padding: 0 var(--space-3);
+  border-right: 1px solid var(--border);
+  background: var(--surface-1);
+  font: 500 var(--text-xs) / 28px var(--font-mono);
+  color: var(--accent);
+}
+.tl__ruler {
+  position: relative;
+  flex: 1;
+  cursor: col-resize;
+}
+.tl__tick {
+  position: absolute;
+  bottom: 0;
+  height: 14px;
+  padding-left: 4px;
+  border-left: 1px solid var(--border-strong);
+  font: 10px / 1 var(--font-mono);
+  color: var(--text-3);
+  white-space: nowrap;
+  pointer-events: none;
+}
+.tl__minor {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 5px;
+  background-image: linear-gradient(to right, var(--border-strong) 1px, transparent 1px);
+  pointer-events: none;
+}
+.tl__row {
+  display: flex;
+  height: 58px;
+  border-bottom: 1px solid var(--surface-2);
+}
+.tl__row[data-kind='audio'] {
+  height: 48px;
+}
+.tl__header {
+  position: sticky;
+  left: 0;
+  z-index: 3;
+  flex: none;
+  width: 156px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-1);
+  padding: 0 var(--space-2) 0 var(--space-3);
+  background: var(--surface-2);
+  border-right: 1px solid var(--border);
+}
+.tl__header[data-kind='video'] .track-header__chip {
+  background: var(--track-video);
+}
+.tl__header[data-kind='audio'] .track-header__chip {
+  background: var(--track-audio);
+}
+.tl__header-buttons {
+  display: flex;
+}
+.tl__header-buttons .ui-icon-btn {
+  width: 22px;
+  height: 22px;
+}
+.tl__header-buttons .ui-icon-btn[aria-pressed='true'] {
+  color: var(--warn);
+  background: transparent;
+}
+.tl__lane {
+  position: relative;
+  flex: 1;
+  background: repeating-linear-gradient(
+    to right,
+    rgb(255 255 255 / 2%) 0 1px,
+    transparent 1px 80px
+  );
+}
+.tl__lane[data-locked='true'] {
+  background-color: rgb(255 255 255 / 2%);
+  background-image: repeating-linear-gradient(
+    45deg,
+    transparent 0 6px,
+    rgb(255 255 255 / 3%) 6px 12px
+  );
+}
+.tl__lane[data-hidden='true'] .tl__item {
+  opacity: 0.35;
+}
+.tl__item {
+  position: absolute;
+  top: 4px;
+  bottom: 4px;
+  overflow: hidden;
+  border-radius: var(--radius-sm);
+  border: 1px solid rgb(0 0 0 / 40%);
+  cursor: grab;
+}
+.tl__item[data-kind='video'] {
+  background: #1f3b6e;
+}
+.tl__item[data-kind='audio'] {
+  background: #164a37;
+}
+.tl__item[data-selected='true'] {
+  outline: 2px solid #fff;
+  outline-offset: -1px;
+  z-index: 2;
+}
+.tl__item[data-dimmed='true'] {
+  opacity: 0.35;
+}
+.tl__film {
+  position: absolute;
+  inset: 0;
+  background-repeat: repeat-x;
+  background-size: auto 100%;
+  opacity: 0.65;
+  pointer-events: none;
+}
+.tl__wave {
+  position: absolute;
+  top: 14px;
+  bottom: 2px;
+  pointer-events: none;
+}
+.tl__wave-svg {
+  width: 100%;
+  height: 100%;
+}
+.tl__wave-svg path {
+  fill: var(--track-audio);
+  opacity: 0.8;
+}
+.tl__item-label {
+  position: absolute;
+  top: 2px;
+  left: 6px;
+  right: 6px;
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  overflow: hidden;
+  font-size: 10.5px;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  text-shadow: 0 1px 2px rgb(0 0 0 / 80%);
+  pointer-events: none;
+}
+.tl__handle {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 7px;
+  cursor: ew-resize;
+  z-index: 1;
+}
+.tl__handle--start {
+  left: 0;
+}
+.tl__handle--end {
+  right: 0;
+}
+.tl__item:hover .tl__handle {
+  background: rgb(255 255 255 / 25%);
+}
+.tl__ghost {
+  position: absolute;
+  top: 4px;
+  bottom: 4px;
+  border: 2px dashed #fff;
+  border-radius: var(--radius-sm);
+  background: rgb(255 255 255 / 10%);
+  pointer-events: none;
+  z-index: 3;
+}
+.tl__drop-marker {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: var(--accent);
+  pointer-events: none;
+}
+.tl__playhead {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  margin-left: -1px;
+  background: var(--accent);
+  pointer-events: none;
+  z-index: 6;
+}
+.tl__playhead::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: -5px;
+  width: 12px;
+  height: 10px;
+  background: var(--accent);
+  clip-path: polygon(0 0, 100% 0, 100% 50%, 50% 100%, 0 50%);
+}
+
+/* Program monitor */
+.program {
+  position: relative;
+  overflow: hidden;
+  background: #000;
+  box-shadow: 0 0 0 1px var(--border);
+}
+.program__layer {
+  position: absolute;
+  object-fit: fill;
+  max-width: none;
+}
+.preview__title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.segmented button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+.segmented--wide {
+  display: flex;
+  margin-bottom: var(--space-3);
+}
+.segmented--wide button {
+  flex: 1;
+  height: 26px;
+}
+
+/* Inspector sliders */
+.slider {
+  display: grid;
+  grid-template-columns: 82px 1fr 44px;
+  align-items: center;
+  gap: var(--space-2);
+  margin: 6px 0;
+  font-size: var(--text-sm);
+}
+.slider__label {
+  color: var(--text-2);
+}
+.slider input {
+  width: 100%;
+  accent-color: var(--accent);
+}
+.slider__value {
+  font: var(--text-xs) var(--font-mono);
+  color: var(--text-2);
+  text-align: right;
+}
+
+/* Forms and export */
+.form__row {
+  display: grid;
+  grid-template-columns: 110px 1fr;
+  align-items: center;
+  gap: var(--space-3);
+  margin-bottom: var(--space-3);
+}
+.form__row > span {
+  color: var(--text-2);
+  font-size: var(--text-sm);
+}
+.form__pair {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+.form__pair .ui-input {
+  width: 100px;
+}
+.form__error {
+  color: var(--error);
+  font-size: var(--text-sm);
+}
+.form__hint {
+  color: var(--text-3);
+  font-size: var(--text-xs);
+}
+.export__summary {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--space-3);
+  margin: 0 0 var(--space-4);
+}
+.export__summary dt {
+  font-size: var(--text-xs);
+  color: var(--text-3);
+}
+.export__summary dd {
+  margin: 2px 0 0;
+}
+.export__quality {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin: 0;
+  padding: var(--space-3);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
+}
+.export__quality legend {
+  padding: 0 var(--space-1);
+  color: var(--text-2);
+  font-size: var(--text-sm);
+}
+.export__quality label {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  cursor: pointer;
+}
+.export__quality input {
+  accent-color: var(--accent);
+}
+.export__status {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin-top: var(--space-4);
+  font-size: var(--text-sm);
+  overflow-wrap: anywhere;
+}
+.export__status span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.export__status[data-state='done'] {
+  color: var(--ok);
+}
+.segmented button[aria-selected='true'] {
+  background: var(--surface-4);
+  color: var(--text-1);
+}

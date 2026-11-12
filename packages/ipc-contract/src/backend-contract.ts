@@ -10,6 +10,12 @@ import {
   rightsInputSchema,
 } from './schemas/media';
 import { settingsPatchSchema, settingsSchema } from './schemas/settings';
+import {
+  commandSchema,
+  documentStateSchema,
+  exportQualitySchema,
+  exportStateSchema,
+} from './schemas/timeline';
 import { systemStatusSchema } from './schemas/status';
 
 const empty = z.object({}).strict();
@@ -81,6 +87,29 @@ export const backendContract = defineContract({
       output: mediaAssetSchema,
     },
     'jobs.list': { input: empty, output: z.array(jobSummarySchema) },
+
+    // Timeline document (ARCHITECTURE §7). Every edit is a validated command; undo is exact.
+    'doc.get': { input: empty, output: documentStateSchema },
+    'doc.execute': {
+      input: z.object({ command: commandSchema }).strict(),
+      output: documentStateSchema,
+    },
+    'doc.undo': { input: empty, output: documentStateSchema },
+    'doc.redo': { input: empty, output: documentStateSchema },
+
+    // Export (ARCHITECTURE §10).
+    'export.start': {
+      input: z
+        .object({
+          sequenceId: z.string().min(1).max(100),
+          path: filePathSchema,
+          quality: exportQualitySchema,
+        })
+        .strict(),
+      output: exportStateSchema,
+    },
+    'export.cancel': { input: empty, output: ok },
+    'export.status': { input: empty, output: exportStateSchema },
   },
   events: {
     'system.statusChanged': systemStatusSchema,
@@ -88,6 +117,8 @@ export const backendContract = defineContract({
     'project.changed': projectInfoSchema.nullable(),
     'media.changed': z.array(mediaAssetSchema),
     'jobs.changed': z.array(jobSummarySchema),
+    'doc.changed': documentStateSchema,
+    'export.changed': exportStateSchema,
   },
 });
 
