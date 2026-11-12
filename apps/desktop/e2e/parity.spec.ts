@@ -7,7 +7,7 @@ import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { findTestFfmpeg } from '../../../packages/ffmpeg/src/testing';
-import { createProject, launch, mockOpenDialog, tempUserData } from './helpers';
+import { createProject, launch, mockOpenDialog, setExportTarget, tempUserData } from './helpers';
 
 const bins = findTestFfmpeg();
 let dir = '';
@@ -201,15 +201,13 @@ test.describe('preview and export match', () => {
 
       // Export with the default settings (H.264, full size, normal quality).
       const out = join(userData, 'parity.mp4');
-      await app.evaluate(({ dialog }, path) => {
-        dialog.showSaveDialog = (async () => ({
-          canceled: false,
-          filePath: path,
-        })) as typeof dialog.showSaveDialog;
-      }, out);
       await page.getByTestId('export-button').click();
       await page.getByRole('radio', { name: 'YouTube Short', exact: true }).click();
-      await page.getByRole('button', { name: 'Export…' }).click();
+      await setExportTarget(app, page, out);
+      await page
+        .getByTestId('export-dialog')
+        .getByRole('button', { name: 'Export', exact: true })
+        .click();
       await expect(page.getByTestId('export-status')).toHaveAttribute('data-state', 'done', {
         timeout: 120_000,
       });

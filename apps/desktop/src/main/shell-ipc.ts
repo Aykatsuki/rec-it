@@ -112,6 +112,14 @@ export function registerShellIpc(
           : `${result.filePath}.png`;
         return { path };
       },
+      'dialog.chooseFolder': async ({ defaultPath, title }) => {
+        const result = await open({
+          title,
+          defaultPath: defaultPath || undefined,
+          properties: ['openDirectory', 'createDirectory'],
+        });
+        return { path: result.canceled ? null : (result.filePaths[0] ?? null) };
+      },
       'dialog.locateFile': async ({ name }) => {
         const result = await open({ title: `Locate "${name}"`, properties: ['openFile'] });
         return { path: result.canceled ? null : (result.filePaths[0] ?? null) };

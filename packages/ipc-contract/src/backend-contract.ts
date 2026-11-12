@@ -108,6 +108,16 @@ export const backendContract = defineContract({
         .strict(),
       output: exportStateSchema,
     },
+    /**
+     * Where an export will be written: `directory` (default: the last export folder, else the
+     * Videos folder) joined with a cleaned-up file name. `exists` warns before replacing a file.
+     */
+    'export.target': {
+      input: z
+        .object({ fileName: z.string().min(1).max(255), directory: filePathSchema.optional() })
+        .strict(),
+      output: z.object({ directory: z.string(), fileName: z.string(), path: z.string(), exists: z.boolean() }),
+    },
     /** Saves the frame at `time` (seconds) as PNG or JPEG, rendered exactly like the export. */
     'export.frame': {
       input: z

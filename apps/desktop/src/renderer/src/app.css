@@ -1957,3 +1957,25 @@ button.statusbar__item:hover {
 .export__wide {
   grid-column: 1 / -1;
 }
+.export__dest {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+}
+.export__folder {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  direction: rtl;
+  text-align: left;
+  padding: 6px 8px;
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  font: 12px var(--font-mono);
+}
+.form__hint--warn {
+  color: #f0b44c;
+}

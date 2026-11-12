@@ -11,6 +11,8 @@ const fields = {
   cacheDirectory: z.string().max(4096).nullable(),
   /** Open the last project automatically at start-up. */
   reopenLastProject: z.boolean(),
+  /** Folder of the last export; the export dialog starts there. null = the Videos folder. */
+  exportDirectory: z.string().max(4096).nullable(),
 };
 
 export const DEFAULT_SETTINGS = {
@@ -19,6 +21,7 @@ export const DEFAULT_SETTINGS = {
   transcriptionDevice: 'auto',
   cacheDirectory: null,
   reopenLastProject: true,
+  exportDirectory: null,
 } as const;
 
 /** App-wide settings stored in app.db. Missing keys fall back to defaults so old databases keep working. */
@@ -28,6 +31,7 @@ export const settingsSchema = z.object({
   transcriptionDevice: fields.transcriptionDevice.default(DEFAULT_SETTINGS.transcriptionDevice),
   cacheDirectory: fields.cacheDirectory.default(DEFAULT_SETTINGS.cacheDirectory),
   reopenLastProject: fields.reopenLastProject.default(DEFAULT_SETTINGS.reopenLastProject),
+  exportDirectory: fields.exportDirectory.default(DEFAULT_SETTINGS.exportDirectory),
 });
 export type Settings = z.output<typeof settingsSchema>;
 

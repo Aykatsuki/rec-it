@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
-import { mkdirSync } from 'node:fs';
-import { join } from 'node:path';
+import { existsSync, mkdirSync } from 'node:fs';
+import { homedir } from 'node:os';
+import { dirname, isAbsolute, join } from 'node:path';
 import {
   SECRET_NAMES,
   backendContract,
@@ -175,8 +176,17 @@ export class BackendApp {
     'doc.undo': () => this.projects.document().undo(),
     'doc.redo': () => this.projects.document().redo(),
 
+    'export.target': ({ fileName, directory }) => {
+      const dir = directory ?? this.exportDirectory();
+      const name = cleanFileName(fileName, '.mp4');
+      const path = join(dir, name);
+      return { directory: dir, fileName: name, path, exists: existsSync(path) };
+    },
     'export.start': ({ sequenceId, path, settings }) => {
       const media = this.projects.media();
+      // Remember the folder so the next export starts there.
+      if (isAbsolute(path))
+        this.emit('settings.changed', this.settings.update({ exportDirectory: dirname(path) }));
       return this.exports.start(
         this.sequence(sequenceId),
         path,
@@ -239,6 +249,14 @@ export class BackendApp {
       );
     }
     return { bins: this.ffmpegBins, encoder, tonemap: this.ffmpeg.hasZimg };
+  }
+
+  /** Last export folder if it still exists, else the user's Videos folder, else home. */
+  exportDirectory(): string {
+    const last = this.settings.getAll().exportDirectory;
+    if (last && existsSync(last)) return last;
+    const videos = join(homedir(), 'Videos');
+    return existsSync(videos) ? videos : homedir();
   }
 
   /** FFmpeg binaries plus what export needs to choose an encoder. */
@@ -317,4 +335,15 @@ export class BackendApp {
 
 export function fingerprint(value: string): string {
   return createHash('sha256').update(value).digest('hex').slice(0, 12);
+}
+
+/** Makes a safe file name (Windows rules) with the given extension. */
+export function cleanFileName(name: string, ext: string): string {
+  let base = name
+    .replace(/[<>:"/\\|?*\u0000-\u001f]/g, '')
+    .replace(/[. ]+$/, '')
+    .trim();
+  if (base.toLowerCase().endsWith(ext)) base = base.slice(0, -ext.length).trim();
+  if (!base || /^(con|prn|aux|nul|com\d|lpt\d)$/i.test(base)) base = 'Export';
+  return `${base.slice(0, 200)}${ext}`;
 }

@@ -1,4 +1,9 @@
-import { _electron as electron, type ElectronApplication, type Page } from '@playwright/test';
+import {
+  _electron as electron,
+  expect,
+  type ElectronApplication,
+  type Page,
+} from '@playwright/test';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -52,4 +57,21 @@ export async function mockOpenDialog(app: ElectronApplication, paths: string[]):
       filePaths,
     })) as typeof dialog.showOpenDialog;
   }, paths);
+}
+
+/**
+ * Points the open export dialog at `path`: picks its folder with "Change…" (mocked folder
+ * dialog) and types the file name.
+ */
+export async function setExportTarget(
+  app: ElectronApplication,
+  page: Page,
+  path: string,
+): Promise<void> {
+  const dir = path.replace(/[\\/][^\\/]*$/, '');
+  const name = path.slice(dir.length + 1);
+  await mockOpenDialog(app, [dir]);
+  await page.getByRole('button', { name: 'Change…' }).click();
+  await expect(page.getByTestId('export-folder')).toHaveText(dir);
+  await page.getByLabel('File name').fill(name);
 }
