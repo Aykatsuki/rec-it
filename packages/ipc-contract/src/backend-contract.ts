@@ -13,7 +13,7 @@ import { settingsPatchSchema, settingsSchema } from './schemas/settings';
 import {
   commandSchema,
   documentStateSchema,
-  exportQualitySchema,
+  exportSettingsSchema,
   exportStateSchema,
 } from './schemas/timeline';
 import { systemStatusSchema } from './schemas/status';
@@ -103,10 +103,21 @@ export const backendContract = defineContract({
         .object({
           sequenceId: z.string().min(1).max(100),
           path: filePathSchema,
-          quality: exportQualitySchema,
+          settings: exportSettingsSchema,
         })
         .strict(),
       output: exportStateSchema,
+    },
+    /** Saves the frame at `time` (seconds) as PNG or JPEG, rendered exactly like the export. */
+    'export.frame': {
+      input: z
+        .object({
+          sequenceId: z.string().min(1).max(100),
+          time: z.number().min(0),
+          path: filePathSchema,
+        })
+        .strict(),
+      output: ok,
     },
     'export.cancel': { input: empty, output: ok },
     'export.status': { input: empty, output: exportStateSchema },

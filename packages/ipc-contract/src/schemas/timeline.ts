@@ -166,12 +166,44 @@ export type DocumentState = z.output<typeof documentStateSchema>;
 
 export const exportQualitySchema = z.enum(['draft', 'standard', 'high']);
 
+/** What the user picks in the export dialog (ADR-027). */
+export const exportSettingsSchema = z
+  .object({
+    /** Output size as a fraction of the sequence size. */
+    scale: z.number().min(0.25).max(1),
+    codec: z.enum(['h264', 'hevc']),
+    /** auto = graphics card when it works, otherwise software. */
+    encoder: z.enum(['auto', 'gpu', 'cpu']),
+    quality: exportQualitySchema,
+    audioBitrate: z.union([z.literal(128), z.literal(192), z.literal(256), z.literal(320)]),
+    /** Integrated loudness target in LUFS (two-pass), or null to leave levels alone. */
+    loudness: z.number().min(-30).max(-5).nullable(),
+  })
+  .strict();
+export type ExportSettings = z.output<typeof exportSettingsSchema>;
+
+export const DEFAULT_EXPORT_SETTINGS: ExportSettings = {
+  scale: 1,
+  codec: 'h264',
+  encoder: 'auto',
+  quality: 'standard',
+  audioBitrate: 192,
+  loudness: -14,
+};
+
 export const exportStateSchema = z.object({
   state: z.enum(['idle', 'running', 'done', 'failed', 'cancelled']),
   progress: z.number().min(0).max(1),
   path: z.string().optional(),
   sequenceName: z.string().optional(),
   encoder: z.string().optional(),
+  /** analysing = measuring loudness (pass 1); encoding = writing the file. */
+  phase: z.enum(['analysing', 'encoding']).optional(),
+  width: z.number().int().optional(),
+  height: z.number().int().optional(),
+  sizeBytes: z.number().optional(),
+  /** Set when the graphics card encoder failed and the export was redone in software. */
+  note: z.string().optional(),
   error: z.string().optional(),
   startedAt: z.number().optional(),
   finishedAt: z.number().optional(),

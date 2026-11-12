@@ -70,7 +70,7 @@ export function runFfmpeg(
   ffmpeg: string,
   args: readonly string[],
   options: RunFfmpegOptions = {},
-): Promise<void> {
+): Promise<{ stderrTail: string }> {
   const { signal, durationSec, onProgress, onStdout } = options;
   if (signal?.aborted) return Promise.reject(new CancelledError());
   const progressTarget = onStdout ? 'pipe:2' : 'pipe:1';
@@ -134,7 +134,7 @@ export function runFfmpeg(
       if (cancelled) return reject(new CancelledError());
       if (code === 0) {
         onProgress?.(1);
-        return resolve();
+        return resolve({ stderrTail });
       }
       const lastLines = stderrTail
         .split(/\r?\n/)

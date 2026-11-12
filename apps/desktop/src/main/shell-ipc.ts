@@ -94,6 +94,24 @@ export function registerShellIpc(
           : `${result.filePath}.mp4`;
         return { path };
       },
+      'dialog.saveImage': async ({ defaultPath }) => {
+        const options = {
+          title: 'Save frame',
+          defaultPath,
+          filters: [
+            { name: 'PNG image', extensions: ['png'] },
+            { name: 'JPEG image', extensions: ['jpg', 'jpeg'] },
+          ],
+        };
+        const result = win
+          ? await dialog.showSaveDialog(win, options)
+          : await dialog.showSaveDialog(options);
+        if (result.canceled || !result.filePath) return { path: null };
+        const path = /\.(png|jpe?g)$/i.test(result.filePath)
+          ? result.filePath
+          : `${result.filePath}.png`;
+        return { path };
+      },
       'dialog.locateFile': async ({ name }) => {
         const result = await open({ title: `Locate "${name}"`, properties: ['openFile'] });
         return { path: result.canceled ? null : (result.filePaths[0] ?? null) };

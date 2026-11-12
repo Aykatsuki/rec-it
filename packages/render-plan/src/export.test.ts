@@ -1,4 +1,4 @@
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -13,7 +13,16 @@ import {
 } from '@rec-it/core';
 import { runFfmpeg } from '@rec-it/ffmpeg';
 import { findTestFfmpeg } from '@rec-it/ffmpeg/testing';
-import { ExportPlanError, planExport, type ExportAsset } from './index';
+import {
+  ExportPlanError,
+  parseLoudnorm,
+  pickExportEncoder,
+  planExport,
+  planFrame,
+  planLoudnessAnalysis,
+  type ExportAsset,
+  type ExportOptions,
+} from './index';
 
 const s = secondsToFlicks;
 const bins = findTestFfmpeg();
@@ -43,6 +52,129 @@ describe('planExport', () => {
         tonemap: false,
       }),
     ).toThrow(ExportPlanError);
+  });
+});
+
+describe('generated FFmpeg arguments', () => {
+  // A fixed sequence: two video layers (one rotated, one still) and an audio clip.
+  const info: Record<string, AssetInfo> = {
+    clip: { kind: 'video', duration: s(10), hasAudio: true, width: 1920, height: 1080 },
+    logo: { kind: 'image', duration: null, hasAudio: false, width: 400, height: 400 },
+    music: { kind: 'audio', duration: s(30), hasAudio: true },
+  };
+  const exportAssets = (id: string): ExportAsset | undefined => {
+    const i = info[id];
+    return i
+      ? {
+          path: `/media/${id}`,
+          kind: i.kind,
+          width: i.width,
+          height: i.height,
+          hasAudio: i.hasAudio,
+        }
+      : undefined;
+  };
+  const seq = () => {
+    const h = new History(emptyDocument());
+    const run = (c: Command) => h.execute(c, (id) => info[id]);
+    run({
+      type: 'sequence.create',
+      id: 'seq',
+      name: 'Short',
+      width: 1080,
+      height: 1920,
+      fps: FRAME_RATES.fps30,
+    });
+    const [v2, v1, a1] = h.doc.sequences[0]!.tracks;
+    run({
+      type: 'item.add',
+      sequenceId: 'seq',
+      trackId: v1!.id,
+      assetId: 'clip',
+      start: 0,
+      id: 'c',
+      sourceIn: s(2),
+      duration: s(6),
+    });
+    run({
+      type: 'item.update',
+      sequenceId: 'seq',
+      itemId: 'c',
+      transform: { rotation: 10, scale: 1.2 },
+    });
+    run({
+      type: 'item.add',
+      sequenceId: 'seq',
+      trackId: v2!.id,
+      assetId: 'logo',
+      start: s(1),
+      duration: s(2),
+      id: 'l',
+    });
+    run({
+      type: 'item.update',
+      sequenceId: 'seq',
+      itemId: 'l',
+      transform: { fit: 'fit', scale: 0.3, y: -0.35 },
+    });
+    run({
+      type: 'item.add',
+      sequenceId: 'seq',
+      trackId: a1!.id,
+      assetId: 'music',
+      start: 0,
+      duration: s(6),
+    });
+    return h.doc.sequences[0]!;
+  };
+  const cases: [string, ExportOptions][] = [
+    [
+      'NVENC H.264, standard, one-pass loudness',
+      { encoder: 'h264_nvenc', quality: 'standard', tonemap: false },
+    ],
+    [
+      'libx264 high, 256k, no normalisation',
+      { encoder: 'libx264', quality: 'high', tonemap: false, audioBitrateK: 256, loudness: null },
+    ],
+    [
+      'libx265 draft at half size, measured loudness',
+      {
+        encoder: 'libx265',
+        quality: 'draft',
+        tonemap: false,
+        scale: 0.5,
+        title: 'My Short',
+        loudness: {
+          target: -14,
+          measured: {
+            input_i: -23.1,
+            input_tp: -6.2,
+            input_lra: 4.1,
+            input_thresh: -33.4,
+            target_offset: 0.3,
+          },
+        },
+      },
+    ],
+  ];
+  it.each(cases)('%s', (_name, options) => {
+    expect(planExport(seq(), exportAssets, options)).toMatchSnapshot();
+  });
+  it('plans the loudness analysis pass and a single frame', () => {
+    expect(planLoudnessAnalysis(seq(), exportAssets, -14)).toMatchSnapshot();
+    expect(planFrame(seq(), exportAssets, 1.5, { tonemap: false })).toMatchSnapshot();
+  });
+  it('reads loudnorm reports and ignores silence', () => {
+    const report = `[Parsed_loudnorm_3 @ 0x1]\n{\n\t"input_i" : "-23.10",\n\t"input_tp" : "-6.20",\n\t"input_lra" : "4.10",\n\t"input_thresh" : "-33.40",\n\t"output_i" : "-14.0",\n\t"target_offset" : "0.30"\n}\n`;
+    expect(parseLoudnorm(report)).toEqual({
+      input_i: -23.1,
+      input_tp: -6.2,
+      input_lra: 4.1,
+      input_thresh: -33.4,
+      target_offset: 0.3,
+    });
+    expect(parseLoudnorm(report.replace('"-23.10"', '"-inf"'))).toBeNull();
+    expect(parseLoudnorm('no json here')).toBeNull();
   });
 });
 
@@ -106,6 +238,7 @@ describe.skipIf(!bins)('export renders correct frames (real FFmpeg)', () => {
 
   async function render(
     commands: (ids: { v1: string; v2: string; a1: string }) => Omit<Command, 'sequenceId'>[],
+    options: Partial<ExportOptions> = {},
   ) {
     const h = new History(emptyDocument());
     h.execute(
@@ -128,6 +261,7 @@ describe.skipIf(!bins)('export renders correct frames (real FFmpeg)', () => {
       encoder: 'libx264',
       quality: 'draft',
       tonemap: false,
+      ...options,
     });
     const graphFile = join(dir, `graph-${Math.random()}.txt`);
     writeFileSync(graphFile, plan.filterGraph);
@@ -246,4 +380,169 @@ describe.skipIf(!bins)('export renders correct frames (real FFmpeg)', () => {
     expect(colour(pixel(out, 0.5, 20, 316))).toBe('black');
     expect(colour(pixel(out, 0.5, 330, 316))).toBe('black');
   }, 60_000);
+
+  const probeJson = (file: string) =>
+    JSON.parse(
+      execFileSync(
+        bins!.ffprobe,
+        ['-v', 'error', '-print_format', 'json', '-show_streams', '-show_format', file],
+        { encoding: 'utf8' },
+      ),
+    ) as {
+      streams: Record<string, string | number | undefined>[];
+      format: { duration: string; tags?: Record<string, string> };
+    };
+
+  const loudness = (file: string): number => {
+    // ebur128 prints its summary on stderr.
+    const r = spawnSync(
+      bins!.ffmpeg,
+      ['-hide_banner', '-nostats', '-i', file, '-filter:a', 'ebur128', '-f', 'null', '-'],
+      { encoding: 'utf8' },
+    );
+    const m = /Integrated loudness:\s+I:\s+(-?[\d.]+) LUFS/.exec(r.stderr);
+    return m ? Number(m[1]) : NaN;
+  };
+
+  it('normalises to -14 LUFS in two passes, within 1 LU', async () => {
+    const commands = ({ a1, v1 }: { a1: string; v1: string }) =>
+      [
+        { type: 'item.add', trackId: v1, assetId: 'blue', start: 0 },
+        { type: 'item.add', trackId: a1, assetId: 'tone', start: 0, id: 't' },
+        { type: 'item.update', itemId: 't', volume: 0.1 },
+      ] as unknown as Omit<Command, 'sequenceId'>[];
+    // Pass 1: measure the mix.
+    const h = new History(emptyDocument());
+    h.execute(
+      {
+        type: 'sequence.create',
+        id: 'seq',
+        name: 'S',
+        width: 360,
+        height: 640,
+        fps: FRAME_RATES.fps30,
+      },
+      (id) => info[id],
+    );
+    const t = h.doc.sequences[0]!.tracks;
+    for (const c of commands({ v1: t[1]!.id, a1: t[2]!.id }))
+      h.execute({ ...c, sequenceId: 'seq' } as Command, (id) => info[id]);
+    const analysis = planLoudnessAnalysis(h.doc.sequences[0]!, exportAssets, -14);
+    const graphFile = join(dir, 'analysis.txt');
+    writeFileSync(graphFile, analysis.filterGraph);
+    const { stderrTail } = await runFfmpeg(bins!.ffmpeg, [
+      ...analysis.inputArgs,
+      '-/filter_complex',
+      graphFile,
+      ...analysis.outputArgs,
+      '-f',
+      'null',
+      '-',
+    ]);
+    const measured = parseLoudnorm(stderrTail);
+    expect(measured).not.toBeNull();
+    expect(measured!.input_i).toBeLessThan(-25);
+    // Pass 2: export with the measured values.
+    const { out } = await render(commands, { loudness: { target: -14, measured: measured! } });
+    expect(Math.abs(loudness(out) - -14)).toBeLessThanOrEqual(1);
+  }, 90_000);
+
+  it('scales the output, writes HEVC that QuickTime accepts, and tags BT.709', async () => {
+    const { out } = await render(
+      ({ v1 }) => [{ type: 'item.add', trackId: v1, assetId: 'red', start: 0 }],
+      { encoder: 'libx265', scale: 0.5, title: 'Half size' },
+    );
+    const p = probeJson(out);
+    const v = p.streams.find((x) => x.codec_type === 'video')!;
+    const a = p.streams.find((x) => x.codec_type === 'audio')!;
+    expect(v).toMatchObject({
+      codec_name: 'hevc',
+      codec_tag_string: 'hvc1',
+      width: 180,
+      height: 320,
+      pix_fmt: 'yuv420p',
+      color_space: 'bt709',
+      color_primaries: 'bt709',
+      color_transfer: 'bt709',
+      r_frame_rate: '30/1',
+    });
+    expect(a).toMatchObject({ codec_name: 'aac', sample_rate: '48000', channels: 2 });
+    expect(p.format.tags?.title).toBe('Half size');
+    // Duration matches the timeline within one frame.
+    expect(Math.abs(Number(p.format.duration) - 3)).toBeLessThanOrEqual(1 / 30 + 0.025);
+    expect(colour(pixel(out, 1, 88, 158))).toBe('red');
+  }, 90_000);
+
+  it('renders a single frame with the export graph', async () => {
+    const h = new History(emptyDocument());
+    h.execute(
+      {
+        type: 'sequence.create',
+        id: 'seq',
+        name: 'S',
+        width: 360,
+        height: 640,
+        fps: FRAME_RATES.fps30,
+      },
+      (id) => info[id],
+    );
+    const t = h.doc.sequences[0]!.tracks;
+    h.execute(
+      { type: 'item.add', sequenceId: 'seq', trackId: t[1]!.id, assetId: 'red', start: 0 },
+      (id) => info[id],
+    );
+    h.execute(
+      {
+        type: 'item.add',
+        sequenceId: 'seq',
+        trackId: t[0]!.id,
+        assetId: 'blue',
+        start: s(1),
+        duration: s(1),
+      },
+      (id) => info[id],
+    );
+    const plan = planFrame(h.doc.sequences[0]!, exportAssets, 1.5, { tonemap: false });
+    const graphFile = join(dir, 'frame.txt');
+    writeFileSync(graphFile, plan.filterGraph);
+    const png = join(dir, 'frame.png');
+    await runFfmpeg(bins!.ffmpeg, [
+      ...plan.inputArgs,
+      '-/filter_complex',
+      graphFile,
+      ...plan.outputArgs,
+      png,
+    ]);
+    expect(colour(pixel(png, 0, 176, 316))).toBe('blue');
+  }, 60_000);
+});
+
+describe('pickExportEncoder', () => {
+  const all = Object.fromEntries(
+    ['libx264', 'libx265', 'h264_nvenc', 'hevc_nvenc', 'h264_qsv', 'hevc_amf'].map((e) => [
+      e,
+      true,
+    ]),
+  );
+  it('prefers a working NVENC, then software', () => {
+    expect(pickExportEncoder('h264', 'auto', { encoders: all, nvencUsable: true })).toBe(
+      'h264_nvenc',
+    );
+    expect(pickExportEncoder('hevc', 'auto', { encoders: all, nvencUsable: true })).toBe(
+      'hevc_nvenc',
+    );
+    expect(pickExportEncoder('h264', 'auto', { encoders: all, nvencUsable: false })).toBe(
+      'libx264',
+    );
+    expect(pickExportEncoder('h264', 'cpu', { encoders: all, nvencUsable: true })).toBe('libx264');
+  });
+  it('only tries Intel/AMD encoders when the graphics card is asked for', () => {
+    expect(pickExportEncoder('h264', 'gpu', { encoders: all, nvencUsable: false })).toBe(
+      'h264_qsv',
+    );
+    expect(pickExportEncoder('hevc', 'gpu', { encoders: all, nvencUsable: false })).toBe(
+      'hevc_amf',
+    );
+    expect(pickExportEncoder('hevc', 'auto', { encoders: {}, nvencUsable: null })).toBeNull();
+  });
 });

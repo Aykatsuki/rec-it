@@ -279,7 +279,7 @@ describe.skipIf(!ffmpeg)('media pipeline with real FFmpeg', () => {
         },
       );
       void run.catch(() => {});
-      (globalThis as { __run?: Promise<void> }).__run = run;
+      (globalThis as { __run?: Promise<unknown> }).__run = run;
     });
     await started;
     const t0 = Date.now();

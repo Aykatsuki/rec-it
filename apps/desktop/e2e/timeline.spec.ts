@@ -131,4 +131,87 @@ test.describe('timeline editing and export', () => {
       await app.close();
     }
   });
+
+  test('export presets, H.265 at half size, and saving a frame', async () => {
+    const userData = tempUserData();
+    const { app, page } = await launch(userData, env());
+    try {
+      await createProject(page, 'Export settings');
+      await mockOpenDialog(app, [fx.h264]);
+      await page.getByRole('button', { name: 'Import footage' }).click();
+      await page.getByLabel(/I have the right/).check();
+      await page.getByRole('button', { name: 'Import' }).last().click();
+      await expect(page.locator('[data-testid=asset-card][data-status=ready]')).toHaveCount(1, {
+        timeout: 60_000,
+      });
+      await page.locator('[data-testid=asset-card]').dblclick();
+      await expect(page.getByTestId('timeline-item')).toHaveCount(1);
+
+      const out = join(userData, 'small.mp4');
+      const frame = join(userData, 'frame.png');
+      await app.evaluate(
+        ({ dialog }, paths) => {
+          dialog.showSaveDialog = (async (...args: unknown[]) => {
+            const opts = args.at(-1) as { filters?: { extensions: string[] }[] };
+            const png = opts.filters?.some((f) => f.extensions.includes('png'));
+            return { canceled: false, filePath: png ? paths.frame : paths.out };
+          }) as typeof dialog.showSaveDialog;
+        },
+        { out, frame },
+      );
+
+      await page.getByTestId('export-button').click();
+      await page.getByRole('radio', { name: 'Smaller file', exact: true }).click();
+      await page.getByLabel('Resolution').selectOption({ index: 3 });
+      await expect(page.getByTestId('export-output')).toContainText('540×960');
+      await expect(page.getByTestId('export-output')).toContainText('H.265');
+      await page.getByRole('button', { name: 'Export…' }).click();
+      await expect(page.getByTestId('export-status')).toHaveAttribute('data-state', 'done', {
+        timeout: 120_000,
+      });
+      await expect(page.getByTestId('export-status')).toContainText(/KB|MB/);
+      const probe = execFileSync(
+        bins!.ffprobe,
+        [
+          '-v',
+          'error',
+          '-select_streams',
+          'v:0',
+          '-show_entries',
+          'stream=codec_name,codec_tag_string,width,height',
+          '-of',
+          'csv=p=0',
+          out,
+        ],
+        { encoding: 'utf8' },
+      ).trim();
+      expect(probe).toBe('hevc,hvc1,540,960');
+      await page.keyboard.press('Escape');
+
+      // Settings are remembered next time the dialog opens.
+      await page.getByTestId('export-button').click();
+      await expect(page.getByRole('radio', { name: 'Smaller file', exact: true })).toHaveAttribute(
+        'aria-checked',
+        'false',
+      );
+      await expect(page.getByTestId('export-output')).toContainText('540×960');
+      await page.keyboard.press('Escape');
+
+      // Save the frame under the playhead from the preview's right-click menu.
+      await page.getByTestId('ruler').click({ position: { x: 80, y: 10 } });
+      await page
+        .getByTestId('transform-surface')
+        .click({ button: 'right', position: { x: 3, y: 3 } });
+      await page.getByRole('menuitem', { name: 'Save frame as image…' }).click();
+      await expect.poll(() => existsSync(frame), { timeout: 30_000 }).toBe(true);
+      const size = execFileSync(
+        bins!.ffprobe,
+        ['-v', 'error', '-show_entries', 'stream=width,height', '-of', 'csv=p=0', frame],
+        { encoding: 'utf8' },
+      ).trim();
+      expect(size).toBe('1080,1920');
+    } finally {
+      await app.close();
+    }
+  });
 });

@@ -8,6 +8,7 @@ import {
   Eye,
   EyeOff,
   FolderOpen,
+  ImageDown,
   Lock,
   Maximize,
   Minimize,
@@ -47,7 +48,7 @@ import {
 import { notify } from '../notifications';
 import { activeSequence, useApp } from '../store';
 import type { MenuEntry } from '../ui/ContextMenu';
-import { openExportDialog } from './ExportDialog';
+import { exportFrame, openExportDialog } from './ExportDialog';
 import { togglePlay } from './ProgramMonitor';
 import { openSequenceSettings } from './SequenceSettings';
 
@@ -292,6 +293,12 @@ export function programMenu(seq: Sequence): MenuEntry[] {
       icon: <Download size={I} />,
       disabled: !hasContent,
       onSelect: () => openExportDialog(),
+    },
+    {
+      label: 'Save frame as image…',
+      icon: <ImageDown size={I} />,
+      disabled: !hasContent,
+      onSelect: () => void exportFrame(seq),
     },
   ];
 }

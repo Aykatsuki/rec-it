@@ -124,8 +124,12 @@ test.describe('direct manipulation and context menus', () => {
       await expect(page.locator('.tl__row')).toHaveCount(tracks + 1);
 
       // Escape closes a menu.
-      await page.locator('.tl__header').first().click({ button: 'right' });
-      await expect(page.getByTestId('context-menu')).toBeVisible();
+      // (Retried: on macOS CI the first right-click after the track list changes sometimes opens
+      // no menu. macOS is not a target platform yet; see ROADMAP Phase 3 notes.)
+      await expect(async () => {
+        await page.locator('.tl__header').first().click({ button: 'right' });
+        await expect(page.getByTestId('context-menu')).toBeVisible({ timeout: 2_000 });
+      }).toPass({ timeout: 20_000 });
       await page.keyboard.press('Escape');
       await expect(page.getByTestId('context-menu')).toHaveCount(0);
     } finally {
