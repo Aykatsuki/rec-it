@@ -28,6 +28,7 @@ Each record states the decision, why it was made and what else was considered. R
 | 022 | Assets are committed to the project file immediately | Accepted |
 | 023 | Proxy encoding, derived files and the media protocol | Accepted |
 | 024 | Backend heartbeat so FFmpeg never outlives a crashed app | Accepted |
+| 025 | First timeline, preview and export slice | Accepted |
 
 ---
 
