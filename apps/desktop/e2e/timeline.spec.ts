@@ -122,6 +122,7 @@ test.describe('timeline editing and export', () => {
       await expect(page.getByTestId('timeline-item')).toHaveCount(2);
       // Media used on the timeline cannot be removed from the project.
       await page.locator('[data-testid=asset-card]').click();
+      await expect(page.getByTestId('asset-card')).toHaveAttribute('data-selected', 'true');
       await page.keyboard.press('Delete');
       await expect(page.locator('.toast')).toContainText('used in');
       await expect(page.getByTestId('asset-card')).toHaveCount(1);
