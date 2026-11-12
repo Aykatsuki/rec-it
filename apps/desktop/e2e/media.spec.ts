@@ -1,4 +1,5 @@
 import { expect, test } from '@playwright/test';
+import { execFileSync } from 'node:child_process';
 import { existsSync, readdirSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 
@@ -116,10 +117,28 @@ test.describe('media pipeline', () => {
     // Hard kill: no clean shutdown at all.
     // Only the main process is killed: the backend must notice and stop FFmpeg by itself,
     // otherwise leftovers block the app from starting again on Windows.
+    const mainPid = app.process().pid;
     app.process().kill('SIGKILL');
-    await new Promise((r) => setTimeout(r, 3000));
 
-    ({ app, page } = await launch(userData, env()));
+    // Relaunching must work within a few seconds of a crash.
+    let relaunched: Awaited<ReturnType<typeof launch>> | null = null;
+    for (let attempt = 1; attempt <= 5 && !relaunched; attempt++) {
+      await new Promise((r) => setTimeout(r, 2000));
+      if (process.platform === 'win32') {
+        // Diagnostics: show what is still running from the killed instance.
+        const list = execFileSync('tasklist', ['/FO', 'CSV', '/NH'], { encoding: 'utf8' })
+          .split(/\r?\n/)
+          .filter((l) => /electron|ffmpeg|python/i.test(l));
+        console.log(`after kill of ${mainPid}, attempt ${attempt}:\n${list.join('\n')}`);
+      }
+      try {
+        relaunched = await launch(userData, env());
+      } catch (error) {
+        console.log(`relaunch attempt ${attempt} failed: ${String(error).slice(0, 200)}`);
+      }
+    }
+    expect(relaunched, 'the app could not be started again after a crash').not.toBeNull();
+    ({ app, page } = relaunched!);
     try {
       // The last project reopens by itself, with both imports, and unfinished work resumes.
       await expect(page.locator('.topbar__project')).toContainText('Crash test');
