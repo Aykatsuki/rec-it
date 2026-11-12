@@ -259,6 +259,33 @@ export function AssetCard({
 }
 
 /** Draws peaks from waveform.bin (one byte per 10 ms) as a filled mirrored shape. */
+// Waveforms are fetched once per file and shared by every card and timeline clip that shows it.
+const waveforms = new Map<string, Promise<string>>();
+const readyPaths = new Map<string, string>();
+function waveformFor(url: string): Promise<string> {
+  let p = waveforms.get(url);
+  if (!p) {
+    p = fetch(url)
+      .then((r) => r.arrayBuffer())
+      .then((buf) => {
+        const path = waveformPath(new Uint8Array(buf));
+        readyPaths.set(url, path);
+        return path;
+      })
+      .catch(() => {
+        waveforms.delete(url);
+        return '';
+      });
+    waveforms.set(url, p);
+    if (waveforms.size > 200) {
+      const oldest = waveforms.keys().next().value!;
+      waveforms.delete(oldest);
+      readyPaths.delete(oldest);
+    }
+  }
+  return p;
+}
+
 export function WaveformStrip({
   url,
   className = 'waveform-strip',
@@ -266,15 +293,12 @@ export function WaveformStrip({
   url: string;
   className?: string;
 }) {
-  const [path, setPath] = useState('');
+  const [path, setPath] = useState(() => readyPaths.get(url) ?? '');
   useEffect(() => {
     let cancelled = false;
-    void fetch(url)
-      .then((r) => r.arrayBuffer())
-      .then((buf) => {
-        if (!cancelled) setPath(waveformPath(new Uint8Array(buf)));
-      })
-      .catch(() => {});
+    void waveformFor(url).then((p) => {
+      if (!cancelled) setPath(p);
+    });
     return () => {
       cancelled = true;
     };

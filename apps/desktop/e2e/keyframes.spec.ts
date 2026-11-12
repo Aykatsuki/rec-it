@@ -71,6 +71,19 @@ test.describe('keyframes and linked clips', () => {
       await page.keyboard.press('Control+z');
       await expect(sliderValue(page, 'Scale')).toHaveText('113%');
 
+      // Drag the second keyframe (2.5 s) half a second earlier: at 1.5 s the value is then
+      // 100% + 50% × (1 / 1.5) = 133%.
+      const kf = (await page.getByTestId('timeline-keyframe').nth(1).boundingBox())!;
+      await page.mouse.move(kf.x + kf.width / 2, kf.y + kf.height / 2);
+      await page.mouse.down();
+      await page.mouse.move(kf.x + kf.width / 2 - 20, kf.y + kf.height / 2, { steps: 4 });
+      await page.mouse.move(kf.x + kf.width / 2 - 0.5 * ZOOM, kf.y + kf.height / 2, { steps: 4 });
+      await page.mouse.up();
+      await expect(page.getByTestId('program-time')).toContainText('00:02.000');
+      await page.getByTestId('ruler').click({ position: { x: 1.5 * ZOOM, y: 10 } });
+      await item.click({ position: { x: 1.5 * ZOOM, y: 30 } });
+      await expect(sliderValue(page, 'Scale')).toHaveText('133%');
+
       // Detach audio: a linked sound clip appears and moves with the picture.
       await item.click({ button: 'right', position: { x: 10, y: 30 } });
       await page.getByRole('menuitem', { name: 'Detach audio' }).click();

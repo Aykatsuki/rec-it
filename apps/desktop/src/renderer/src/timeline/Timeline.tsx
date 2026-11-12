@@ -1,5 +1,7 @@
 import {
+  memo,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -26,8 +28,15 @@ import {
   ZoomIn,
   ZoomOut,
 } from 'lucide-react';
-import type { Sequence, TimelineItem, Track } from '@rec-it/core';
-import type { MediaAsset } from '@rec-it/ipc-contract';
+import {
+  FLICKS_PER_SECOND,
+  sourceTimeAt,
+  type KeyframeProperty,
+  type Sequence,
+  type TimelineItem,
+  type Track,
+} from '@rec-it/core';
+import type { CommandInput, MediaAsset } from '@rec-it/ipc-contract';
 import { EmptyState, IconButton } from '@rec-it/ui';
 import {
   ASSET_MIME,
@@ -532,6 +541,26 @@ function TimelineBody({ seq }: { seq: Sequence }) {
     }
   };
 
+  const latest = useRef({ beginItemDrag, seq });
+  useLayoutEffect(() => {
+    latest.current = { beginItemDrag, seq };
+  });
+
+  /**
+   * Only clips near the visible part of the timeline are rendered, so long timelines (1,000+
+   * clips) stay smooth. Selected and dragged clips are always rendered.
+   */
+  const margin = 400;
+  const onScreen = (item: TimelineItem) => {
+    const left = toSeconds(item.start) * zoom;
+    const right = left + toSeconds(item.duration) * zoom;
+    return (
+      (right >= view.left - margin && left <= view.left + view.width + margin) ||
+      selected.includes(item.id) ||
+      (drag?.kind === 'move' && drag.group.some((g) => g.item.id === item.id))
+    );
+  };
+
   /** Where each clip of a moving group ends up. */
   const groupTargets = (d: Extract<Drag, { kind: 'move' }>) =>
     d.group.map(({ item, track }) => {
@@ -590,28 +619,36 @@ function TimelineBody({ seq }: { seq: Sequence }) {
               onDragLeave={() => setDropHint(null)}
               onDrop={(e) => onLaneDrop(e, track)}
             >
-              {track.items.map((item) => {
-                const dimmed =
-                  (drag?.kind === 'trim' && drag.item.id === item.id) ||
-                  (drag?.kind === 'move' &&
-                    drag.moved &&
-                    drag.group.some((g) => g.item.id === item.id));
-                return (
-                  <ItemView
-                    key={item.id}
-                    item={item}
-                    track={track}
-                    asset={byId.get(item.assetId)}
-                    zoom={zoom}
-                    view={view}
-                    linked={isLinked(seq, item)}
-                    selected={selected.includes(item.id)}
-                    dimmed={dimmed}
-                    onPointerDown={(e, mode) => beginItemDrag(e, track, item, mode)}
-                    onContextMenu={(e) => openContextMenu(e, clipMenu(seq, [item.id]))}
-                  />
-                );
-              })}
+              {track.items
+                .filter((item) => onScreen(item))
+                .map((item) => {
+                  const dimmed =
+                    (drag?.kind === 'trim' && drag.item.id === item.id) ||
+                    (drag?.kind === 'move' &&
+                      drag.moved &&
+                      drag.group.some((g) => g.item.id === item.id));
+                  return (
+                    <ItemView
+                      key={item.id}
+                      item={item}
+                      track={track}
+                      asset={byId.get(item.assetId)}
+                      zoom={zoom}
+                      view={view}
+                      linked={isLinked(seq, item)}
+                      selected={selected.includes(item.id)}
+                      dimmed={dimmed}
+                      // Through a ref: memoised clips keep these handlers, which must see the
+                      // latest timeline.
+                      onPointerDown={(e, mode) =>
+                        latest.current.beginItemDrag(e, track, item, mode)
+                      }
+                      onContextMenu={(e) =>
+                        openContextMenu(e, clipMenu(latest.current.seq, [item.id]))
+                      }
+                    />
+                  );
+                })}
               {drag?.kind === 'move' &&
                 drag.moved &&
                 groupTargets(drag)
@@ -717,7 +754,27 @@ function TrackHeader({ seq, track }: { seq: Sequence; track: Track }) {
   );
 }
 
-function ItemView({
+/** Clips narrower than this are drawn as plain blocks (no filmstrip, waveform or label). */
+const DETAIL_MIN_PX = 24;
+
+/**
+ * A clip only re-renders when something about it changes (not on every playhead move); the
+ * scroll position matters only to filmstrips.
+ */
+const ItemView = memo(
+  ItemViewInner,
+  (a, b) =>
+    a.item === b.item &&
+    a.track === b.track &&
+    a.asset === b.asset &&
+    a.zoom === b.zoom &&
+    a.linked === b.linked &&
+    a.selected === b.selected &&
+    a.dimmed === b.dimmed &&
+    (a.view === b.view || !a.asset?.urls.sprite || a.track.kind !== 'video'),
+);
+
+function ItemViewInner({
   item,
   track,
   asset,
@@ -748,6 +805,7 @@ function ItemView({
   const poster = track.kind === 'video' ? (asset?.urls.still ?? asset?.urls.poster) : undefined;
   const sprite = track.kind === 'video' && asset?.kind === 'video' ? asset.urls.sprite : undefined;
   const v = asset?.probe?.video;
+  const detailed = width >= DETAIL_MIN_PX;
   return (
     <div
       className="tl__item"
@@ -763,7 +821,7 @@ function ItemView({
       onContextMenu={onContextMenu}
       title={asset?.name}
     >
-      {sprite && v ? (
+      {!detailed ? null : sprite && v ? (
         <Filmstrip
           sprite={sprite}
           aspect={v.displayWidth / v.displayHeight}
@@ -777,7 +835,7 @@ function ItemView({
       ) : (
         poster && <div className="tl__film" style={{ backgroundImage: `url("${poster}")` }} />
       )}
-      {showWave && (
+      {detailed && showWave && (
         <div
           className={`tl__wave${track.kind === 'video' ? ' tl__wave--under' : ''}`}
           style={{ left: -toSeconds(item.sourceIn) * zoom, width: assetSeconds * zoom }}
@@ -792,20 +850,7 @@ function ItemView({
       {item.keyframes &&
         keyframeTimes(item)
           .filter((t) => t >= toSeconds(item.start) && t <= itemEndSec(item))
-          .map((t) => (
-            <span
-              key={t}
-              className="tl__kf"
-              data-testid="timeline-keyframe"
-              title={`Keyframe at ${t.toFixed(2)} s`}
-              style={{ left: (t - toSeconds(item.start)) * zoom }}
-              onPointerDown={(e) => {
-                e.stopPropagation();
-                useApp.getState().setPlaying(false);
-                useApp.getState().setPlayhead(t);
-              }}
-            />
-          ))}
+          .map((t) => <KeyframeMarker key={t} item={item} time={t} zoom={zoom} />)}
       <span
         className="tl__handle tl__handle--start"
         onPointerDown={(e) => onPointerDown(e, 'start')}
@@ -863,5 +908,78 @@ function Filmstrip({
     <div className="tl__filmstrip" data-testid="filmstrip">
       {tiles}
     </div>
+  );
+}
+
+/**
+ * A keyframe diamond on a clip. Click: move the playhead there. Drag: move every keyframe at
+ * that time (all properties) to a new frame inside the clip, as one undo step.
+ */
+function KeyframeMarker({ item, time, zoom }: { item: TimelineItem; time: number; zoom: number }) {
+  const [drag, setDrag] = useState<{ x0: number; t: number } | null>(null);
+  const seq = useSequence();
+  const frame = seq ? seq.fps.den / seq.fps.num : 1 / 30;
+  const start = toSeconds(item.start);
+  const end = itemEndSec(item);
+  const target = (clientX: number, x0: number) => {
+    const t = time + (clientX - x0) / zoom;
+    const snapped = start + Math.round((t - start) / frame) * frame;
+    return Math.min(end - frame, Math.max(start, snapped));
+  };
+  const shown = drag ? drag.t : time;
+  return (
+    <span
+      className="tl__kf"
+      data-testid="timeline-keyframe"
+      data-dragging={!!drag}
+      title={`Keyframe at ${shown.toFixed(2)} s — drag to move`}
+      style={{ left: (shown - start) * zoom }}
+      onPointerDown={(e) => {
+        if (e.button !== 0) return;
+        e.stopPropagation();
+        (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+        setDrag({ x0: e.clientX, t: time });
+      }}
+      onPointerMove={(e) => {
+        if (drag) setDrag({ ...drag, t: target(e.clientX, drag.x0) });
+      }}
+      onPointerUp={async (e) => {
+        if (!drag) return;
+        const to = target(e.clientX, drag.x0);
+        setDrag(null);
+        const state = useApp.getState();
+        if (Math.abs(to - time) < frame / 2) {
+          // A click: go to the keyframe.
+          state.setPlaying(false);
+          state.setPlayhead(time);
+          return;
+        }
+        if (!seq) return;
+        const from = sourceTimeAt(item, toFlicks(time));
+        const dest = sourceTimeAt(item, toFlicks(to));
+        const half = (FLICKS_PER_SECOND * frame) / 2;
+        const commands: CommandInput[] = [];
+        for (const [property, keys] of Object.entries(item.keyframes ?? {})) {
+          const k = keys?.find((x) => Math.abs(x.t - from) <= half);
+          if (!k) continue;
+          const p = property as KeyframeProperty;
+          commands.push(
+            { type: 'keyframe.remove', sequenceId: seq.id, itemId: item.id, property: p, t: k.t },
+            {
+              type: 'keyframe.set',
+              sequenceId: seq.id,
+              itemId: item.id,
+              property: p,
+              t: dest,
+              value: k.v,
+              easing: k.e,
+            },
+          );
+        }
+        if (commands.length && (await edit({ type: 'batch', commands } as CommandInput)))
+          state.setPlayhead(to);
+      }}
+      onPointerCancel={() => setDrag(null)}
+    />
   );
 }

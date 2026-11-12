@@ -3,22 +3,10 @@
 // so decode order equals display order and any frame is at most 11 decodes from a keyframe.
 // Only the movie header and the byte ranges of the needed frames are fetched, so hour-long
 // proxies open instantly.
-import { createFile, DataStream, Endianness, MP4BoxBuffer, type Movie } from 'mp4box';
+import { DataStream, Endianness } from 'mp4box';
+import { fetchRange, readMovie, sampleIndexAt, trackSamples, type Mp4Sample } from './mp4';
 
-interface SampleRef {
-  /** Presentation time in seconds. */
-  t: number;
-  offset: number;
-  size: number;
-  key: boolean;
-}
-
-/** Fetches part of a file served by recit-media:// (which supports HTTP ranges). */
-async function fetchRange(url: string, start: number, end: number): Promise<ArrayBuffer> {
-  const res = await fetch(url, { headers: { Range: `bytes=${start}-${end - 1}` } });
-  if (!res.ok && res.status !== 206) throw new Error(`Could not read ${url} (${res.status})`);
-  return res.arrayBuffer();
-}
+type SampleRef = Mp4Sample;
 
 const MAX_CACHED_FRAMES = 6;
 const MAX_CACHED_BLOCKS = 4;
@@ -45,23 +33,7 @@ export class VideoSource {
 
   /** Reads the movie header (growing range reads until mp4box has it) and checks decoder support. */
   static async open(url: string): Promise<VideoSource> {
-    const file = createFile();
-    let info: Movie | null = null;
-    let failure: string | null = null;
-    file.onReady = (m) => (info = m);
-    file.onError = (_module, message) => (failure = message);
-    let pos = 0;
-    let chunk = 256 * 1024;
-    for (let i = 0; i < 12 && !info && !failure; i++) {
-      const data = await fetchRange(url, pos, pos + chunk);
-      if (!data.byteLength) break;
-      const next = file.appendBuffer(MP4BoxBuffer.fromArrayBuffer(data, pos));
-      // mp4box tells us where it wants to continue reading (skipping media data).
-      pos = typeof next === 'number' && next > pos ? next : pos + data.byteLength;
-      chunk *= 2;
-    }
-    const movie = info as Movie | null;
-    if (!movie) throw new Error(failure ?? 'Could not read the preview file header.');
+    const { file, movie } = await readMovie(url);
     const track = movie.videoTracks[0];
     if (!track) throw new Error('The preview file has no video.');
     const trak = file.getTrackById(track.id);
@@ -85,24 +57,7 @@ export class VideoSource {
     };
     const support = await VideoDecoder.isConfigSupported(config);
     if (!support.supported) throw new Error(`This system cannot decode ${track.codec}.`);
-    // An edit list can start presentation part-way into the media (encoder delay). Browsers and
-    // FFmpeg both honour it, so frame times must too, or the preview is a frame off.
-    const elst = (
-      trak as unknown as {
-        edts?: { elst?: { entries?: { media_time: number; segment_duration: number }[] } };
-      }
-    ).edts?.elst?.entries?.find((e) => e.media_time >= 0);
-    const mediaTimescale = trak.mdia.mdhd.timescale;
-    const shift = elst ? elst.media_time / mediaTimescale : 0;
-    const samples = file
-      .getTrackSamplesInfo(track.id)
-      .map((s) => ({
-        t: s.cts / s.timescale - shift,
-        offset: s.offset,
-        size: s.size,
-        key: s.is_sync,
-      }))
-      .sort((a, b) => a.t - b.t);
+    const samples = trackSamples(file, track.id);
     if (!samples.length) throw new Error('The preview file has no frames.');
     return new VideoSource(url, samples, config, track.video!.width, track.video!.height);
   }
@@ -115,17 +70,7 @@ export class VideoSource {
 
   /** Index of the frame shown at time `t` (seconds). */
   indexAt(t: number): number {
-    const s = this.samples;
-    let lo = 0;
-    let hi = s.length - 1;
-    // Tolerate timestamps that round to just under their nominal time.
-    const target = t + 1e-4;
-    while (lo < hi) {
-      const mid = (lo + hi + 1) >> 1;
-      if (s[mid]!.t <= target) lo = mid;
-      else hi = mid - 1;
-    }
-    return lo;
+    return sampleIndexAt(this.samples, t);
   }
 
   /**

@@ -9,6 +9,7 @@ import {
   type Track,
   type Transform,
 } from '@rec-it/core';
+import { AudioEngine, audibleClips } from '../engine/audio-engine';
 import {
   PreviewEngine,
   describeError,
@@ -107,15 +108,64 @@ export function ProgramMonitor({ seq }: { seq: Sequence }) {
     return () => ro.disconnect();
   }, [seq.width, seq.height]);
 
-  // Wall-clock playback.
+  // Sound for the GPU engine: Web Audio, whose clock drives the playhead (ADR-030).
+  const audio = useRef<AudioEngine | null>(null);
+  useEffect(() => {
+    audio.current = new AudioEngine();
+    return () => {
+      audio.current?.dispose();
+      audio.current = null;
+    };
+  }, []);
+  const byId = useMemo(() => new Map(assets.map((a) => [a.id, a])), [assets]);
+  const clips = useMemo(
+    () =>
+      audibleClips(seq, (item) => {
+        const a = byId.get(item.assetId);
+        if (!a?.urls.proxy) return undefined;
+        return a.kind === 'audio' || (a.kind === 'video' && a.probe?.audio)
+          ? a.urls.proxy
+          : undefined;
+      }),
+    [seq, byId],
+  );
+  const webAudio = gpu && rate === 1;
+
+  // Debug/test hook: render the preview's audio offline (compared with the export in tests).
+  useEffect(() => {
+    (window as unknown as { recitDebug?: unknown }).recitDebug = {
+      renderAudio: async (from: number, duration: number) => {
+        const buffer = await audio.current!.renderOffline(clips, from, duration);
+        const window = 480; // 10 ms at 48 kHz
+        const a = buffer.getChannelData(0);
+        const b = buffer.getChannelData(1);
+        const out: number[] = [];
+        for (let i = 0; i + window <= a.length; i += window) {
+          let sum = 0;
+          for (let j = i; j < i + window; j++) sum += ((a[j]! + b[j]!) / 2) ** 2;
+          out.push(Math.sqrt(sum / window));
+        }
+        return out;
+      },
+    };
+  }, [clips]);
+
+  // Playback clock: Web Audio's clock in the GPU engine at normal speed, otherwise the wall
+  // clock (the compatible engine, and J/K/L at other speeds, which play without sound).
   useEffect(() => {
     if (!playing) return;
     const t0 = useApp.getState().playhead;
     const started = performance.now();
+    const engine = audio.current;
+    if (webAudio && engine) void engine.play(clips, t0);
     let raf = 0;
     const tick = () => {
-      const t = t0 + ((performance.now() - started) / 1000) * rate;
-      if (t >= total || t <= 0) {
+      const t =
+        webAudio && engine?.playing
+          ? engine.now()
+          : t0 + ((performance.now() - started) / 1000) * rate;
+      // (t <= 0 only ends reverse playback: the audio clock reads 0 until sound starts.)
+      if (t >= total || (rate < 0 && t <= 0)) {
         useApp.getState().setPlayhead(Math.min(total, Math.max(0, t)));
         useApp.getState().setPlaying(false);
         return;
@@ -124,8 +174,12 @@ export function ProgramMonitor({ seq }: { seq: Sequence }) {
       raf = requestAnimationFrame(tick);
     };
     raf = requestAnimationFrame(tick);
-    return () => cancelAnimationFrame(raf);
-  }, [playing, total, rate]);
+    return () => {
+      cancelAnimationFrame(raf);
+      engine?.stop();
+    };
+    // `clips`: an edit while playing restarts the sound from the current position.
+  }, [playing, total, rate, webAudio, clips]);
 
   // Clips near the playhead are mounted ahead of time so they are ready to play.
   const mounted = useMemo(() => {
@@ -264,17 +318,8 @@ export function ProgramMonitor({ seq }: { seq: Sequence }) {
                     opacity: visible ? 1 : 0,
                   }
                 : undefined;
-              if (gpu && m.track.kind === 'video') {
-                // The GPU engine draws pictures; a video clip's sound still plays from an element.
-                return m.asset.kind === 'video' && m.asset.urls.proxy ? (
-                  <audio
-                    key={m.item.id}
-                    ref={register(m.item.id)}
-                    src={m.asset.urls.proxy}
-                    preload="auto"
-                  />
-                ) : null;
-              }
+              // The GPU engine draws pictures and Web Audio plays the sound.
+              if (gpu) return null;
               if (m.asset.kind === 'image') {
                 const src = m.asset.urls.still ?? m.asset.urls.poster;
                 return src ? (
