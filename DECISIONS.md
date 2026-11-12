@@ -30,6 +30,7 @@ Each record states the decision, why it was made and what else was considered. R
 | 024 | Backend heartbeat so FFmpeg never outlives a crashed app | Accepted |
 | 025 | First timeline, preview and export slice | Accepted |
 | 026 | Direct manipulation, context menus and an effects phase | Accepted |
+| 027 | Export settings, two-pass loudness and preview/export parity | Accepted |
 
 ---
 
@@ -340,3 +341,18 @@ Each record states the decision, why it was made and what else was considered. R
 - **Context menus** are one renderer component (`ui/ContextMenu.tsx`: keyboard navigation, submenus, conditional entries) fed by menu builders in `timeline/menus.tsx`. They only call the same edit helpers as buttons and shortcuts; no new IPC.
 - **Clipboard** is renderer memory only (clip references, timing, settings), not the system clipboard.
 - **Effects get their own phase.** Fades, transitions, colour, blur, keying, speed and audio effects become Phase 6, before the Claude phases, so the editor is complete before AI work starts (consistent with ADR-019). Later phases are renumbered: Claude connection is now Phase 7, AI analysis 8, YouTube research 9, batch Shorts 10, release 11.
+
+---
+
+## ADR-027 · Export settings, two-pass loudness and preview/export parity
+
+**Status.** Accepted (12 Nov 2026, Phase 3). Details ADR-007, ADR-025 and ARCHITECTURE §10.
+
+**Decisions.**
+- **Settings, not just presets.** The dialog offers four presets (YouTube Short, High quality, Smaller file = H.265, Draft = half size, no loudness pass) and the individual settings behind them: resolution (100/75/66/50 % of the sequence), codec (H.264 or H.265), encoder (automatic, graphics card, software), quality, AAC bitrate and loudness target. The renderer remembers the last settings. Output is composed directly at the chosen size, not scaled afterwards.
+- **Encoder choice** (`pickExportEncoder`): automatic means NVENC when its test encode passed, VideoToolbox on macOS, otherwise x264/x265. Intel and AMD encoders are compiled into most FFmpeg builds even without the hardware, so they are only tried when the user picks "graphics card". If a graphics-card encoder fails before 5 % of the encode, the export is redone once in software and the dialog says so.
+- **Two-pass loudness.** Pass 1 mixes only the audio exactly as the export will and runs `loudnorm` to measure it; pass 2 applies the measured values with `linear=true`, so the whole Short gets one gain instead of dynamic level changes. Silence is detected and left alone. Targets: −14 (YouTube), −11, −16, −23 LUFS or off; true peak −1.5 dBTP.
+- **Player-safe output.** 4:2:0, BT.709 colour tags (set in the graph with `setparams` and on the stream), every layer converted to BT.709 when scaled, closed GOP of half the frame rate, two B-frames, `hvc1` tag for HEVC (QuickTime), AAC-LC 48 kHz stereo, `+faststart`, title metadata.
+- **Frames as images** use the same graph as the export (`planFrame`), so a saved still is exactly what the video contains.
+- **Golden-frame parity in CI.** An end-to-end test builds three cases (fill; fit with offset and rotation; a rotated still over video), screenshots the preview at a moment inside each, exports, and compares with SSIM (≥ 0.98, outer 2 px excluded). Fixtures use flat colours and a moving box, so the score reflects layout, colour and timing rather than scaler differences on noise. This found three preview bugs, now fixed: proxies were untagged and shown with the wrong colour matrix (proxies are now BT.709 and tagged; proxies made earlier keep a slight colour shift until regenerated); paused seeks landed one frame early (seeks now aim a quarter-frame into the frame); and a paused clip seeked while invisible showed a stale frame when it appeared (it is re-seeked once visible; hidden layers use opacity instead of visibility).
+- **Scope moved.** Speed changes and fades, listed under Phase 3 originally, are part of Phase 6 (effects, ADR-026).

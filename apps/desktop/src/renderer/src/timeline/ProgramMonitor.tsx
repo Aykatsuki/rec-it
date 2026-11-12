@@ -72,6 +72,8 @@ export function ProgramMonitor({ seq }: { seq: Sequence }) {
   const draft = useApp((s) => s.draftTransform);
   const well = useRef<HTMLDivElement>(null);
   const elements = useRef(new Map<string, HTMLMediaElement>());
+  /** Clips that were on screen at the last sync, to spot ones that have just appeared. */
+  const shown = useRef(new Set<string>());
   const [box, setBox] = useState({ w: 0, h: 0 });
   const total = sequenceSeconds(seq);
 
@@ -132,14 +134,21 @@ export function ProgramMonitor({ seq }: { seq: Sequence }) {
       const start = toSeconds(m.item.start);
       const active = playhead >= start && playhead < itemEndSec(m.item);
       const local = toSeconds(m.item.sourceIn) + Math.max(0, playhead - start);
+      // Paused seeks aim a quarter-frame into the frame: a frame's timestamp often rounds to just
+      // under its nominal time, and seeking exactly onto it shows the previous frame.
+      const fps = m.asset.probe?.video?.fps;
+      const still = local + (fps && fps.num > 0 ? (0.25 * fps.den) / fps.num : 0.008);
       el.volume = Math.min(1, m.item.volume);
       el.muted =
         m.item.muted || m.track.muted || (m.asset.kind === 'video' && !m.asset.probe?.audio);
       if (!active) {
+        shown.current.delete(m.item.id);
         if (!el.paused) el.pause();
-        if (Math.abs(el.currentTime - local) > 0.05 && el.readyState > 0) el.currentTime = local;
+        if (Math.abs(el.currentTime - still) > 0.05 && el.readyState > 0) el.currentTime = still;
         continue;
       }
+      const appeared = !shown.current.has(m.item.id);
+      shown.current.add(m.item.id);
       if (playing && rate > 0) {
         if (el.playbackRate !== rate) el.playbackRate = rate;
         if (el.paused) {
@@ -150,7 +159,18 @@ export function ProgramMonitor({ seq }: { seq: Sequence }) {
         }
       } else {
         if (!el.paused) el.pause();
-        if (Math.abs(el.currentTime - local) > 0.01) el.currentTime = local;
+        if (Math.abs(el.currentTime - still) > 0.005) el.currentTime = still;
+        if (appeared && el instanceof HTMLVideoElement) {
+          // A paused video that was seeked while invisible can keep showing an old frame when it
+          // appears. Seeking once more after it is on screen makes Chromium paint the right one.
+          // (A seek to the current time is ignored, so aim 1 ms further, still inside the frame.)
+          const again = () =>
+            requestAnimationFrame(() => {
+              if (el.paused) el.currentTime = still + 0.001;
+            });
+          if (el.seeking) el.addEventListener('seeked', again, { once: true });
+          else again();
+        }
       }
     }
   }, [mounted, playhead, playing, rate]);
@@ -202,7 +222,8 @@ export function ProgramMonitor({ seq }: { seq: Sequence }) {
                     height: `${(layout.height / seq.height) * 100}%`,
                     zIndex: m.layer,
                     transform: layout.rotation ? `rotate(${layout.rotation}deg)` : undefined,
-                    visibility: visible ? ('visible' as const) : ('hidden' as const),
+                    // Opacity, not visibility: Chromium does not repaint a hidden video after a seek.
+                    opacity: visible ? 1 : 0,
                   }
                 : undefined;
               if (m.asset.kind === 'image') {
@@ -239,7 +260,12 @@ export function ProgramMonitor({ seq }: { seq: Sequence }) {
             box={box}
             layers={visibleLayers}
             onContextMenu={(e, itemId) =>
-              openContextMenu(e, itemId ? clipMenu(seq, [itemId]) : programMenu(seq))
+              openContextMenu(
+                e,
+                itemId
+                  ? [...clipMenu(seq, [itemId]), { separator: true }, ...programMenu(seq)]
+                  : programMenu(seq),
+              )
             }
           />
         </div>

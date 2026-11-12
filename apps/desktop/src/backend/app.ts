@@ -31,9 +31,9 @@ import {
 } from '@rec-it/ffmpeg';
 import type { BackendConfig } from '../shared/backend-messages';
 import type { Toolchain } from './services/media-service';
-import { ExportService } from './services/export-service';
+import { ExportService, type ExportToolchain } from './services/export-service';
 import { ProjectService } from './services/project-service';
-import type { Command } from '@rec-it/core';
+import type { Command, Sequence } from '@rec-it/core';
 import { SidecarClient, checkSidecar } from './services/sidecar';
 
 const BACKEND_VERSION = '0.1.0';
@@ -175,20 +175,26 @@ export class BackendApp {
     'doc.undo': () => this.projects.document().undo(),
     'doc.redo': () => this.projects.document().redo(),
 
-    'export.start': ({ sequenceId, path, quality }) => {
-      const seq = this.projects
-        .document()
-        .state()
-        .doc.sequences.find((s) => s.id === sequenceId);
-      if (!seq) throw new Error('That sequence no longer exists.');
+    'export.start': ({ sequenceId, path, settings }) => {
       const media = this.projects.media();
       return this.exports.start(
-        seq as never,
+        this.sequence(sequenceId),
         path,
-        quality,
-        () => this.toolchain(),
+        settings,
+        () => this.exportToolchain(),
         (id) => media.exportAsset(id),
       );
+    },
+    'export.frame': async ({ sequenceId, time, path }) => {
+      const media = this.projects.media();
+      await this.exports.frame(
+        this.sequence(sequenceId),
+        time,
+        path,
+        () => this.exportToolchain(),
+        (id) => media.exportAsset(id),
+      );
+      return { ok: true as const };
     },
     'export.cancel': () => {
       this.exports.cancel();
@@ -233,6 +239,21 @@ export class BackendApp {
       );
     }
     return { bins: this.ffmpegBins, encoder, tonemap: this.ffmpeg.hasZimg };
+  }
+
+  /** FFmpeg binaries plus what export needs to choose an encoder. */
+  async exportToolchain(): Promise<ExportToolchain> {
+    const { bins, tonemap } = await this.toolchain();
+    return { bins, tonemap, ffmpeg: this.ffmpeg };
+  }
+
+  private sequence(sequenceId: string): Sequence {
+    const seq = this.projects
+      .document()
+      .state()
+      .doc.sequences.find((s) => s.id === sequenceId);
+    if (!seq) throw new Error('That sequence no longer exists.');
+    return seq as Sequence;
   }
 
   status(): SystemStatus {

@@ -391,7 +391,7 @@ export class MediaService {
 
     const probe = probeInfoSchema.parse(row.probe) as ProbeInfo;
     const changes: Derived = {};
-    const write = async (file: string, produce: (tmp: string) => Promise<void>) => {
+    const write = async (file: string, produce: (tmp: string) => Promise<unknown>) => {
       const target = join(dir, file);
       const tmp = `${target}.part`;
       try {

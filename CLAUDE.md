@@ -5,14 +5,14 @@ ARCHITECTURE.md, ROADMAP.md and DECISIONS.md before making design changes.
 
 ## Current phase
 
-Phases 0 (foundations) and 1 (media pipeline) are complete. First slices of Phase 2 (timeline, interim preview, mouse transforms, context menus; ADR-025, ADR-026) and Phase 3 (export) are done; the rest of Phase 2 comes next. Priority: a fully working editor
+Phases 0 (foundations) and 1 (media pipeline) are complete. Phase 3 (export, ADR-027) is built; manual checks on the reference PC remain. Phase 2 has two slices done (timeline, interim preview, mouse transforms, context menus; ADR-025, ADR-026); the rest of Phase 2 (WebCodecs/WebGL2 preview, keyframes, linked audio) comes next. Priority: a fully working editor
 (Phases 0–6, Phase 6 = effects) before any Claude features (ADR-019). Reference machine: Windows 11 + RTX 3070 8 GB.
 
 ## Commands
 
 - `pnpm install`, `pnpm dev`, `pnpm build`
 - `pnpm check` — lint + typecheck + Vitest + pytest. Run before committing.
-- `pnpm test:e2e` — Playwright against the built app. On Linux without a display use
+- `pnpm test:e2e` — Playwright against the built app (includes the preview/export golden-frame parity suite). On Linux without a display use
   `CI=1 xvfb-run -a pnpm test:e2e` (CI=1 enables the container sandbox workaround).
 - `pnpm fetch-ffmpeg` — GPL FFmpeg into `resources/ffmpeg/<platform>-<arch>/`.
 
@@ -28,7 +28,8 @@ Phases 0 (foundations) and 1 (media pipeline) are complete. First slices of Phas
 - `apps/desktop/src/renderer` — React UI. No Node, no Electron imports.
 - `packages/ipc-contract` — every channel and event with zod schemas; typed client/server.
 - `packages/core` — pure domain logic: flicks time maths, timeline model, commands, Immer undo/redo history.
-- `packages/render-plan` — Sequence → FFmpeg export plan (inputs, filter graph, output args).
+- `packages/render-plan` — Sequence → FFmpeg plans: export, loudness analysis (two-pass), single frame;
+  encoder choice. Argument snapshots in `src/__snapshots__`.
 - Backend `services/document-service.ts` (timeline document + undo, saved per edit) and `services/export-service.ts`.
 - Renderer `timeline/` — Timeline, SequenceSettings, ClipInspector, ProgramMonitor, TransformOverlay, ExportDialog,
   `menus.tsx` (right-click menus); edits go through `edit.ts`. `ui/ContextMenu.tsx` is the generic menu.

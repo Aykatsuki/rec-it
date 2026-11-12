@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { FRAME_RATES, secondsToFlicks as s } from '@rec-it/core';
 import { findTestFfmpeg, makeFixtures, type Fixtures } from '@rec-it/ffmpeg/testing';
+import { DEFAULT_EXPORT_SETTINGS } from '@rec-it/ipc-contract';
 import { BackendApp } from './app';
 
 const bins = findTestFfmpeg();
@@ -124,12 +125,23 @@ describe.skipIf(!bins)('timeline and export (backend, real FFmpeg)', () => {
 
   it('exports an MP4 at the sequence size, frame rate and length', async () => {
     const out = join(dir, 'My Short.mp4');
-    app.handlers['export.start']({ sequenceId: 'seq', path: out, quality: 'draft' });
+    app.handlers['export.start']({
+      sequenceId: 'seq',
+      path: out,
+      settings: { ...DEFAULT_EXPORT_SETTINGS, quality: 'draft' },
+    });
     const final = await waitFor(() => {
       const st = app.exports.status();
       return st.state !== 'running' && st;
     }, 120_000);
-    expect(final).toMatchObject({ state: 'done', progress: 1, path: out });
+    expect(final).toMatchObject({
+      state: 'done',
+      progress: 1,
+      path: out,
+      width: 1080,
+      height: 1920,
+    });
+    expect(final.sizeBytes).toBeGreaterThan(1000);
     expect(existsSync(`${out}.part`)).toBe(false);
     const probe = JSON.parse(
       execFileSync(
@@ -156,9 +168,24 @@ describe.skipIf(!bins)('timeline and export (backend, real FFmpeg)', () => {
     expect(Math.abs(Number(probe.format.duration) - expected)).toBeLessThan(0.1);
   }, 180_000);
 
+  it('saves a single frame as an image', async () => {
+    const out = join(dir, 'frame.png');
+    await app.handlers['export.frame']({ sequenceId: 'seq', time: 1, path: out });
+    const probe = execFileSync(
+      bins!.ffprobe,
+      ['-v', 'error', '-show_entries', 'stream=codec_name,width,height', '-of', 'csv=p=0', out],
+      { encoding: 'utf8' },
+    ).trim();
+    expect(probe).toBe('png,1080,1920');
+  }, 60_000);
+
   it('cancels an export and leaves no partial file', async () => {
     const out = join(dir, 'cancelled.mp4');
-    app.handlers['export.start']({ sequenceId: 'seq', path: out, quality: 'high' });
+    app.handlers['export.start']({
+      sequenceId: 'seq',
+      path: out,
+      settings: { ...DEFAULT_EXPORT_SETTINGS, quality: 'high' },
+    });
     app.handlers['export.cancel']({});
     const final = await waitFor(() => {
       const st = app.exports.status();

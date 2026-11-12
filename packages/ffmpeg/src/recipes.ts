@@ -96,8 +96,10 @@ export function proxyArgs(
   if (probe.video?.hdr && options.tonemap) filters.push(TONEMAP);
   // FFmpeg auto-rotates phone footage, so the proxy is stored upright.
   filters.push(
-    `scale=w='min(${PROXY_LONG_EDGE},iw)':h='min(${PROXY_LONG_EDGE},ih)':force_original_aspect_ratio=decrease:force_divisible_by=2`,
+    `scale=w='min(${PROXY_LONG_EDGE},iw)':h='min(${PROXY_LONG_EDGE},ih)':force_original_aspect_ratio=decrease:force_divisible_by=2:out_color_matrix=bt709:out_range=tv`,
     'format=yuv420p',
+    // Tagged BT.709 so the browser shows the same colours as the export (ADR-027).
+    'setparams=range=tv:color_primaries=bt709:color_trc=bt709:colorspace=bt709',
   );
   const audio = probe.audio
     ? ['-map', '0:a:0', '-c:a', 'aac', '-b:a', '128k', '-ar', '48000', '-ac', '2']
@@ -115,6 +117,14 @@ export function proxyArgs(
     '-r',
     `${rate.num}/${rate.den}`,
     ...encoderArgs(encoder),
+    '-colorspace',
+    'bt709',
+    '-color_primaries',
+    'bt709',
+    '-color_trc',
+    'bt709',
+    '-color_range',
+    'tv',
     '-g',
     String(PROXY_GOP),
     '-keyint_min',

@@ -1927,3 +1927,33 @@ button.statusbar__item:hover {
   background: var(--accent-soft);
   pointer-events: none;
 }
+
+/* ---- Export settings ---------------------------------------------------------------------- */
+.export__presets {
+  margin-top: var(--space-3);
+}
+.export__presets button {
+  flex: 1;
+}
+.export__grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--space-3);
+  margin: var(--space-3) 0;
+}
+.form__field {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+.form__field > span {
+  color: var(--text-2);
+  font-size: var(--text-xs);
+}
+.form__field select {
+  width: 100%;
+  min-width: 0;
+}
+.export__wide {
+  grid-column: 1 / -1;
+}
