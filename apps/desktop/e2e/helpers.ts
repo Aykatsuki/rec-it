@@ -36,3 +36,20 @@ export async function launch(
   await page.waitForLoadState('domcontentloaded');
   return { app, page };
 }
+
+/** Creates a project from the welcome screen. */
+export async function createProject(page: Page, name = 'E2E project'): Promise<void> {
+  await page.getByLabel('New project').fill(name);
+  await page.getByRole('button', { name: 'Create' }).click();
+  await page.locator('[data-region="preview"]').waitFor();
+}
+
+/** Makes the next native "open" dialog return these paths. */
+export async function mockOpenDialog(app: ElectronApplication, paths: string[]): Promise<void> {
+  await app.evaluate(({ dialog }, filePaths) => {
+    dialog.showOpenDialog = (async () => ({
+      canceled: false,
+      filePaths,
+    })) as typeof dialog.showOpenDialog;
+  }, paths);
+}

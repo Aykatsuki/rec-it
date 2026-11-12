@@ -9,6 +9,8 @@ const fields = {
   transcriptionDevice: z.enum(['auto', 'cuda', 'cpu']),
   /** Override for the media cache folder; null means the default inside the user-data folder. */
   cacheDirectory: z.string().max(4096).nullable(),
+  /** Open the last project automatically at start-up. */
+  reopenLastProject: z.boolean(),
 };
 
 export const DEFAULT_SETTINGS = {
@@ -16,6 +18,7 @@ export const DEFAULT_SETTINGS = {
   reduceMotion: false,
   transcriptionDevice: 'auto',
   cacheDirectory: null,
+  reopenLastProject: true,
 } as const;
 
 /** App-wide settings stored in app.db. Missing keys fall back to defaults so old databases keep working. */
@@ -24,6 +27,7 @@ export const settingsSchema = z.object({
   reduceMotion: fields.reduceMotion.default(DEFAULT_SETTINGS.reduceMotion),
   transcriptionDevice: fields.transcriptionDevice.default(DEFAULT_SETTINGS.transcriptionDevice),
   cacheDirectory: fields.cacheDirectory.default(DEFAULT_SETTINGS.cacheDirectory),
+  reopenLastProject: fields.reopenLastProject.default(DEFAULT_SETTINGS.reopenLastProject),
 });
 export type Settings = z.output<typeof settingsSchema>;
 

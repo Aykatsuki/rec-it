@@ -15,6 +15,7 @@ afterEach(() => {
 function start(dir = mkdtempSync(join(tmpdir(), 'recit-backend-'))) {
   const app = new BackendApp({
     userDataDir: dir,
+    projectsDir: join(dir, 'projects'),
     appVersion: '0.0.0-test',
     electronVersion: 'test',
     ffmpeg: { envPath: join(dir, 'no-ffmpeg', 'ffmpeg'), bundledDir: join(dir, 'none') },

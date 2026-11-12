@@ -19,6 +19,10 @@ export interface RecitBridge {
     onConnectionChange(listener: (connected: boolean) => void): () => void;
   };
   shell: RecitBridgeChannel;
+  files: {
+    /** Absolute path of a file dropped onto the window (Electron webUtils). */
+    pathForFile(file: File): string;
+  };
 }
 
 export const IPC = {

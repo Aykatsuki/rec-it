@@ -55,6 +55,7 @@ FFmpeg reports **GPL** and **NVENC test encode: working**, and that the media AI
 | `RECIT_UV_PATH` | Path to `uv` if it is not on PATH |
 | `RECIT_DISABLE_SIDECAR=1` | Do not start the Python sidecar |
 | `RECIT_USER_DATA` | Use a different profile folder (tests use this) |
+| `RECIT_PROJECTS_DIR` | Default folder for new projects (normally Documents\Rec-It Projects) |
 
 ## Project rules
 

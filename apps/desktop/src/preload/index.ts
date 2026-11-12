@@ -1,4 +1,4 @@
-import { contextBridge, ipcRenderer } from 'electron';
+import { contextBridge, ipcRenderer, webUtils } from 'electron';
 import {
   IpcError,
   backendContract,
@@ -85,6 +85,9 @@ const bridge: RecitBridge = {
       listener(client !== null);
       return () => connectionListeners.delete(listener);
     },
+  },
+  files: {
+    pathForFile: (file) => webUtils.getPathForFile(file),
   },
   shell: {
     async invoke(channel, input) {

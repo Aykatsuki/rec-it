@@ -23,7 +23,9 @@ parentPort.on('message', ({ data, ports }) => {
     case 'init': {
       if (app) return;
       try {
-        app = new BackendApp(data.config);
+        app = new BackendApp(data.config, {
+          onCacheRoot: (path) => parentPort.postMessage({ type: 'cacheRoot', path }),
+        });
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         console.error(`failed to start: ${message}`);
@@ -32,7 +34,7 @@ parentPort.on('message', ({ data, ports }) => {
       }
       if (pendingSecrets) app.setSecrets(pendingSecrets);
       for (const port of pendingPorts.splice(0)) app.attach(port);
-      void app.refresh();
+      void app.start();
       parentPort.postMessage({ type: 'ready' });
       console.info(`started (Node ${process.versions.node})`);
       break;
@@ -40,6 +42,9 @@ parentPort.on('message', ({ data, ports }) => {
     case 'secrets':
       if (app) app.setSecrets(data.values);
       else pendingSecrets = data.values;
+      break;
+    case 'shutdown':
+      void (app?.dispose() ?? Promise.resolve()).finally(() => process.exit(0));
       break;
     case 'connect': {
       const [port] = ports;
@@ -57,4 +62,6 @@ process.on('uncaughtException', (error) => {
   process.exit(1);
 });
 
-process.on('exit', () => app?.dispose());
+process.on('SIGTERM', () => {
+  void (app?.dispose() ?? Promise.resolve()).finally(() => process.exit(0));
+});
