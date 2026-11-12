@@ -129,12 +129,12 @@ test.describe('media pipeline', () => {
         const list = execFileSync('tasklist', ['/FO', 'CSV', '/NH'], { encoding: 'utf8' })
           .split(/\r?\n/)
           .filter((l) => /electron|ffmpeg|python/i.test(l));
-        console.log(`after kill of ${mainPid}, attempt ${attempt}:\n${list.join('\n')}`);
+        console.info(`after kill of ${mainPid}, attempt ${attempt}:\n${list.join('\n')}`);
       }
       try {
         relaunched = await launch(userData, env());
       } catch (error) {
-        console.log(`relaunch attempt ${attempt} failed: ${String(error).slice(0, 200)}`);
+        console.info(`relaunch attempt ${attempt} failed: ${String(error).slice(0, 200)}`);
       }
     }
     expect(relaunched, 'the app could not be started again after a crash').not.toBeNull();
