@@ -1,4 +1,5 @@
 // Backend entry point, run by Electron as a utilityProcess (ADR-001).
+import { killAllFfmpeg } from '@rec-it/ffmpeg';
 import type { PortLike, SecretName } from '@rec-it/ipc-contract';
 import type { BackendToMain, MainToBackend } from '../shared/backend-messages';
 import { BackendApp } from './app';
@@ -23,7 +24,9 @@ parentPort.on('message', ({ data, ports }) => {
     case 'init': {
       if (app) return;
       try {
-        app = new BackendApp(data.config);
+        app = new BackendApp(data.config, {
+          onCacheRoot: (path) => parentPort.postMessage({ type: 'cacheRoot', path }),
+        });
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         console.error(`failed to start: ${message}`);
@@ -32,7 +35,7 @@ parentPort.on('message', ({ data, ports }) => {
       }
       if (pendingSecrets) app.setSecrets(pendingSecrets);
       for (const port of pendingPorts.splice(0)) app.attach(port);
-      void app.refresh();
+      void app.start();
       parentPort.postMessage({ type: 'ready' });
       console.info(`started (Node ${process.versions.node})`);
       break;
@@ -40,6 +43,12 @@ parentPort.on('message', ({ data, ports }) => {
     case 'secrets':
       if (app) app.setSecrets(data.values);
       else pendingSecrets = data.values;
+      break;
+    case 'heartbeat':
+      lastHeartbeat = Date.now();
+      break;
+    case 'shutdown':
+      void (app?.dispose() ?? Promise.resolve()).finally(() => process.exit(0));
       break;
     case 'connect': {
       const [port] = ports;
@@ -57,4 +66,21 @@ process.on('uncaughtException', (error) => {
   process.exit(1);
 });
 
-process.on('exit', () => app?.dispose());
+process.on('SIGTERM', () => {
+  void (app?.dispose() ?? Promise.resolve()).finally(() => process.exit(0));
+});
+
+// If the main process dies without shutting us down (a crash, or killed from Task Manager),
+// its heartbeats stop: stop FFmpeg and exit. On Windows child processes are not killed with
+// their parent, and leftovers would keep media files locked.
+const HEARTBEAT_TIMEOUT_MS = 5000;
+let lastHeartbeat = Date.now();
+setInterval(() => {
+  if (Date.now() - lastHeartbeat > HEARTBEAT_TIMEOUT_MS) {
+    console.error('no heartbeat from the main process; stopping');
+    killAllFfmpeg();
+    process.exit(1);
+  }
+}, 1000).unref();
+
+process.on('exit', () => killAllFfmpeg());

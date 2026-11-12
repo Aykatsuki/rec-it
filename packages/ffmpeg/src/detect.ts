@@ -61,6 +61,8 @@ export interface FfmpegDetection {
   hwaccels: string[];
   nvencUsable: boolean | null;
   hasLibass: boolean;
+  /** zimg provides the zscale filter used to tone-map HDR proxies. */
+  hasZimg: boolean;
   message?: string;
 }
 
@@ -75,6 +77,7 @@ export async function detectFfmpeg(binaries: FfmpegBinaries): Promise<FfmpegDete
     hwaccels: [],
     nvencUsable: null,
     hasLibass: false,
+    hasZimg: false,
     source: binaries.source,
   };
   let versionOut: string;
@@ -136,6 +139,7 @@ export async function detectFfmpeg(binaries: FfmpegBinaries): Promise<FfmpegDete
     hwaccels: parseHwaccels(hwOut.stdout),
     nvencUsable,
     hasLibass: info.configuration.includes('--enable-libass'),
+    hasZimg: info.configuration.includes('--enable-libzimg'),
     ...(warnings.length ? { message: warnings.join(' ') } : {}),
   };
 }

@@ -5,7 +5,7 @@ ARCHITECTURE.md, ROADMAP.md and DECISIONS.md before making design changes.
 
 ## Current phase
 
-Phase 0 (foundations) is complete. Next is Phase 1 (media pipeline). Priority: a fully working editor
+Phases 0 (foundations) and 1 (media pipeline) are complete. Next is Phase 2 (timeline and preview engine). Priority: a fully working editor
 (Phases 0–5) before any Claude features (ADR-019). Reference machine: Windows 11 + RTX 3070 8 GB.
 
 ## Commands
@@ -20,12 +20,17 @@ Phase 0 (foundations) is complete. Next is Phase 1 (media pipeline). Priority: a
 
 - `apps/desktop/src/main` — thin Electron main: windows, security, secrets (safeStorage), backend host.
 - `apps/desktop/src/preload` — builds `window.recit` from the IPC contract. Sandboxed; bundled as one file.
-- `apps/desktop/src/backend` — utilityProcess with all services (DB, settings, FFmpeg checks, sidecar).
+- `apps/desktop/src/backend` — utilityProcess with all services: settings, FFmpeg checks, sidecar,
+  `services/project-service.ts` (one open .recit project), `services/media-service.ts` (import, probe,
+  proxy/thumbnail/waveform jobs, relink), `services/jobs.ts` (JobQueue with per-kind concurrency).
+- `apps/desktop/src/main/media-protocol.ts` — serves the media cache over `recit-media://` (allow-listed
+  files, range requests). Pure helpers in `media-paths.ts`.
 - `apps/desktop/src/renderer` — React UI. No Node, no Electron imports.
 - `packages/ipc-contract` — every channel and event with zod schemas; typed client/server.
 - `packages/core` — pure domain logic (flicks time maths now; data model in Phase 2).
 - `packages/db` — `node:sqlite` (ADR-020), migrations, repositories.
-- `packages/ffmpeg` — binary resolution, capability detection, run helpers.
+- `packages/ffmpeg` — binary resolution, capability detection, ffprobe parsing, abortable runner, proxy /
+  sprite / poster / waveform recipes. `@rec-it/ffmpeg/testing` generates synthetic fixtures for tests.
 - `packages/ui` — design tokens and components.
 - `services/media-ai` — Python sidecar, JSON-RPC over stdio, managed by uv.
 

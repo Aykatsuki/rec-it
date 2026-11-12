@@ -4,7 +4,7 @@
 
 Rec-It is a free, open-source, timeline-based video editor (in the style of CapCut and DaVinci Resolve) that Claude can operate. You talk to Claude in your own Claude app; through Rec-It's local MCP connector, Claude can research YouTube topics, analyse your footage, suggest the best clips, generate animated captions, reframe video to vertical 9:16 and make edits on the real timeline. Every edit it makes can be undone. Rec-It has no paid tier and no AI bill of its own: AI usage comes from your existing Claude plan.
 
-> **Status: Phase 0 (foundations) complete.** The app shell runs: secure Electron process model, typed IPC, SQLite settings, encrypted key storage, FFmpeg and GPU detection, and the dark editor layout. Editing features start in Phase 1. The first goal is a fully working video editor (Phases 0–5) that needs no AI at all; Claude features build on top of it afterwards.
+> **Status: Phases 0–1 complete.** Create projects, import footage (drag and drop or Ctrl+I), and Rec-It makes preview copies, thumbnails and waveforms in the background, using NVENC on NVIDIA GPUs. Clips play in the preview, and the inspector shows their details. The editable timeline comes next (Phase 2). The first goal is a fully working video editor (Phases 0–5) that needs no AI at all; Claude features build on top of it afterwards.
 
 ## Quick start (Windows)
 

@@ -6,15 +6,16 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { backendContract, createIpcClient, portTransport } from '@rec-it/ipc-contract';
 import { BackendApp, fingerprint } from './app';
 
-const cleanups: (() => void)[] = [];
-afterEach(() => {
+const cleanups: (() => void | Promise<void>)[] = [];
+afterEach(async () => {
   // Reverse order: close databases before deleting their folders (Windows keeps open files locked).
-  for (const c of cleanups.splice(0).reverse()) c();
+  for (const c of cleanups.splice(0).reverse()) await c();
 });
 
 function start(dir = mkdtempSync(join(tmpdir(), 'recit-backend-'))) {
   const app = new BackendApp({
     userDataDir: dir,
+    projectsDir: join(dir, 'projects'),
     appVersion: '0.0.0-test',
     electronVersion: 'test',
     ffmpeg: { envPath: join(dir, 'no-ffmpeg', 'ffmpeg'), bundledDir: join(dir, 'none') },
@@ -25,11 +26,11 @@ function start(dir = mkdtempSync(join(tmpdir(), 'recit-backend-'))) {
   const client = createIpcClient(backendContract, portTransport(channel.port2), {
     timeoutMs: 5000,
   });
-  cleanups.push(() => {
+  cleanups.push(async () => {
     client.dispose();
     channel.port1.close();
     channel.port2.close();
-    app.dispose();
+    await app.dispose();
   });
   return { app, client, dir };
 }
@@ -55,7 +56,7 @@ describe('BackendApp over IPC', () => {
     ).rejects.toMatchObject({
       code: 'INVALID_INPUT',
     });
-    cleanups.pop()!();
+    await cleanups.pop()!();
 
     const second = start(dir);
     await expect(second.client.invoke('settings.get', {})).resolves.toMatchObject({

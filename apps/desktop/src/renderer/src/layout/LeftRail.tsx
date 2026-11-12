@@ -1,6 +1,8 @@
 import { useState, type ReactNode } from 'react';
-import { Clapperboard, FileVideo, LayoutTemplate, Search, Sparkles, Upload } from 'lucide-react';
-import { Button, EmptyState, IconButton } from '@rec-it/ui';
+import { FileVideo, LayoutTemplate, Search, Sparkles, Upload } from 'lucide-react';
+import { EmptyState, IconButton } from '@rec-it/ui';
+import { importWithDialog } from '../actions';
+import { MediaBin } from '../media/MediaBin';
 
 type RailTab = 'media' | 'research' | 'highlights' | 'templates';
 
@@ -37,6 +39,15 @@ export function LeftRail() {
       <div className="left-rail__content" role="tabpanel" aria-label={current.label}>
         <header className="panel__header">
           <h2 className="panel__title">{current.label}</h2>
+          {tab === 'media' && (
+            <IconButton
+              label="Import media (Ctrl+I)"
+              size="sm"
+              onClick={() => void importWithDialog()}
+            >
+              <Upload size={15} />
+            </IconButton>
+          )}
         </header>
         <div className="panel__body">{content(tab)}</div>
       </div>
@@ -47,20 +58,7 @@ export function LeftRail() {
 function content(tab: RailTab) {
   switch (tab) {
     case 'media':
-      return (
-        <EmptyState
-          icon={<Clapperboard size={20} />}
-          title="No media yet"
-          action={
-            <Button icon={<Upload size={14} />} disabled title="Importing arrives in Phase 1">
-              Import footage
-            </Button>
-          }
-        >
-          Drag video, audio or images here. Rec-It makes fast preview copies and keeps your
-          originals for export.
-        </EmptyState>
-      );
+      return <MediaBin />;
     case 'research':
       return (
         <EmptyState icon={<Search size={20} />} title="YouTube research">

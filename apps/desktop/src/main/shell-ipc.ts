@@ -1,5 +1,8 @@
-import { app, ipcMain } from 'electron';
+import { app, BrowserWindow, dialog, ipcMain, shell, type OpenDialogOptions } from 'electron';
+import { existsSync } from 'node:fs';
+import { isAbsolute } from 'node:path';
 import {
+  IMPORT_EXTENSIONS,
   IpcError,
   shellContract,
   zodIssues,
@@ -18,31 +21,73 @@ export function registerShellIpc(
   secrets: SecretStore,
   onSecretsChanged: () => Promise<void>,
 ): void {
-  const handlers: Handlers<ShellContract> = {
-    'shell.getInfo': () => ({
-      appVersion: app.getVersion(),
-      platform: process.platform,
-      isPackaged: app.isPackaged,
-      versions: {
-        electron: process.versions.electron,
-        chrome: process.versions.chrome,
-        node: process.versions.node,
+  const handlersFor = (win: BrowserWindow | null): Handlers<ShellContract> => {
+    const open = (options: OpenDialogOptions) =>
+      win ? dialog.showOpenDialog(win, options) : dialog.showOpenDialog(options);
+    return {
+      'shell.getInfo': () => ({
+        appVersion: app.getVersion(),
+        platform: process.platform,
+        isPackaged: app.isPackaged,
+        versions: {
+          electron: process.versions.electron,
+          chrome: process.versions.chrome,
+          node: process.versions.node,
+        },
+      }),
+      'secrets.set': async ({ name, value }) => {
+        await secrets.set(name, value);
+        await onSecretsChanged();
+        return { ok: true as const };
       },
-    }),
-    'secrets.set': async ({ name, value }) => {
-      await secrets.set(name, value);
-      await onSecretsChanged();
-      return { ok: true as const };
-    },
-    'secrets.clear': async ({ name }) => {
-      secrets.clear(name);
-      await onSecretsChanged();
-      return { ok: true as const };
-    },
-    'secrets.status': async () => ({
-      encryptionAvailable: await secrets.encryptionAvailable(),
-      secrets: secrets.status(),
-    }),
+      'secrets.clear': async ({ name }) => {
+        secrets.clear(name);
+        await onSecretsChanged();
+        return { ok: true as const };
+      },
+      'secrets.status': async () => ({
+        encryptionAvailable: await secrets.encryptionAvailable(),
+        secrets: secrets.status(),
+      }),
+      'dialog.importMedia': async () => {
+        const result = await open({
+          title: 'Import media',
+          properties: ['openFile', 'multiSelections'],
+          filters: [
+            { name: 'Video, audio and images', extensions: [...IMPORT_EXTENSIONS] },
+            { name: 'All files', extensions: ['*'] },
+          ],
+        });
+        return { paths: result.canceled ? [] : result.filePaths };
+      },
+      'dialog.openProject': async () => {
+        const result = await open({
+          title: 'Open project',
+          properties: ['openFile'],
+          filters: [{ name: 'Rec-It project', extensions: ['recit'] }],
+        });
+        return { path: result.canceled ? null : (result.filePaths[0] ?? null) };
+      },
+      'dialog.saveProjectAs': async ({ defaultPath }) => {
+        const options = {
+          title: 'Save project as',
+          defaultPath,
+          filters: [{ name: 'Rec-It project', extensions: ['recit'] }],
+        };
+        const result = win
+          ? await dialog.showSaveDialog(win, options)
+          : await dialog.showSaveDialog(options);
+        return { path: result.canceled ? null : (result.filePath ?? null) };
+      },
+      'dialog.locateFile': async ({ name }) => {
+        const result = await open({ title: `Locate "${name}"`, properties: ['openFile'] });
+        return { path: result.canceled ? null : (result.filePaths[0] ?? null) };
+      },
+      'shell.showItemInFolder': ({ path }) => {
+        if (isAbsolute(path) && existsSync(path)) shell.showItemInFolder(path);
+        return { ok: true as const };
+      },
+    };
   };
 
   ipcMain.handle(IPC.shell, async (event, message: unknown): Promise<BridgeResult> => {
@@ -71,9 +116,10 @@ export function registerShellIpc(
       );
     }
     try {
-      const handler = handlers[key] as (input: unknown) => unknown;
-      const output = def.output.parse(await handler(input.data));
-      return { ok: true, result: output };
+      const handler = handlersFor(BrowserWindow.fromWebContents(event.sender))[key] as (
+        input: unknown,
+      ) => unknown;
+      return { ok: true, result: def.output.parse(await handler(input.data)) };
     } catch (error) {
       return fail(
         new IpcError({

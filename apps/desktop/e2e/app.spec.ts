@@ -1,11 +1,13 @@
 import { expect, test } from '@playwright/test';
-import { launch, tempUserData } from './helpers';
+import { createProject, launch, tempUserData } from './helpers';
 
 test.describe('Phase 0 shell', () => {
   test('opens the dark editor layout and connects to the backend', async () => {
     const { app, page } = await launch(tempUserData());
     try {
       await expect(page).toHaveTitle('Rec-It');
+      await expect(page.locator('[data-region="welcome"]')).toBeVisible();
+      await createProject(page);
       for (const region of [
         'topbar',
         'left-rail',
@@ -18,6 +20,14 @@ test.describe('Phase 0 shell', () => {
       }
       await expect(page.getByTestId('status-backend')).toContainText(/Backend · \d/);
       await expect(page.getByTestId('status-ffmpeg')).not.toContainText('Checking');
+
+      // The window must fit the screen's usable area (the cut-off window reported in Phase 0).
+      const fits = await app.evaluate(({ BrowserWindow, screen }) => {
+        const b = BrowserWindow.getAllWindows()[0]!.getBounds();
+        const w = screen.getDisplayMatching(b).workArea;
+        return b.width <= w.width && b.height <= w.height;
+      });
+      expect(fits).toBe(true);
 
       const ping = await page.evaluate(async () =>
         window.recit.backend.invoke('app.ping', { sentAt: Date.now() }),

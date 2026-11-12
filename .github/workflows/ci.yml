@@ -24,9 +24,9 @@ jobs:
           node-version-file: .nvmrc
           cache: pnpm
       - uses: astral-sh/setup-uv@v6
-      - name: Install FFmpeg (for integration tests)
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg
       - run: pnpm install --frozen-lockfile
+      - name: Download FFmpeg (GPL build, used by media integration tests)
+        run: pnpm fetch-ffmpeg
       - run: pnpm format:check
       - run: pnpm lint
       - run: pnpm typecheck
@@ -57,11 +57,14 @@ jobs:
           cache: pnpm
       - uses: astral-sh/setup-uv@v6
       - run: pnpm install --frozen-lockfile
-      - name: Unit tests on this platform
-        run: pnpm test
       - name: Download FFmpeg (GPL build)
         if: runner.os != 'macOS'
         run: pnpm fetch-ffmpeg
+      - name: Install FFmpeg (macOS)
+        if: runner.os == 'macOS'
+        run: brew install ffmpeg
+      - name: Unit and integration tests on this platform
+        run: pnpm test
       - name: Build
         run: pnpm build
       - name: End-to-end tests (Linux, virtual display)

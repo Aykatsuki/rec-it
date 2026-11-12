@@ -27,7 +27,9 @@ function cspPlugin(): Plugin {
       const policy = [
         ...common,
         dev ? "script-src 'self' 'unsafe-inline'" : "script-src 'self'",
-        dev ? "connect-src 'self' ws://localhost:* http://localhost:*" : "connect-src 'self'",
+        dev
+          ? "connect-src 'self' recit-media: ws://localhost:* http://localhost:*"
+          : "connect-src 'self' recit-media:",
       ].join('; ');
       return html.replace('%CSP%', policy);
     },

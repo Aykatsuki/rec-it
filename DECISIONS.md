@@ -25,6 +25,9 @@ Each record states the decision, why it was made and what else was considered. R
 | 019 | Editor first: Phases 0–5 have no AI dependency | Accepted |
 | 020 | SQLite through Node's built-in `node:sqlite` | Accepted |
 | 021 | Toolchain baseline and the Linux CI sandbox switch | Accepted |
+| 022 | Assets are committed to the project file immediately | Accepted |
+| 023 | Proxy encoding, derived files and the media protocol | Accepted |
+| 024 | Backend heartbeat so FFmpeg never outlives a crashed app | Accepted |
 
 ---
 
@@ -260,4 +263,47 @@ Each record states the decision, why it was made and what else was considered. R
 - TypeScript 7.0 is out but typescript-eslint supports only up to 6.0, so the project stays on 6.0 until it does.
 - Workspace packages export TypeScript sources directly and electron-vite bundles them; there is no per-package build step.
 - Chromium's OS-level sandbox cannot run in Linux CI containers (root user or restricted user namespaces). End-to-end tests on Linux CI pass `--no-sandbox` together with `RECIT_E2E=1` and `RECIT_NO_OS_SANDBOX=1`; the app only honours this when both test variables are set. The renderer keeps Electron's `sandbox: true` and context isolation. Windows and macOS always run with the full sandbox, in CI and in use.
+
+---
+
+## ADR-022 · Assets are committed to the project file immediately
+
+**Status.** Accepted (12 Nov 2026, Phase 1). Refines ADR-004 and ARCHITECTURE §7.
+
+**Decision.** In the `.recit` file, imported media are rows in an `assets` table, and each change (import, job state, relink, rights) is a separate committed SQLite write. There is no Save button: projects save as they change. "Save a copy as…" uses `VACUUM INTO` and switches to the copy, which keeps the same project id and therefore shares the media cache. The timeline document and its command journal (ARCHITECTURE §7) arrive in Phase 2 on top of this file.
+
+**Why.** Asset changes are infrequent and small, so committing each one is cheap, and it meets the "lose at most one second" crash requirement with no recovery code: after a crash, SQLite's WAL leaves the file consistent, and jobs that were running are simply restarted. The end-to-end suite kills the app mid-import to prove this.
+
+**Consequences.** Progress ticks are kept in memory and only state changes are written, so the database is not written several times a second.
+
+---
+
+## ADR-023 · Proxy encoding, derived files and the media protocol
+
+**Status.** Accepted (12 Nov 2026, Phase 1). Details ADR-006.
+
+**Decisions.**
+- **Encoder:** NVENC when FFmpeg's one-frame test encode succeeds (the reference RTX 3070), otherwise libx264 `veryfast`, then other hardware encoders. Proxies are H.264, at most 1280 px on the long edge, constant frame rate snapped to the nearest standard rate, a keyframe every 12 frames, no B-frames, AAC 48 kHz, `+faststart`.
+- **Phone footage:** rotation metadata is applied while making the proxy, so proxies are always upright. HDR (PQ/HLG) is tone-mapped to SDR in the proxy only; export will use the originals.
+- **Derived files:** `proxy.mp4`, `poster.jpg`, `sprite.jpg` (up to 100 thumbnails in a 10-wide grid) and `waveform.bin` (100 peaks per second, one byte each) live in `<cache>/<projectId>/<assetId>/`. Each is written to a `.part` file and renamed when complete, so a cancelled or failed job leaves nothing behind.
+- **Duplicates and relinking:** files are identified by SHA-256 of their size plus first and last 4 MB. Importing the same content twice is refused, and a missing file can only be relinked to a file with the same fingerprint.
+- **Serving:** the renderer reads derived files only through `recit-media://asset/<projectId>/<assetId>/<file>`. IDs are validated, file names come from a four-item allow-list, and range requests are supported so video can seek. Original media files are never served to the renderer.
+- **Cancelling** kills FFmpeg immediately (SIGKILL / TerminateProcess), because a polite stop makes FFmpeg flush its encoder for several seconds.
+- **Shutdown:** main asks the backend to stop jobs and close the project before quitting, because a forced kill on Windows would leave FFmpeg child processes running.
+
+---
+
+## ADR-024 · Backend heartbeat so FFmpeg never outlives a crashed app
+
+**Status.** Accepted (12 Nov 2026, Phase 1).
+
+**Context.** On Windows, killing a process does not kill its children. When Rec-It's main process was force-killed during import, the backend and its FFmpeg jobs kept running. That left media files locked and could stop Rec-It from starting again. Linux hides this because Chromium's helper processes die with their parent there. The crash-recovery end-to-end test found it on Windows CI.
+
+**Decision.**
+- Main sends the backend a heartbeat every second. If none arrives for 5 seconds, the backend kills every FFmpeg process it started and exits. `packages/ffmpeg` keeps a registry of running FFmpeg processes for this, and the backend also kills them on any exit.
+- Normal quitting asks the backend to shut down cleanly first (ADR-023).
+- Checking the parent's process id was tried first and did not work reliably on Windows, so the heartbeat is used on every platform.
+- When Windows ends the backend abruptly together with main, no code in the backend gets to run. As a second safety net, the backend records the process ids of the FFmpeg jobs it is running in `ffmpeg-pids.json` in the user-data folder. On the next start it ends any of those that are still running, after checking that each process really is FFmpeg (so a reused process id is never touched).
+
+**Known limitation.** If only Rec-It's main process is killed (for example "End process" on that single entry in Task Manager), Chromium's own helper processes (GPU, network, renderer) can stay alive and prevent a new instance from starting until they are ended. Ending the whole app ("End task") does not have this problem. The Windows CI test kills the main process alone, ends the remaining helpers, relaunches, and checks that the FFmpeg processes left by the killed instance are ended by the new one.
 

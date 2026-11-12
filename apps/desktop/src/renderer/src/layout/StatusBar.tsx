@@ -1,4 +1,9 @@
+import { useEffect, useRef, useState } from 'react';
+import { X } from 'lucide-react';
 import { StatusDot, type DotState } from '@rec-it/ui';
+import { backend } from '../api';
+import { JOB_LABELS } from '../format';
+import { useApp } from '../store';
 import { useBackendConnection, useBackendLatency, useSystemStatus } from '../hooks';
 import type { SettingsTab } from '../settings/SettingsDialog';
 
@@ -54,7 +59,7 @@ export function StatusBar({ onOpenSettings }: { onOpenSettings: (tab: SettingsTa
           : sidecarLabel(sidecar?.state)}
       </button>
       <span className="statusbar__spacer" />
-      <span className="statusbar__item statusbar__item--muted">Phase 0 · foundations</span>
+      <JobsIndicator />
     </footer>
   );
 }
@@ -75,4 +80,66 @@ function sidecarLabel(state?: string) {
     : state === 'error'
       ? 'Media AI error'
       : 'Starting media AI…';
+}
+
+function JobsIndicator() {
+  const jobs = useApp((s) => s.jobs);
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const close = (e: MouseEvent) => !ref.current?.contains(e.target as Node) && setOpen(false);
+    window.addEventListener('mousedown', close);
+    return () => window.removeEventListener('mousedown', close);
+  }, [open]);
+  const running = jobs.filter((j) => j.state === 'running');
+  if (!jobs.length)
+    return <span className="statusbar__item statusbar__item--muted">No background jobs</span>;
+  return (
+    <div className="jobs" ref={ref}>
+      <button
+        type="button"
+        className="statusbar__item"
+        onClick={() => setOpen((o) => !o)}
+        aria-expanded={open}
+        data-testid="status-jobs"
+      >
+        <StatusDot state="checking" />
+        {running.length} running · {jobs.length - running.length} queued
+      </button>
+      {open && (
+        <div className="jobs__popover" role="dialog" aria-label="Background jobs">
+          <header>Background jobs</header>
+          <ul>
+            {jobs.map((j) => (
+              <li key={`${j.assetId}:${j.kind}`}>
+                <div className="jobs__text">
+                  <span className="jobs__name" title={j.assetName}>
+                    {j.assetName}
+                  </span>
+                  <span className="jobs__kind">
+                    {JOB_LABELS[j.kind]} ·{' '}
+                    {j.state === 'running' ? `${Math.round(j.progress * 100)}%` : 'queued'}
+                  </span>
+                  <div className="progress">
+                    <div
+                      className="progress__bar"
+                      style={{ width: `${Math.round(j.progress * 100)}%` }}
+                    />
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  aria-label={`Cancel ${j.assetName}`}
+                  onClick={() => void backend.invoke('media.cancel', { assetIds: [j.assetId] })}
+                >
+                  <X size={14} />
+                </button>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+    </div>
+  );
 }

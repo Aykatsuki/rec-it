@@ -1,6 +1,7 @@
 import { Download, Redo2, Settings, Sparkles, Undo2 } from 'lucide-react';
 import { Button, IconButton } from '@rec-it/ui';
 import { useSettings } from '../hooks';
+import { ProjectMenu } from '../project/ProjectMenu';
 
 export function TopBar({ onOpenSettings }: { onOpenSettings: () => void }) {
   const { settings } = useSettings();
@@ -10,15 +11,13 @@ export function TopBar({ onOpenSettings }: { onOpenSettings: () => void }) {
         <span className="brand-mark" aria-hidden />
         <span className="brand-name">Rec-It</span>
         <span className="topbar__divider" aria-hidden />
-        <span className="topbar__project" title="Projects arrive in Phase 1">
-          Untitled project
-        </span>
+        <ProjectMenu />
       </div>
       <div className="topbar__actions">
-        <IconButton label="Undo (Ctrl+Z)" disabled>
+        <IconButton label="Undo (arrives with the timeline in Phase 2)" disabled>
           <Undo2 size={16} />
         </IconButton>
-        <IconButton label="Redo (Ctrl+Shift+Z)" disabled>
+        <IconButton label="Redo (arrives with the timeline in Phase 2)" disabled>
           <Redo2 size={16} />
         </IconButton>
         <span className="topbar__divider" aria-hidden />

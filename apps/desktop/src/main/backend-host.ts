@@ -21,6 +21,8 @@ export class BackendHost {
   private readonly restarts: number[] = [];
   private stopping = false;
   private readonly clients = new Set<WebContents>();
+  /** Media cache folder reported by the backend; used by the recit-media:// handler. */
+  cacheRoot: string | null = null;
 
   constructor(
     private readonly config: BackendConfig,
@@ -38,10 +40,16 @@ export class BackendHost {
     child.on('message', (message: BackendToMain) => {
       if (message.type === 'fatal')
         console.error(`[main] backend reported a fatal error: ${message.message}`);
+      if (message.type === 'cacheRoot') this.cacheRoot = message.path;
     });
     child.on('exit', (code) => this.onExit(child, code));
 
     this.send({ type: 'init', config: this.config });
+    const heartbeat = setInterval(
+      () => this.child === child && child.postMessage({ type: 'heartbeat' }),
+      1000,
+    );
+    child.once('exit', () => clearInterval(heartbeat));
     void this.pushSecrets();
     for (const contents of this.clients) this.connect(contents);
   }
@@ -65,10 +73,20 @@ export class BackendHost {
     this.send({ type: 'secrets', values: await this.secrets.readAll() });
   }
 
-  stop(): void {
+  /** Asks the backend to stop its jobs and close databases, waiting up to 3 s. */
+  async stop(): Promise<void> {
     this.stopping = true;
-    this.child?.kill();
+    const child = this.child;
     this.child = null;
+    if (!child) return;
+    const exited = new Promise<boolean>((resolve) => child.once('exit', () => resolve(true)));
+    // Ask first: on Windows a forced kill would leave the backend's FFmpeg processes running.
+    child.postMessage({ type: 'shutdown' } satisfies MainToBackend);
+    const clean = await Promise.race([
+      exited,
+      new Promise<boolean>((r) => setTimeout(() => r(false), 3000)),
+    ]);
+    if (!clean) child.kill();
   }
 
   private send(message: MainToBackend): void {

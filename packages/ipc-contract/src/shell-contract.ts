@@ -23,6 +23,28 @@ export const shellContract = defineContract({
       input: z.object({ name: secretNameSchema }).strict(),
       output: z.object({ ok: z.literal(true) }),
     },
+    // Native dialogs. They only return paths; the backend does the work.
+    'dialog.importMedia': {
+      input: z.object({}).strict(),
+      output: z.object({ paths: z.array(z.string()) }),
+    },
+    'dialog.openProject': {
+      input: z.object({}).strict(),
+      output: z.object({ path: z.string().nullable() }),
+    },
+    'dialog.saveProjectAs': {
+      input: z.object({ defaultPath: z.string().max(4096) }).strict(),
+      output: z.object({ path: z.string().nullable() }),
+    },
+    'dialog.locateFile': {
+      input: z.object({ name: z.string().max(260) }).strict(),
+      output: z.object({ path: z.string().nullable() }),
+    },
+    /** Opens the folder containing a file in Explorer / Finder. */
+    'shell.showItemInFolder': {
+      input: z.object({ path: z.string().min(1).max(4096) }).strict(),
+      output: z.object({ ok: z.literal(true) }),
+    },
     'secrets.status': {
       input: z.object({}).strict(),
       output: z.object({

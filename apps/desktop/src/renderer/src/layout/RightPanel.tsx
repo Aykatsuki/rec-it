@@ -1,6 +1,8 @@
 import { useState } from 'react';
 import { Captions, MousePointerClick, Sparkles } from 'lucide-react';
 import { EmptyState, Tabs } from '@rec-it/ui';
+import { AssetDetails } from '../media/AssetDetails';
+import { useSelectedAsset } from '../store';
 
 type RightTab = 'inspector' | 'claude' | 'captions';
 
@@ -12,15 +14,18 @@ const TABS = [
 
 export function RightPanel() {
   const [tab, setTab] = useState<RightTab>('inspector');
+  const asset = useSelectedAsset();
   return (
     <section className="panel" data-region="right-panel" aria-label="Details">
       <header className="panel__header">
         <Tabs items={TABS} value={tab} onChange={setTab} label="Details" />
       </header>
       <div className="panel__body" role="tabpanel">
-        {tab === 'inspector' && (
+        {tab === 'inspector' && asset && <AssetDetails asset={asset} />}
+        {tab === 'inspector' && !asset && (
           <EmptyState icon={<MousePointerClick size={20} />} title="Nothing selected">
-            Select a clip on the timeline to adjust its position, scale, volume and framing.
+            Select a media item to see its details. Clip settings arrive with the timeline in Phase
+            2.
           </EmptyState>
         )}
         {tab === 'claude' && (
