@@ -73,8 +73,11 @@ test.describe('keyframes and linked clips', () => {
 
       // Drag the second keyframe (2.5 s) half a second earlier: at 1.5 s the value is then
       // 100% + 50% × (1 / 1.5) = 133%.
-      const kf = (await page.getByTestId('timeline-keyframe').nth(1).boundingBox())!;
-      await page.mouse.move(kf.x + kf.width / 2, kf.y + kf.height / 2);
+      const marker = page.getByTestId('timeline-keyframe').nth(1);
+      await expect(marker).toHaveAttribute('title', /2\.50 s/);
+      // hover() waits until nothing covers the marker (and names what does, if something does).
+      await marker.hover();
+      const kf = (await marker.boundingBox())!;
       await page.mouse.down();
       await page.mouse.move(kf.x + kf.width / 2 - 20, kf.y + kf.height / 2, { steps: 4 });
       await page.mouse.move(kf.x + kf.width / 2 - 0.5 * ZOOM, kf.y + kf.height / 2, { steps: 4 });

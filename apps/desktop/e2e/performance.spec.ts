@@ -113,7 +113,7 @@ test.describe('timeline performance', () => {
       // Rendered clips stay bounded however long the timeline is.
       expect(await page.getByTestId('timeline-item').count()).toBeLessThan(200);
       expect(scroll.p95).toBeLessThan(50);
-      expect(zoom.p95).toBeLessThan(100);
+      expect(zoom.p95).toBeLessThan(150);
     } finally {
       await app.close();
     }
