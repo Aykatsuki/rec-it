@@ -47,6 +47,18 @@ export const projectMigrations: readonly Migration[] = [
       updated_at TEXT NOT NULL
     ) STRICT;`,
   },
+  {
+    version: 3,
+    name: 'transcripts',
+    // One word-timed transcript per media file (ARCHITECTURE §6.5). Deleting the media deletes it.
+    up: `CREATE TABLE transcripts (
+      asset_id TEXT PRIMARY KEY REFERENCES assets (id) ON DELETE CASCADE,
+      language TEXT NOT NULL,
+      model TEXT NOT NULL,
+      json TEXT NOT NULL,
+      created_at TEXT NOT NULL
+    ) STRICT;`,
+  },
 ];
 
 export interface ProjectMeta {
@@ -304,6 +316,35 @@ export class ProjectDatabase {
          ON CONFLICT(id) DO UPDATE SET json = excluded.json, updated_at = excluded.updated_at`,
       )
       .run(JSON.stringify(doc), new Date().toISOString());
+  }
+
+  /** The stored transcript of a media file (its JSON), or null. */
+  loadTranscript(assetId: string): { language: string; model: string; json: string } | null {
+    const row = this.db
+      .prepare('SELECT language, model, json FROM transcripts WHERE asset_id = ?')
+      .get(assetId) as { language: string; model: string; json: string } | undefined;
+    return row ?? null;
+  }
+
+  /** Ids of media files that have a transcript. */
+  transcribedAssets(): string[] {
+    return (
+      this.db.prepare('SELECT asset_id FROM transcripts').all() as { asset_id: string }[]
+    ).map((r) => r.asset_id);
+  }
+
+  saveTranscript(assetId: string, language: string, model: string, json: string): void {
+    this.db
+      .prepare(
+        `INSERT INTO transcripts (asset_id, language, model, json, created_at) VALUES (?, ?, ?, ?, ?)
+         ON CONFLICT(asset_id) DO UPDATE SET language = excluded.language, model = excluded.model,
+           json = excluded.json, created_at = excluded.created_at`,
+      )
+      .run(assetId, language, model, json, new Date().toISOString());
+  }
+
+  deleteTranscript(assetId: string): void {
+    this.db.prepare('DELETE FROM transcripts WHERE asset_id = ?').run(assetId);
   }
 
   close(): void {

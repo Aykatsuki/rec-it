@@ -174,6 +174,14 @@ const singleCommandSchema = z.discriminatedUnion('type', [
     ripple: z.boolean().optional(),
   }),
   z.object({
+    type: z.literal('item.cutRange'),
+    ...seqId,
+    itemId: id,
+    from: z.number().int().nonnegative(),
+    to: z.number().int().nonnegative(),
+    ripple: z.boolean().optional(),
+  }),
+  z.object({
     type: z.literal('item.update'),
     ...seqId,
     itemId: id,

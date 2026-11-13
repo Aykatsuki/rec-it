@@ -5,7 +5,7 @@ ARCHITECTURE.md, ROADMAP.md and DECISIONS.md before making design changes.
 
 ## Current phase
 
-Phases 0 (foundations) and 1 (media pipeline) are complete. Phase 3 (export, ADR-027) is built; manual checks on the reference PC remain. Phase 2 has five slices done (timeline, mouse transforms, context menus, linked clips, keyframes, GPU preview, Web Audio; ADR-025, 026, 028, 029, 030); what remains is measuring the exit criteria on the reference PC. Next: Phase 4 (transcription and captions). Priority: a fully working editor
+Phases 0 (foundations) and 1 (media pipeline) are complete. Phase 3 (export, ADR-027) is built; manual checks on the reference PC remain. Phase 2 has five slices done (timeline, mouse transforms, context menus, linked clips, keyframes, GPU preview, Web Audio; ADR-025, 026, 028, 029, 030); what remains is measuring the exit criteria on the reference PC. Phase 4 slice A (transcription, transcript panel, text-based editing; ADR-031) is done; next is captions. Priority: a fully working editor
 (Phases 0–6, Phase 6 = effects) before any Claude features (ADR-019). Reference machine: Windows 11 + RTX 3070 8 GB.
 
 ## Commands
@@ -34,7 +34,10 @@ Phases 0 (foundations) and 1 (media pipeline) are complete. Phase 3 (export, ADR
   keyframe interpolation (`valueAt`, `transformAt`, `volumeAt`; keyframe times are *source* time).
 - `packages/render-plan` — Sequence → FFmpeg plans: export, loudness analysis (two-pass), single frame;
   encoder choice. Argument snapshots in `src/__snapshots__`.
-- Backend `services/document-service.ts` (timeline document + undo, saved per edit) and `services/export-service.ts`.
+- Backend `services/document-service.ts` (timeline document + undo, saved per edit), `services/export-service.ts` and
+  `services/transcript-service.ts` (FFmpeg audio extraction → sidecar `transcribe` job → `transcripts` table).
+- Sidecar `recit_media_ai/transcribe.py` (faster-whisper, optional `transcribe` extra; `RECIT_FAKE_WHISPER=1` for tests).
+  Core `timeline/transcript.ts` maps words onto a sequence and builds `item.cutRange` cuts.
 - Renderer `timeline/` — Timeline, SequenceSettings, ClipInspector, ProgramMonitor, TransformOverlay, ExportDialog,
   `menus.tsx` (right-click menus); edits go through `edit.ts`. `ui/ContextMenu.tsx` is the generic menu.
 - `packages/db` — `node:sqlite` (ADR-020), migrations, repositories.

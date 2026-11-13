@@ -33,6 +33,7 @@ import {
 import type { BackendConfig } from '../shared/backend-messages';
 import type { Toolchain } from './services/media-service';
 import { ExportService, type ExportToolchain } from './services/export-service';
+import { TranscriptService } from './services/transcript-service';
 import { ProjectService } from './services/project-service';
 import type { Command, Sequence } from '@rec-it/core';
 import { SidecarClient, checkSidecar } from './services/sidecar';
@@ -59,6 +60,8 @@ export class BackendApp {
   private readonly servers = new Set<IpcServer<BackendContract>>();
   readonly projects: ProjectService;
   readonly exports: ExportService;
+  readonly transcripts: TranscriptService;
+  private lastProjectId: string | undefined;
   private secrets: Partial<Record<SecretName, string>> = {};
   private ffmpeg: FfmpegStatus = {
     state: 'checking',
@@ -93,12 +96,28 @@ export class BackendApp {
       defaultDirectory: config.projectsDir,
       cacheRoot: () => this.cacheRoot(),
       toolchain: () => this.toolchain(),
-      onProjectChanged: (p) => this.emit('project.changed', p),
+      onProjectChanged: (p) => {
+        this.emit('project.changed', p);
+        // Transcription jobs belong to the open project; a different project starts afresh.
+        if (p?.id !== this.lastProjectId) {
+          this.lastProjectId = p?.id;
+          this.transcripts?.reset();
+        }
+      },
       onAssetsChanged: (a) => this.emit('media.changed', a),
       onJobsChanged: (j) => this.emit('jobs.changed', j),
       onDocumentChanged: (d) => this.emit('doc.changed', d),
     });
     this.exports = new ExportService((state) => this.emit('export.changed', state));
+    this.transcripts = new TranscriptService({
+      projects: this.projects,
+      sidecar: this.sidecar,
+      sidecarCommand: config.sidecar,
+      ffmpeg: async () => (await this.toolchain()).bins.ffmpeg,
+      device: () => this.settings.getAll().transcriptionDevice,
+      modelsDir: join(config.userDataDir, 'models'),
+      onChange: (status) => this.emit('transcript.changed', status),
+    });
     hooks.onCacheRoot?.(this.cacheRoot());
   }
 
@@ -176,6 +195,20 @@ export class BackendApp {
     'doc.undo': () => this.projects.document().undo(),
     'doc.redo': () => this.projects.document().redo(),
 
+    'transcript.status': () => this.transcripts.status(),
+    'transcript.install': () => {
+      this.transcripts.installEngine();
+      return { ok: true as const };
+    },
+    'transcript.start': ({ assetId, language }) => {
+      this.transcripts.start(assetId, language);
+      return { ok: true as const };
+    },
+    'transcript.cancel': ({ assetId }) => {
+      this.transcripts.cancel(assetId);
+      return { ok: true as const };
+    },
+    'transcript.get': ({ assetId }) => this.transcripts.get(assetId),
     'export.target': ({ fileName, directory }) => {
       const dir = directory ?? this.exportDirectory();
       const name = cleanFileName(fileName, '.mp4');
@@ -304,9 +337,10 @@ export class BackendApp {
         this.resolveFfmpegDetected();
         this.emit('system.statusChanged', this.status());
       });
-      const sidecarCheck = checkSidecar(this.sidecar).then((result) => {
+      const sidecarCheck = checkSidecar(this.sidecar).then(async (result) => {
         this.sidecarStatus = result;
         this.emit('system.statusChanged', this.status());
+        await this.transcripts.refresh();
       });
       await Promise.all([ffmpegCheck, sidecarCheck]);
       return this.status();
@@ -318,6 +352,7 @@ export class BackendApp {
 
   async dispose(): Promise<void> {
     this.exports.cancel();
+    this.transcripts.reset();
     await this.projects.close().catch(() => {});
     for (const server of this.servers) server.dispose();
     this.servers.clear();

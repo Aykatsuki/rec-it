@@ -41,6 +41,12 @@ export class ProjectService {
     return this.current.media;
   }
 
+  /** The open project's database (transcripts); throws if no project is open. */
+  database(): ProjectDatabase {
+    if (!this.current) throw new Error('No project is open.');
+    return this.current.db;
+  }
+
   /** The open project's timeline; throws if no project is open. */
   document(): DocumentService {
     if (!this.current) throw new Error('No project is open.');

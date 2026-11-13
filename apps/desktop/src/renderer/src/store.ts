@@ -6,6 +6,8 @@ import type {
   JobSummary,
   MediaAsset,
   ProjectInfo,
+  Transcript,
+  TranscriptionStatus,
 } from '@rec-it/ipc-contract';
 import { backend } from './api';
 
@@ -42,6 +44,10 @@ interface AppState {
   draftTransform: { itemId: string; transform: Transform } | null;
   /** Clips copied with Ctrl+C, ready to paste. */
   clipboard: ClipboardClip[];
+  /** Transcription engine, jobs and which media has a transcript. */
+  transcription: TranscriptionStatus | null;
+  /** Loaded transcripts by asset id. */
+  transcripts: Record<string, Transcript>;
 
   select(id: string | null): void;
   selectItems(ids: string[]): void;
@@ -103,6 +109,8 @@ export const useApp = create<AppState>((set) => ({
   mediaView: (stored('recit.mediaView') as 'grid' | 'list' | null) ?? 'grid',
   draftTransform: null,
   clipboard: [],
+  transcription: null,
+  transcripts: {},
   previewEngine: stored('recit.previewEngine') === 'compatible' ? 'compatible' : 'gpu',
   gpuFailed: null,
   setPreviewEngine: (previewEngine) => {
@@ -155,6 +163,7 @@ export function startBackendSync(): () => void {
     ]);
     const docState = project ? await backend.invoke('doc.get', {}) : null;
     useApp.setState({ project, assets, jobs, docState, exportState });
+    syncTranscripts(await backend.invoke('transcript.status', {}), true);
   };
   const offs = [
     backend.onConnectionChange((connected) => {
@@ -173,6 +182,7 @@ export function startBackendSync(): () => void {
               selectedItemIds: [],
               playhead: 0,
               playing: false,
+              transcripts: {},
               ...(project ? {} : { docState: null }),
             },
       ),
@@ -192,6 +202,33 @@ export function startBackendSync(): () => void {
       }),
     ),
     backend.on('export.changed', (exportState) => useApp.setState({ exportState })),
+    backend.on('transcript.changed', (status) => syncTranscripts(status)),
   ];
   return () => offs.forEach((off) => off());
+}
+
+/** Stores the transcription status and loads transcripts that are new or were just redone. */
+function syncTranscripts(status: TranscriptionStatus, reload = false): void {
+  const before = useApp.getState();
+  const wasDone = new Set(
+    (before.transcription?.jobs ?? []).filter((j) => j.state === 'done').map((j) => j.assetId),
+  );
+  const fresh = new Set(
+    status.jobs.filter((j) => j.state === 'done' && !wasDone.has(j.assetId)).map((j) => j.assetId),
+  );
+  const keep = Object.fromEntries(
+    Object.entries(before.transcripts).filter(
+      ([id]) => status.transcribed.includes(id) && !fresh.has(id) && !reload,
+    ),
+  );
+  useApp.setState({ transcription: status, transcripts: keep });
+  for (const assetId of status.transcribed) {
+    if (keep[assetId]) continue;
+    void backend
+      .invoke('transcript.get', { assetId })
+      .then((t) => {
+        if (t) useApp.setState((s) => ({ transcripts: { ...s.transcripts, [assetId]: t } }));
+      })
+      .catch(() => {});
+  }
 }

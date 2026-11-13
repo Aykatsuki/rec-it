@@ -31,6 +31,7 @@ export class SidecarError extends Error {
 export class SidecarClient {
   private child: ChildProcessWithoutNullStreams | null = null;
   private readonly pending = new Map<number, Pending>();
+  private readonly progress = new Map<number, (fraction: number) => void>();
   private nextId = 1;
   private spawnError: Error | null = null;
 
@@ -87,6 +88,44 @@ export class SidecarClient {
     });
   }
 
+  /**
+   * Starts a long job (the sidecar runs it in a thread). Progress arrives through `onProgress`;
+   * aborting `signal` asks the sidecar to stop it. There is no timeout.
+   */
+  job<T>(
+    method: string,
+    params: Record<string, unknown>,
+    options: { onProgress?: (fraction: number) => void; signal?: AbortSignal } = {},
+  ): Promise<T> {
+    const child = this.child;
+    if (!child)
+      return Promise.reject(this.spawnError ?? new SidecarError('media-ai sidecar is not running'));
+    const id = this.nextId++;
+    if (options.onProgress) this.progress.set(id, options.onProgress);
+    const onAbort = () => {
+      child.stdin.write(
+        JSON.stringify({
+          jsonrpc: '2.0',
+          id: this.nextId++,
+          method: 'job.cancel',
+          params: { id },
+        }) + '\n',
+      );
+    };
+    options.signal?.addEventListener('abort', onAbort, { once: true });
+    return new Promise<T>((resolve, reject) => {
+      this.pending.set(id, {
+        resolve: resolve as (v: unknown) => void,
+        reject,
+        timer: setTimeout(() => {}, 0),
+      });
+      child.stdin.write(JSON.stringify({ jsonrpc: '2.0', id, method, params }) + '\n');
+    }).finally(() => {
+      options.signal?.removeEventListener('abort', onAbort);
+      this.progress.delete(id);
+    });
+  }
+
   stop(): void {
     const child = this.child;
     this.child = null;
@@ -107,7 +146,13 @@ export class SidecarClient {
       this.log(`[sidecar] ignored non-JSON output: ${line.slice(0, 200)}`);
       return;
     }
-    if (typeof message.id !== 'number') return; // notifications are handled from Phase 4
+    const note = message as { method?: string; params?: { id?: number; progress?: number } };
+    if (note.method === 'job.progress' && typeof note.params?.id === 'number') {
+      this.progress.get(note.params.id)?.(Math.min(1, Math.max(0, note.params.progress ?? 0)));
+      return;
+    }
+    if (typeof message.id !== 'number') return;
+    this.progress.delete(message.id);
     const entry = this.pending.get(message.id);
     if (!entry) return;
     this.pending.delete(message.id);

@@ -38,6 +38,21 @@ jobs:
           uv run ruff format --check .
           uv run pytest -q
 
+  whisper:
+    name: Real Whisper transcription (tiny model, CPU)
+    needs: checks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: astral-sh/setup-uv@v6
+      - name: Speech synthesiser and FFmpeg for the test clip
+        run: sudo apt-get update && sudo apt-get install -y espeak-ng ffmpeg
+      - name: faster-whisper end to end
+        working-directory: services/media-ai
+        run: |
+          uv sync --extra transcribe
+          uv run pytest -q -m whisper
+
   desktop:
     name: Build and end-to-end (${{ matrix.os }})
     needs: checks

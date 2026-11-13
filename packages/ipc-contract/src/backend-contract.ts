@@ -17,6 +17,7 @@ import {
   exportStateSchema,
 } from './schemas/timeline';
 import { systemStatusSchema } from './schemas/status';
+import { transcriptSchema, transcriptionStatusSchema } from './schemas/transcript';
 
 const empty = z.object({}).strict();
 const ok = z.object({ ok: z.literal(true) });
@@ -97,6 +98,29 @@ export const backendContract = defineContract({
     'doc.undo': { input: empty, output: documentStateSchema },
     'doc.redo': { input: empty, output: documentStateSchema },
 
+    // Transcription (Phase 4, ADR-031).
+    'transcript.status': { input: empty, output: transcriptionStatusSchema },
+    /** Installs local transcription (faster-whisper) into the sidecar's environment, once. */
+    'transcript.install': { input: empty, output: ok },
+    'transcript.start': {
+      input: z
+        .object({
+          assetId: z.string().min(1).max(100),
+          /** ISO language code such as "en", or null to detect it. */
+          language: z.string().min(2).max(8).nullable(),
+        })
+        .strict(),
+      output: ok,
+    },
+    'transcript.cancel': {
+      input: z.object({ assetId: z.string().min(1).max(100) }).strict(),
+      output: ok,
+    },
+    'transcript.get': {
+      input: z.object({ assetId: z.string().min(1).max(100) }).strict(),
+      output: transcriptSchema.nullable(),
+    },
+
     // Export (ARCHITECTURE §10).
     'export.start': {
       input: z
@@ -145,6 +169,7 @@ export const backendContract = defineContract({
     'jobs.changed': z.array(jobSummarySchema),
     'doc.changed': documentStateSchema,
     'export.changed': exportStateSchema,
+    'transcript.changed': transcriptionStatusSchema,
   },
 });
 
