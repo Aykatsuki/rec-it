@@ -112,6 +112,18 @@ export type Command =
     }
   | { type: 'item.split'; sequenceId: string; time: number; itemIds?: string[] }
   | { type: 'item.remove'; sequenceId: string; itemIds: string[]; ripple?: boolean }
+  /**
+   * Cuts a stretch out of a clip and its linked partners, given in *source* time (as transcript
+   * words are). With ripple, later clips on those tracks move left to close the gap.
+   */
+  | {
+      type: 'item.cutRange';
+      sequenceId: string;
+      itemId: string;
+      from: number;
+      to: number;
+      ripple?: boolean;
+    }
   | {
       type: 'item.update';
       sequenceId: string;
@@ -438,6 +450,47 @@ export function applyCommand(doc: ProjectDocument, command: Command, assets: Ass
           }
         }
       }
+      return;
+    }
+    case 'item.cutRange': {
+      const seq = sequenceOf(doc, command.sequenceId);
+      const { item, track } = findItem(seq, command.itemId);
+      const a = Math.max(item.start, snap(seq, item.start + (command.from - item.sourceIn)));
+      const b = Math.min(itemEnd(item), snap(seq, item.start + (command.to - item.sourceIn)));
+      if (b - a < frameOf(seq)) fail('That part of the clip is shorter than a frame.');
+      const targets = [{ track, item }, ...partnersOf(seq, item)];
+      for (const t of targets) unlocked(t.track);
+      const newLinks = new Map<string, string>();
+      for (const { track: tr, item: it } of targets) {
+        const end = itemEnd(it);
+        const left = a > it.start;
+        const right = b < end;
+        const pieces: TimelineItem[] = [];
+        if (left) pieces.push({ ...it, duration: (Math.min(a, end) - it.start) as Flicks });
+        if (right) {
+          const cut = Math.max(b, it.start);
+          let linkId = it.linkId;
+          if (left && linkId) {
+            if (!newLinks.has(linkId)) newLinks.set(linkId, createId('link'));
+            linkId = newLinks.get(linkId);
+          }
+          pieces.push({
+            ...it,
+            id: left ? createId('item') : it.id,
+            start: cut as Flicks,
+            duration: (end - cut) as Flicks,
+            sourceIn: (it.sourceIn + (cut - it.start)) as Flicks,
+            ...(linkId ? { linkId } : {}),
+          });
+        }
+        tr.items = tr.items.flatMap((x) => (x.id === it.id ? pieces : [x]));
+      }
+      if (command.ripple) {
+        const gap = b - a;
+        for (const tr of new Set(targets.map((t) => t.track)))
+          for (const x of tr.items) if (x.start >= b) x.start = (x.start - gap) as Flicks;
+      }
+      for (const tr of new Set(targets.map((t) => t.track))) sortItems(tr);
       return;
     }
     case 'item.link': {

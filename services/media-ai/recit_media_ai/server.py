@@ -4,7 +4,7 @@ import platform
 import time
 from typing import Any
 
-from . import __version__
+from . import __version__, transcribe
 from .rpc import INVALID_PARAMS, RpcError, Server, log
 from .system import cuda_status, query_gpus
 
@@ -19,7 +19,17 @@ def version(_: dict[str, Any]) -> dict[str, Any]:
 
 def system_info(_: dict[str, Any]) -> dict[str, Any]:
     gpus = query_gpus()
-    return {"gpus": gpus, "cuda": cuda_status(gpus)}
+    return {"gpus": gpus, "cuda": cuda_status(gpus), "transcription": transcribe.available()}
+
+
+def transcribe_job(params: dict[str, Any], progress: Any, cancelled: Any) -> dict[str, Any]:
+    for key in ("audio", "out"):
+        if not isinstance(params.get(key), str):
+            raise RpcError(INVALID_PARAMS, f"{key} must be a file path")
+    status = transcribe.available()
+    if not status["available"]:
+        raise RpcError(-32001, "Transcription is not installed", status)
+    return transcribe.run(params, progress, cancelled)
 
 
 def debug_sleep(params: dict[str, Any]) -> dict[str, Any]:
@@ -41,6 +51,6 @@ HANDLERS = {
 
 def main() -> int:
     log(f"starting v{__version__} on Python {platform.python_version()}")
-    Server(HANDLERS).serve()
+    Server(HANDLERS, jobs={"transcribe": transcribe_job}).serve()
     log("stdin closed, exiting")
     return 0

@@ -1,17 +1,18 @@
 import { useState } from 'react';
-import { Captions, MousePointerClick, Sparkles } from 'lucide-react';
+import { MousePointerClick, Sparkles } from 'lucide-react';
 import { EmptyState, Tabs } from '@rec-it/ui';
 import { AssetDetails } from '../media/AssetDetails';
 import { primaryClip } from '../edit';
 import { useApp, useSelectedAsset, useSequence } from '../store';
 import { ClipInspector } from '../timeline/ClipInspector';
+import { TranscriptPanel } from '../timeline/TranscriptPanel';
 
-type RightTab = 'inspector' | 'claude' | 'captions';
+type RightTab = 'inspector' | 'transcript' | 'claude';
 
 const TABS = [
   { id: 'inspector', label: 'Inspector' },
+  { id: 'transcript', label: 'Transcript' },
   { id: 'claude', label: 'Claude' },
-  { id: 'captions', label: 'Captions' },
 ] as const;
 
 export function RightPanel() {
@@ -49,12 +50,7 @@ export function RightPanel() {
             will appear here and can be undone in one step.
           </EmptyState>
         )}
-        {tab === 'captions' && (
-          <EmptyState icon={<Captions size={20} />} title="Captions">
-            Word-timed transcription runs locally on your GPU. Animated caption styles arrive in
-            Phase 4.
-          </EmptyState>
-        )}
+        {tab === 'transcript' && <TranscriptPanel />}
       </div>
     </section>
   );

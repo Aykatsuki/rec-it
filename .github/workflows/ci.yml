@@ -37,6 +37,29 @@ jobs:
           uv run ruff check .
           uv run ruff format --check .
           uv run pytest -q
+      # The "Install transcription" button runs `uv sync --extra transcribe` on Windows; make sure
+      # every locked package has a Windows wheel (NVIDIA sometimes publishes Linux-only releases).
+      - name: Transcription extra resolves for Windows
+        working-directory: services/media-ai
+        run: |
+          uv export --quiet --extra transcribe --no-hashes --no-emit-project > /tmp/req.txt
+          uv pip install --dry-run --python-platform x86_64-pc-windows-msvc --python-version 3.12 \
+            --target /tmp/wincheck -r /tmp/req.txt
+
+  whisper:
+    name: Real Whisper transcription (tiny model, CPU)
+    needs: checks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: astral-sh/setup-uv@v6
+      - name: Speech synthesiser and FFmpeg for the test clip
+        run: sudo apt-get update && sudo apt-get install -y espeak-ng ffmpeg
+      - name: faster-whisper end to end
+        working-directory: services/media-ai
+        run: |
+          uv sync --extra transcribe
+          uv run pytest -q -o addopts=""
 
   desktop:
     name: Build and end-to-end (${{ matrix.os }})

@@ -225,6 +225,14 @@ describe('timeline commands', () => {
                 itemIds: [pick(items).id],
                 ripple: rnd() > 0.5,
               },
+              {
+                type: 'item.cutRange',
+                sequenceId: 'seq',
+                itemId: pick(items).id,
+                from: Math.round(rnd() * secondsToFlicks(8)),
+                to: Math.round(rnd() * secondsToFlicks(8)),
+                ripple: rnd() > 0.5,
+              },
             ] as Command[])
           : []),
       ];
@@ -458,6 +466,43 @@ describe('linked clips and keyframes', () => {
     expect(right[0]!.linkId).not.toBe(item('v')!.linkId);
     run({ type: 'item.remove', sequenceId: 's', itemIds: ['v'] });
     expect(tracks().flatMap((t) => t.items)).toHaveLength(2);
+    checkInvariants(h.doc);
+  });
+
+  it('cuts a source-time range out of linked clips, with and without ripple', () => {
+    const { h, run, item, tracks } = setup();
+    // Clip v/a sits at 1–5 s on the timeline and shows source 0–4 s. Cut source 1–2 s.
+    run({
+      type: 'item.cutRange',
+      sequenceId: 's',
+      itemId: 'v',
+      from: S(1),
+      to: S(2),
+      ripple: true,
+    });
+    const all = () =>
+      tracks()
+        .flatMap((t) => t.items)
+        .map((i) => [i.start, i.duration, i.sourceIn]);
+    expect(all()).toEqual([
+      [S(1), S(1), 0],
+      [S(2), S(2), S(2)],
+      [S(1), S(1), 0],
+      [S(2), S(2), S(2)],
+    ]);
+    const rights = tracks()
+      .flatMap((t) => t.items)
+      .filter((i) => i.start === S(2));
+    expect(rights[0]!.linkId).toBe(rights[1]!.linkId);
+    expect(rights[0]!.linkId).not.toBe(item('v')!.linkId);
+    checkInvariants(h.doc);
+    h.undo();
+    // Without ripple a gap is left; cutting from the very start keeps the clip's id.
+    run({ type: 'item.cutRange', sequenceId: 's', itemId: 'v', from: 0, to: S(1) });
+    expect([item('v')!.start, item('v')!.sourceIn, item('a')!.start]).toEqual([S(2), S(1), S(2)]);
+    expect(() =>
+      run({ type: 'item.cutRange', sequenceId: 's', itemId: 'v', from: S(9), to: S(9.5) }),
+    ).toThrow(/shorter than a frame/);
     checkInvariants(h.doc);
   });
 

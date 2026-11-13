@@ -11,3 +11,4 @@ export * from './schemas/secrets';
 export * from './schemas/status';
 export * from './schemas/media';
 export * from './schemas/timeline';
+export * from './schemas/transcript';
