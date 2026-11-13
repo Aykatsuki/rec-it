@@ -13,6 +13,12 @@ export function bundledFfmpegDir(): string {
     : join(repoRoot(), 'resources', 'ffmpeg', platformDir);
 }
 
+export function bundledFontsDir(): string {
+  return app.isPackaged
+    ? join(process.resourcesPath, 'fonts')
+    : join(repoRoot(), 'resources', 'fonts');
+}
+
 export interface SidecarCommand {
   command: string;
   args: string[];

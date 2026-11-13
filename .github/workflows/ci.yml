@@ -97,13 +97,13 @@ jobs:
         if: runner.os != 'Linux'
         run: pnpm --filter @rec-it/desktop exec playwright test
       # React development mode (as in `pnpm dev`) mounts effects twice; the GPU preview must
-      # survive that (ADR-029). Windows is the target platform, so run it there.
+      # survive that (ADR-029; the caption layer too, ADR-032). Windows is the target platform.
       - name: GPU preview in React development mode
         if: runner.os == 'Windows'
         shell: bash
         run: |
           RECIT_REACT_DEV=1 pnpm --filter @rec-it/desktop exec electron-vite build
-          pnpm --filter @rec-it/desktop exec playwright test e2e/frames.spec.ts
+          pnpm --filter @rec-it/desktop exec playwright test e2e/frames.spec.ts e2e/captions.spec.ts
       - name: Upload test results
         if: failure()
         uses: actions/upload-artifact@v4

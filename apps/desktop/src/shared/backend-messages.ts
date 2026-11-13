@@ -10,6 +10,8 @@ export interface BackendConfig {
   ffmpeg: { envPath?: string | undefined; bundledDir: string };
   /** null disables the sidecar (e.g. in tests that do not need Python). */
   sidecar: { command: string; args: string[]; cwd: string } | null;
+  /** Bundled caption fonts (resources/fonts); captions need them in preview and export. */
+  fontsDir?: string;
 }
 
 export type MainToBackend =

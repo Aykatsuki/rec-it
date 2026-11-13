@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import type { Sequence, TimelineItem, Transform } from '@rec-it/core';
+import type { Sequence, TimelineItem, TrackKind, Transform } from '@rec-it/core';
 import type {
   DocumentState,
   ExportState,
@@ -61,7 +61,9 @@ interface AppState {
 export interface ClipboardClip {
   assetId: string;
   /** Track index among tracks of the same kind (0 = top video / first audio). */
-  trackKind: 'video' | 'audio';
+  trackKind: TrackKind;
+  /** Caption clips: their words, in flicks from the clip's start. */
+  caption?: { text: string; start: number; end: number }[];
   trackIndex: number;
   /** Offset from the earliest copied clip, in flicks. */
   offset: number;

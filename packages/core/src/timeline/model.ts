@@ -56,9 +56,25 @@ export interface TimelineItem {
   keyframes?: Partial<Record<KeyframeProperty, Keyframe[]>>;
   /** Clips sharing a linkId (a video and its detached sound) move, trim, split and delete together. */
   linkId?: string;
+  /** Set on caption clips (on caption tracks; assetId is CAPTION_ASSET). ADR-033. */
+  caption?: CaptionContent;
 }
 
-export type TrackKind = 'video' | 'audio';
+/** The pseudo media id of caption clips (they have no media file). */
+export const CAPTION_ASSET = 'captions';
+
+/**
+ * A caption clip's words. Times are in the clip's own "source" time, like media: the word at
+ * `start` shows at timeline time `item.start + (start - item.sourceIn)`. Trimming and splitting a
+ * caption therefore work exactly like trimming and splitting a video clip.
+ */
+export interface CaptionContent {
+  words: { text: string; start: Flicks; end: Flicks }[];
+}
+
+export const isCaption = (item: TimelineItem): boolean => item.caption !== undefined;
+
+export type TrackKind = 'video' | 'audio' | 'caption';
 
 export interface Track {
   id: string;
@@ -77,14 +93,54 @@ export interface Sequence {
   width: number;
   height: number;
   fps: Rational;
-  /** Video tracks first, top layer first; then audio tracks. */
+  /** Caption tracks first, then video tracks (top layer first), then audio tracks. */
   tracks: Track[];
+  /** Automatic captions from the transcripts of the clips (ADR-032). Absent = off. */
+  captions?: CaptionSettings;
 }
+
+/** Built-in caption looks (packages/captions defines them). */
+export const CAPTION_STYLES = ['highlight', 'pop', 'karaoke', 'caps', 'clean', 'bebas'] as const;
+export type CaptionStyleId = (typeof CAPTION_STYLES)[number];
+
+export interface CaptionSettings {
+  enabled: boolean;
+  style: CaptionStyleId;
+  /** Text size relative to the style's own size (0.5–2). */
+  size: number;
+  /** Vertical position of the caption's centre, as a fraction of the frame height (0.1–0.9). */
+  position: number;
+  /** Words per line (1–8) and lines per caption (1–2). */
+  wordsPerLine: number;
+  lines: 1 | 2;
+  uppercase: boolean;
+  /** Colour of the spoken word (highlight, pop, karaoke), "#RRGGBB". */
+  highlight: string;
+}
+
+export const DEFAULT_CAPTIONS: CaptionSettings = {
+  enabled: true,
+  style: 'highlight',
+  size: 1,
+  position: 0.68,
+  wordsPerLine: 3,
+  lines: 2,
+  uppercase: false,
+  highlight: '#FFE600',
+};
+
+/**
+ * Corrections to a transcript word, by asset and word index. `from` is the word as Whisper wrote
+ * it, so a correction is ignored if the media is transcribed again and the word changed. `to`
+ * may hold several words (they share the original timing) or be empty (hidden from captions).
+ */
+export type TranscriptEdits = Record<string, Record<number, { from: string; to: string }>>;
 
 export interface ProjectDocument {
   schemaVersion: 1;
   sequences: Sequence[];
   activeSequenceId: string | null;
+  transcriptEdits?: TranscriptEdits;
 }
 
 /** What commands need to know about media (supplied by the backend from the asset table). */

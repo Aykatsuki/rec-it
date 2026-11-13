@@ -1,0 +1,39 @@
+diff --git a/dist/worker/renderers/2d-renderer.js b/dist/worker/renderers/2d-renderer.js
+index 84c8821f25b9e127b80db4f93b723540e72e85f3..08a80bda50efd2acb92c69b43a94f75a8a11fe64 100644
+--- a/dist/worker/renderers/2d-renderer.js
++++ b/dist/worker/renderers/2d-renderer.js
+@@ -4,7 +4,7 @@ import { CanvasRendererBase } from "./canvas-base.js";
+ const clamp = (v) => (v < 0 ? 0 : v > 1 ? 255 : Math.round(v * 255));
+ const CTX_OPTS = {
+     alpha: true,
+-    desynchronized: true,
++    desynchronized: false, // Rec-It: desynchronized canvases are opaque overlays on Windows GPUs (black preview)
+     willReadFrequently: false
+ };
+ const MIN_PAGE_SIZE = 1024;
+diff --git a/dist/worker/renderers/webgl1-renderer.js b/dist/worker/renderers/webgl1-renderer.js
+index 060aa7f2f8b7d29e61458fed64ee89f8323120e6..a6c1ce05f80302378008bf7f435341ac8c2aa53d 100644
+--- a/dist/worker/renderers/webgl1-renderer.js
++++ b/dist/worker/renderers/webgl1-renderer.js
+@@ -138,7 +138,7 @@ export class WebGL1Renderer extends WebGLRendererBase {
+             depth: false,
+             preserveDrawingBuffer: false,
+             stencil: false,
+-            desynchronized: true,
++            desynchronized: false, // Rec-It: desynchronized canvases are opaque overlays on Windows GPUs (black preview)
+             powerPreference: 'default'
+         });
+         if (!gl) {
+diff --git a/dist/worker/renderers/webgl2-renderer.js b/dist/worker/renderers/webgl2-renderer.js
+index f59d89aa7fe5c1343bb1e4536fc4960a318cc1c2..dda08098e26ae600cfd78a2d959ebbf104f5b7b8 100644
+--- a/dist/worker/renderers/webgl2-renderer.js
++++ b/dist/worker/renderers/webgl2-renderer.js
+@@ -146,7 +146,7 @@ export class WebGL2Renderer extends WebGLRendererBase {
+             depth: false,
+             preserveDrawingBuffer: false,
+             stencil: false,
+-            desynchronized: true,
++            desynchronized: false, // Rec-It: desynchronized canvases are opaque overlays on Windows GPUs (black preview)
+             powerPreference: 'default'
+         });
+         if (!gl) {

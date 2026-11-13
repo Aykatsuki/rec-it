@@ -51,6 +51,8 @@ export interface RunFfmpegOptions {
   onProgress?: (fraction: number) => void;
   /** Receives raw stdout chunks when FFmpeg writes data to pipe:1 (progress then goes to pipe:2). */
   onStdout?: (chunk: Buffer) => void;
+  /** Working folder (relative file names in filter graphs resolve against it). */
+  cwd?: string;
 }
 
 /**
@@ -86,6 +88,7 @@ export function runFfmpeg(
 
   return new Promise((resolve, reject) => {
     const child = spawn(ffmpeg, fullArgs, {
+      ...(options.cwd ? { cwd: options.cwd } : {}),
       shell: false,
       windowsHide: true,
       stdio: ['ignore', 'pipe', 'pipe'],

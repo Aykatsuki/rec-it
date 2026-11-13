@@ -1,3 +1,4 @@
+import { captionClipWords } from '@rec-it/captions';
 import {
   memo,
   useEffect,
@@ -723,7 +724,7 @@ function TrackHeader({ seq, track }: { seq: Sequence; track: Track }) {
     >
       <span className="track-header__chip">{track.name}</span>
       <span className="tl__header-buttons">
-        {track.kind === 'video' ? (
+        {track.kind !== 'audio' ? (
           <IconButton
             label={track.hidden ? 'Show track' : 'Hide track'}
             size="sm"
@@ -733,14 +734,16 @@ function TrackHeader({ seq, track }: { seq: Sequence; track: Track }) {
             {track.hidden ? <EyeOff size={13} /> : <Eye size={13} />}
           </IconButton>
         ) : null}
-        <IconButton
-          label={track.muted ? 'Unmute track' : 'Mute track'}
-          size="sm"
-          aria-pressed={track.muted}
-          onClick={() => update({ muted: !track.muted })}
-        >
-          {track.muted ? <VolumeX size={13} /> : <Volume2 size={13} />}
-        </IconButton>
+        {track.kind !== 'caption' && (
+          <IconButton
+            label={track.muted ? 'Unmute track' : 'Mute track'}
+            size="sm"
+            aria-pressed={track.muted}
+            onClick={() => update({ muted: !track.muted })}
+          >
+            {track.muted ? <VolumeX size={13} /> : <Volume2 size={13} />}
+          </IconButton>
+        )}
         <IconButton
           label={track.locked ? 'Unlock track' : 'Lock track'}
           size="sm"
@@ -819,7 +822,7 @@ function ItemViewInner({
       style={{ left, width }}
       onPointerDown={(e) => onPointerDown(e, 'move')}
       onContextMenu={onContextMenu}
-      title={asset?.name}
+      title={item.caption ? captionText(item) : asset?.name}
     >
       {!detailed ? null : sprite && v ? (
         <Filmstrip
@@ -843,10 +846,14 @@ function ItemViewInner({
           <WaveformStrip url={asset!.urls.waveform!} className="tl__wave-svg" />
         </div>
       )}
-      <span className="tl__item-label">
-        {linked && <Link2 size={11} aria-label="Linked" />}
-        {item.muted && <VolumeX size={11} />} {asset?.name ?? 'Missing media'}
-      </span>
+      {item.caption ? (
+        <span className="tl__item-label tl__item-label--caption">{captionText(item)}</span>
+      ) : (
+        <span className="tl__item-label">
+          {linked && <Link2 size={11} aria-label="Linked" />}
+          {item.muted && <VolumeX size={11} />} {asset?.name ?? 'Missing media'}
+        </span>
+      )}
       {item.keyframes &&
         keyframeTimes(item)
           .filter((t) => t >= toSeconds(item.start) && t <= itemEndSec(item))
@@ -858,6 +865,13 @@ function ItemViewInner({
       <span className="tl__handle tl__handle--end" onPointerDown={(e) => onPointerDown(e, 'end')} />
     </div>
   );
+}
+
+/** The words a caption clip shows. */
+function captionText(item: TimelineItem): string {
+  return captionClipWords(item)
+    .map((w) => w.text)
+    .join(' ');
 }
 
 /** Thumbnails from the asset's sprite sheet along a video clip; only the visible ones are drawn. */

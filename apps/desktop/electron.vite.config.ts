@@ -26,7 +26,11 @@ function cspPlugin(): Plugin {
       const dev = Boolean(ctx.server);
       const policy = [
         ...common,
-        dev ? "script-src 'self' 'unsafe-inline'" : "script-src 'self'",
+        // 'wasm-unsafe-eval' lets the caption renderer (libass in WebAssembly) compile; it does
+        // not allow eval of JavaScript.
+        dev
+          ? "script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval'"
+          : "script-src 'self' 'wasm-unsafe-eval'",
         dev
           ? "connect-src 'self' recit-media: ws://localhost:* http://localhost:*"
           : "connect-src 'self' recit-media:",

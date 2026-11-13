@@ -279,4 +279,125 @@ test.describe('preview and export match', () => {
       await app.close();
     }
   });
+
+  test('golden frames: captions drawn by libass in both', async () => {
+    test.skip(
+      !/\sass\s/.test(
+        spawnSync(bins!.ffmpeg, ['-hide_banner', '-filters'], { encoding: 'utf8' }).stdout ?? '',
+      ),
+      'This FFmpeg has no libass (Homebrew on macOS); captions cannot be exported',
+    );
+    // Fake Whisper ("word1", "word2", … every 0.5 s) through the real sidecar.
+    const userData = tempUserData();
+    const shots = join(userData, 'shots');
+    mkdirSync(shots);
+    const { app, page } = await launch(userData, {
+      ...env(),
+      RECIT_DISABLE_SIDECAR: '0',
+      RECIT_FAKE_WHISPER: '1',
+    });
+    try {
+      await createProject(page, 'Caption parity');
+      await mockOpenDialog(app, [fx.video]);
+      await page.getByRole('button', { name: 'Import footage' }).click();
+      await page.getByLabel(/I have the right/).check();
+      await page.getByRole('button', { name: 'Import' }).last().click();
+      await expect(page.locator('[data-testid=asset-card][data-status=ready]')).toHaveCount(1, {
+        timeout: 60_000,
+      });
+      await page.locator('[data-testid=asset-card]').dblclick();
+      await page.getByRole('tab', { name: 'Transcript' }).click();
+      await page
+        .getByTestId('transcript-panel')
+        .getByRole('button', { name: 'Transcribe', exact: true })
+        .click({ timeout: 60_000 });
+      await expect(page.getByTestId('transcript-words').getByRole('option')).toHaveCount(6, {
+        timeout: 60_000,
+      });
+      await page.getByRole('tab', { name: 'Captions' }).click();
+      await page.getByRole('button', { name: 'Generate captions' }).click();
+      await expect(page.locator('[data-testid=timeline-item][data-kind=caption]')).not.toHaveCount(
+        0,
+      );
+      // Big captions so that text, not the video, dominates the comparison; one per style family.
+      const cases: [number, string][] = [
+        [1.5, 'highlight'],
+        [2.5, 'karaoke'],
+      ];
+      for (const [t, style] of cases) {
+        await page.evaluate(async (style) => {
+          const call = async <T>(channel: string, input: unknown): Promise<T> => {
+            const r = (await window.recit.backend.invoke(channel as never, input as never)) as {
+              ok: boolean;
+              result?: unknown;
+              error?: { message: string };
+            };
+            if (!r.ok) throw new Error(r.error?.message);
+            return r.result as T;
+          };
+          const state = await call<{ doc: { sequences: { id: string }[] } }>('doc.get', {});
+          await call('doc.execute', {
+            command: {
+              type: 'captions.update',
+              sequenceId: state.doc.sequences[0]!.id,
+              captions: { style, size: 1.8, position: 0.5, wordsPerLine: 2 },
+            },
+          });
+        }, style);
+        await page.getByTestId('ruler').click({ position: { x: t * ZOOM, y: 10 } });
+        await expect(page.getByTestId('program-time')).toContainText(`00:0${t.toFixed(3)}`);
+        await page.waitForFunction((at) => {
+          const c = document.querySelector<HTMLCanvasElement>('[data-testid=program-canvas]');
+          const k = document.querySelector<HTMLCanvasElement>('[data-testid=captions-canvas]');
+          return (!c || c.dataset.time === at) && k?.dataset.time === at;
+        }, t.toFixed(3));
+        await page.waitForTimeout(400);
+        await page.locator('.program').screenshot({ path: join(shots, `preview-${style}.png`) });
+
+        const out = join(userData, `captions-${style}.mp4`);
+        await page.getByTestId('export-button').click();
+        await page.getByRole('radio', { name: 'YouTube Short', exact: true }).click();
+        await setExportTarget(app, page, out);
+        await page
+          .getByTestId('export-dialog')
+          .getByRole('button', { name: /Export$/ })
+          .click();
+        await expect(page.getByTestId('export-status')).toHaveAttribute('data-state', 'done', {
+          timeout: 120_000,
+        });
+        await expect(page.getByTestId('export-status')).toContainText(`captions-${style}.mp4`);
+        await page.keyboard.press('Escape');
+        const preview = join(shots, `preview-${style}.png`);
+        const [w, h] = execFileSync(
+          bins!.ffprobe,
+          ['-v', 'error', '-show_entries', 'stream=width,height', '-of', 'csv=p=0', preview],
+          { encoding: 'utf8' },
+        )
+          .trim()
+          .split(',')
+          .map(Number);
+        const exported = join(shots, `export-${style}.png`);
+        execFileSync(bins!.ffmpeg, [
+          '-v',
+          'error',
+          '-y',
+          '-ss',
+          String(t),
+          '-i',
+          out,
+          '-frames:v',
+          '1',
+          '-vf',
+          `scale=${w}:${h}:flags=area`,
+          exported,
+        ]);
+        // Same frame without captions, to show the captions matter to the score.
+        const score = ssim(bins!.ffmpeg, preview, exported);
+        console.info(`Caption SSIM (${style}) ${score}`);
+        expect(score, `caption SSIM, ${style}`).toBeGreaterThanOrEqual(MIN_SSIM);
+      }
+    } finally {
+      await app.close();
+    }
+  });
 });

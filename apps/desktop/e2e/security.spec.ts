@@ -35,7 +35,10 @@ test.describe('renderer security', () => {
         .locator('meta[http-equiv="Content-Security-Policy"]')
         .getAttribute('content');
       expect(csp).toContain("script-src 'self'");
-      expect(csp).not.toContain('unsafe-eval');
+      // JavaScript eval stays forbidden; only WebAssembly compilation (the caption renderer,
+      // ADR-032) is allowed.
+      expect(csp).not.toMatch(/'unsafe-eval'/);
+      expect(csp).toContain("'wasm-unsafe-eval'");
     } finally {
       await app.close();
     }

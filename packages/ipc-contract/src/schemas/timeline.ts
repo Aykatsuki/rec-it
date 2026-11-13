@@ -41,16 +41,37 @@ export const timelineItemSchema = z.object({
   transform: transformSchema,
   keyframes: z.partialRecord(keyframeProperty, z.array(keyframeSchema).max(10_000)).optional(),
   linkId: id.optional(),
+  caption: z
+    .object({
+      words: z
+        .array(
+          z.object({ text: z.string().max(200), start: z.number().int(), end: z.number().int() }),
+        )
+        .max(400),
+    })
+    .optional(),
 });
 
 export const trackSchema = z.object({
   id,
-  kind: z.enum(['video', 'audio']),
+  kind: z.enum(['video', 'audio', 'caption']),
   name: z.string(),
   muted: z.boolean(),
   hidden: z.boolean(),
   locked: z.boolean(),
   items: z.array(timelineItemSchema),
+});
+
+const captionStyle = z.enum(['highlight', 'pop', 'karaoke', 'caps', 'clean', 'bebas']);
+export const captionSettingsSchema = z.object({
+  enabled: z.boolean(),
+  style: captionStyle,
+  size: z.number().min(0.5).max(2),
+  position: z.number().min(0.1).max(0.9),
+  wordsPerLine: z.number().int().min(1).max(8),
+  lines: z.union([z.literal(1), z.literal(2)]),
+  uppercase: z.boolean(),
+  highlight: z.string().regex(/^#[0-9a-fA-F]{6}$/),
 });
 
 export const sequenceSchema = z.object({
@@ -60,12 +81,19 @@ export const sequenceSchema = z.object({
   height: z.number().int(),
   fps: rational,
   tracks: z.array(trackSchema),
+  captions: captionSettingsSchema.optional(),
 });
 
 export const projectDocumentSchema = z.object({
   schemaVersion: z.literal(1),
   sequences: z.array(sequenceSchema),
   activeSequenceId: id.nullable(),
+  transcriptEdits: z
+    .record(
+      z.string(),
+      z.record(z.string(), z.object({ from: z.string(), to: z.string().max(200) })),
+    )
+    .optional(),
 });
 
 const seqId = { sequenceId: id };
@@ -90,7 +118,7 @@ const singleCommandSchema = z.discriminatedUnion('type', [
   z.object({
     type: z.literal('track.add'),
     ...seqId,
-    kind: z.enum(['video', 'audio']),
+    kind: z.enum(['video', 'audio', 'caption']),
     id: id.optional(),
   }),
   z.object({ type: z.literal('track.remove'), ...seqId, trackId: id }),
@@ -172,6 +200,56 @@ const singleCommandSchema = z.discriminatedUnion('type', [
     ...seqId,
     itemIds: z.array(id).min(1),
     ripple: z.boolean().optional(),
+  }),
+  z.object({
+    type: z.literal('captions.update'),
+    ...seqId,
+    captions: captionSettingsSchema.partial(),
+  }),
+  z.object({
+    type: z.literal('captions.generate'),
+    ...seqId,
+    trackId: id.optional(),
+    captions: z
+      .array(
+        z.object({
+          start: flicks,
+          duration: flicks,
+          words: z
+            .array(z.object({ text: z.string().max(200), start: flicks, end: flicks }))
+            .max(400),
+        }),
+      )
+      .max(20_000),
+  }),
+  z.object({
+    type: z.literal('caption.add'),
+    ...seqId,
+    trackId: id,
+    start: flicks,
+    duration: flicks,
+    text: z.string().max(2000),
+    words: z
+      .array(
+        z.object({ text: z.string().max(200), start: z.number().int(), end: z.number().int() }),
+      )
+      .max(400)
+      .optional(),
+    transform: transformPatchSchema.optional(),
+    id: id.optional(),
+  }),
+  z.object({
+    type: z.literal('caption.edit'),
+    ...seqId,
+    itemId: id,
+    text: z.string().max(2000),
+  }),
+  z.object({
+    type: z.literal('transcript.editWord'),
+    assetId: id,
+    index: z.number().int().nonnegative(),
+    from: z.string().max(200),
+    to: z.string().max(400),
   }),
   z.object({
     type: z.literal('item.cutRange'),

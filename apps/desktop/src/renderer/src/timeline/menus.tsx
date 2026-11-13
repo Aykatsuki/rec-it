@@ -90,6 +90,7 @@ export function clipMenu(seq: Sequence, ids: string[]): MenuEntry[] {
   const sameKindTracks =
     kinds.size === 1 ? seq.tracks.filter((t) => t.kind === clips[0]!.track.kind) : [];
   const currentTracks = new Set(clips.map((c) => c.track.id));
+  const anyCaption = clips.some((c) => c.item.caption);
 
   return [
     {
@@ -148,7 +149,7 @@ export function clipMenu(seq: Sequence, ids: string[]): MenuEntry[] {
         },
       ],
     },
-    {
+    !anyCaption && {
       label: allMuted ? 'Unmute clip' : 'Mute clip',
       icon: allMuted ? <Volume2 size={I} /> : <VolumeX size={I} />,
       onSelect: () => void updateSelected({ muted: !allMuted }),
@@ -166,7 +167,8 @@ export function clipMenu(seq: Sequence, ids: string[]): MenuEntry[] {
           icon: <Unlink size={I} />,
           onSelect: () => void linkSelected(false),
         }
-      : clips.length > 1 && {
+      : clips.length > 1 &&
+        !anyCaption && {
           label: 'Link clips',
           icon: <Link2 size={I} />,
           onSelect: () => void linkSelected(true),
@@ -181,10 +183,11 @@ export function clipMenu(seq: Sequence, ids: string[]): MenuEntry[] {
       })),
     },
     sep,
-    one && {
-      label: 'Select in media bin',
-      onSelect: () => useApp.getState().select(one.item.assetId),
-    },
+    one &&
+      !one.item.caption && {
+        label: 'Select in media bin',
+        onSelect: () => useApp.getState().select(one.item.assetId),
+      },
     asset && {
       label: 'Show file in folder',
       icon: <FolderOpen size={I} />,

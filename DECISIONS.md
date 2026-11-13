@@ -14,7 +14,7 @@ Each record states the decision, why it was made and what else was considered. R
 | 008 | Custom WebCodecs + WebGL2 preview engine | Accepted (first version: ADR-029) |
 | 009 | Claude analyses signals, transcripts and frames, not raw video | Accepted |
 | 010 | Local transcription with faster-whisper | Accepted (built: ADR-031) |
-| 011 | Captions as ASS rendered by libass in preview and export | Accepted |
+| 011 | Captions as ASS rendered by libass in preview and export | Accepted (built: ADR-032) |
 | 012 | No downloading from YouTube; rights-aware local import | Accepted |
 | 013 | Claude model routing and cost controls | Superseded by 018 |
 | 014 | Python sidecar over JSON-RPC on stdio | Accepted |
@@ -35,6 +35,8 @@ Each record states the decision, why it was made and what else was considered. R
 | 029 | GPU preview engine (WebCodecs + WebGL2), first version | Accepted |
 | 030 | Web Audio playback, keyframe dragging and a fast DOM timeline | Accepted |
 | 031 | Local transcription and text-based editing | Accepted |
+| 032 | Automatic captions and transcript corrections | Accepted (caption model superseded by 033) |
+| 033 | Captions become clips on caption tracks | Accepted |
 
 ---
 
@@ -418,3 +420,39 @@ Each record states the decision, why it was made and what else was considered. R
 - **Text-based editing.** The panel shows the words the active sequence plays, in timeline order (linked clips and identical copies once; words belong to a clip when their middle is inside the clip). Clicking a word moves the playhead to it, and the word under the playhead is highlighted. Selecting words and pressing Delete cuts each run of selected words from the first word's start to the next kept word's start (so the pause after them goes too) with a new core command, `item.cutRange` (source-time range; linked partners are cut too; with "Close gaps", later clips on those tracks move left). All cuts are one undo step.
 - **Testing without a model.** `RECIT_FAKE_WHISPER=1` makes the sidecar produce "word1", "word2", … every 0.5 s (with `RECIT_FAKE_WHISPER_DELAY` to make it slow enough to cancel). Backend integration and end-to-end tests use it with the real sidecar. A separate CI job installs the extra and transcribes speech synthesised by espeak-ng with the `tiny.en` model.
 - **Deferred to the next slices:** captions (ASS compiler, styles, JASSUB preview, `ass` export, bundled fonts), transcript search and correcting words, and the word-error-rate and ±50 ms timing measurements of the exit criteria.
+
+---
+
+## ADR-032 · Automatic captions and transcript corrections
+
+**Status.** Accepted (13 Nov 2026, Phase 4 second slice). Implements ADR-011; changes the caption model of ARCHITECTURE §6.5 for now.
+
+**Decisions.**
+- **Captions are derived, not stored.** A sequence has caption *settings* (`captions`: on/off, style, size, vertical position, words per line, one or two lines, capitals, spoken-word colour), changed with the undoable `captions.update` command. The captions themselves are computed whenever they are drawn: the words the timeline plays (ADR-031's mapping, so cuts, trims, moves and muted clips are followed automatically) are grouped into captions and compiled to ASS. There is no separate caption track to keep in sync. Per-caption overrides (moving one caption, restyling one word) are left for later and would add stored segments on top of this.
+- **Corrections live in the document.** `transcript.editWord` stores `{from, to}` for a recognised word in `doc.transcriptEdits`, so corrections are undoable with Ctrl+Z and saved with the timeline, while the original transcript stays untouched. A correction with several words shares the original word's time by letter count; an empty one hides the word from captions (it stays in the transcript, struck through, and can still be cut). A correction whose `from` no longer matches (the media was transcribed again) is ignored. Corrections only change text; cutting words from the video is still Delete (ADR-031).
+- **Grouping** (`packages/captions`): up to words-per-line × lines words per caption, a new caption after a sentence end or a pause over 0.7 s, never longer than 4 s; lines balanced; a caption stays up 0.5 s after its last word unless the next starts sooner. The "Pop" style shows one word at a time.
+- **Six built-in styles**: Highlight (Montserrat ExtraBold, spoken word coloured), Pop (one big word with a scale-in), Karaoke (Poppins, words fill with colour as spoken, `\kf`), Bold caps (Anton), Clean box (Poppins SemiBold on a translucent box) and Bebas (Bebas Neue). Highlighting uses one ASS event per spoken word, so a word lights up exactly at its start time (centisecond precision).
+- **One file, one renderer, two places.** `sequenceCaptionsAss` in `packages/captions` builds the ASS; the renderer and the backend both call it. The preview draws it with JASSUB (libass in WebAssembly, LGPL/MIT; canvas-only mode on an OffscreenCanvas worker, redrawn at each playhead position) on a canvas above the picture; the export burns it in with FFmpeg's `ass` filter after the frame is converted to BT.709 YUV, with `shaping=complex` to match JASSUB. The export writes `captions.ass` and a copy of the fonts into its work folder and runs FFmpeg there, so the filter graph only contains plain relative names (no path escaping).
+- **Fonts.** Six OFL fonts are bundled in `resources/fonts` (licences included) and given to both renderers; JASSUB is told not to look for system or web fonts, so captions look the same on every computer. Packaging must copy `resources/fonts` next to FFmpeg (Phase 11).
+- **Security.** The renderer's CSP gains `'wasm-unsafe-eval'`, which allows compiling WebAssembly but not JavaScript `eval` (`'unsafe-eval'` stays absent; the security test checks both).
+- **Tests.** ASS snapshots for every style; segmentation rules; a real-FFmpeg test that libass draws the bundled font with the right word highlighted at the right times; an end-to-end test (correct a word, hide one, turn captions on, change style, undo, turn off); and two caption cases in the golden-frame parity suite (Highlight 0.992, Karaoke mid-word fill 0.996 SSIM).
+- **JASSUB owns its canvas.** JASSUB moves its canvas to a worker and removes it from the page when destroyed, so the preview creates that canvas itself inside a container React owns. In React development mode (StrictMode mounts twice) a React-owned canvas was removed behind React's back and the next re-render crashed the preview; CI caught this on Windows, and the captions end-to-end test now also runs in development mode there.
+- **JASSUB is patched to draw on normal canvases** (`patches/jassub@2.5.37.patch`, applied by pnpm). It requested `desynchronized` canvases, which Chromium on Windows with a hardware GPU presents as overlays without transparency: the whole caption layer became opaque black over the preview (found on the reference PC; CI's software rendering ignores the flag, so no automated test could see it). A unit test fails if an upgrade drops the patch, and the caption layer is only mounted while captions are shown.
+- **No libass, no burned-in captions.** If the FFmpeg in use lacks libass (Homebrew's build on macOS), exporting with captions on says so instead of failing inside FFmpeg; Rec-It's own FFmpeg builds include libass.
+- **Layout.** The placeholder Claude tab in the right panel is removed until Phase 7 (the top bar still shows the connection), so Inspector, Transcript and Captions fit.
+
+---
+
+## ADR-033 · Captions become clips on caption tracks
+
+**Status.** Accepted (13 Nov 2026, Phase 4 third slice). Supersedes the "captions are derived, not stored" part of ADR-032; keeps its styles, renderer, fonts and parity rules. Brings back the stored caption segments of ARCHITECTURE §6.5.
+
+**Context.** Derived captions always followed the transcript, but the user wants to edit captions freely after they are generated: move, resize, retime, rewrite and delete individual captions like any other layer.
+
+**Decisions.**
+- **Caption tracks.** A third track kind, `caption` (named C1, C2, …), sits above the video tracks. "Generate captions" (`captions.generate`) groups the timeline's transcript words (with corrections, ADR-032) into captions and puts one **caption clip** per caption on the first caption track, creating it if needed and replacing what was there (the button asks first when captions exist; Ctrl+Z undoes it). "Add caption" (`caption.add`) adds one at the playhead. After generation, captions no longer follow the transcript; generating again rebuilds them.
+- **Caption clips are ordinary timeline items** with `assetId: 'captions'` and a `caption: { words }` field. Word times are in the clip's own source time (like media), so the existing move, trim, split, delete, ripple, copy/paste and undo commands work on captions unchanged, and a trimmed or split caption shows only its words. Captions cannot move to video/audio tracks (nor media to caption tracks), be linked, or be keyframed (yet); the export's missing-media check skips them.
+- **Text.** `caption.edit` replaces a clip's text from the Inspector. With the same number of words each word keeps its timing (spelling fixes); otherwise the old words' time span is shared out by letter count.
+- **Placement.** Each caption clip uses the item transform: `x`/`y` offset its centre from the sequence's caption position, `scale` multiplies the style size, `rotation` turns it (ASS `\pos`, `\fscx/\fscy`, `\frz`). Captions are selected and dragged, resized and rotated in the preview with the same transform box as video; their box is measured from the text with the bundled fonts loaded into the page. They are hit-tested above all pictures. The Captions tab's style settings still apply to all captions; per-caption style overrides can come later.
+- **Rendering.** `sequenceCaptionsAss(seq)` compiles the caption clips of visible caption tracks (upper tracks on higher ASS layers); preview (JASSUB) and export (`ass` filter) both call it, as before. While a caption is dragged its draft transform is compiled, so the text follows the mouse. Golden-frame parity: 0.990 (Highlight) and 0.992 (Karaoke).
+- **Fix in the same change:** clicking the empty area around the preview frame now deselects (a clip that fills the frame left nowhere to click off), and selecting a caption while the Captions tab is open switches to its Inspector.

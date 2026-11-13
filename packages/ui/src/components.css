@@ -90,10 +90,16 @@
 .ui-tabs {
   display: flex;
   gap: var(--space-1);
+  min-width: 0;
 }
 .ui-tab {
+  flex-shrink: 1;
+  min-width: 0;
   height: 28px;
-  padding: 0 var(--space-3);
+  overflow: hidden;
+  padding: 0 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   border: 0;
   border-radius: var(--radius-sm);
   background: transparent;

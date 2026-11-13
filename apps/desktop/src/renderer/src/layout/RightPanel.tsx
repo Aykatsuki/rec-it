@@ -1,18 +1,20 @@
 import { useState } from 'react';
-import { MousePointerClick, Sparkles } from 'lucide-react';
+import { MousePointerClick } from 'lucide-react';
 import { EmptyState, Tabs } from '@rec-it/ui';
 import { AssetDetails } from '../media/AssetDetails';
 import { primaryClip } from '../edit';
 import { useApp, useSelectedAsset, useSequence } from '../store';
 import { ClipInspector } from '../timeline/ClipInspector';
 import { TranscriptPanel } from '../timeline/TranscriptPanel';
+import { CaptionInspector } from '../timeline/CaptionInspector';
+import { CaptionsPanel } from '../timeline/CaptionsPanel';
 
-type RightTab = 'inspector' | 'transcript' | 'claude';
+type RightTab = 'inspector' | 'transcript' | 'captions';
 
 const TABS = [
   { id: 'inspector', label: 'Inspector' },
   { id: 'transcript', label: 'Transcript' },
-  { id: 'claude', label: 'Claude' },
+  { id: 'captions', label: 'Captions' },
 ] as const;
 
 export function RightPanel() {
@@ -23,13 +25,24 @@ export function RightPanel() {
   const selectedItems = useApp((s) => s.selectedItemIds);
   const assets = useApp((s) => s.assets);
   const clip = focus === 'timeline' ? primaryClip(seq, selectedItems) : null;
+  // Selecting a caption clip while the Captions tab is open shows its inspector (its words and
+  // position live there). Adjusted during render, not in an effect.
+  const captionId = clip?.item.caption ? clip.item.id : null;
+  const [lastCaption, setLastCaption] = useState<string | null>(null);
+  if (captionId !== lastCaption) {
+    setLastCaption(captionId);
+    if (captionId && tab === 'captions') setTab('inspector');
+  }
   return (
     <section className="panel" data-region="right-panel" aria-label="Details">
       <header className="panel__header">
         <Tabs items={TABS} value={tab} onChange={setTab} label="Details" />
       </header>
       <div className="panel__body" role="tabpanel">
-        {tab === 'inspector' && clip && seq && (
+        {tab === 'inspector' && clip && seq && clip.item.caption && (
+          <CaptionInspector seq={seq} track={clip.track} item={clip.item} />
+        )}
+        {tab === 'inspector' && clip && seq && !clip.item.caption && (
           <ClipInspector
             seq={seq}
             track={clip.track}
@@ -44,13 +57,8 @@ export function RightPanel() {
             2.
           </EmptyState>
         )}
-        {tab === 'claude' && (
-          <EmptyState icon={<Sparkles size={20} />} title="Claude activity">
-            In Phase 6 you will connect Claude from your Claude desktop app. Every edit Claude makes
-            will appear here and can be undone in one step.
-          </EmptyState>
-        )}
         {tab === 'transcript' && <TranscriptPanel />}
+        {tab === 'captions' && <CaptionsPanel />}
       </div>
     </section>
   );

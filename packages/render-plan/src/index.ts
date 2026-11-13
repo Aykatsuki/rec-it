@@ -72,6 +72,11 @@ export interface ExportOptions {
   loudness?: { target: number; measured?: LoudnessMeasurement } | null;
   /** Written into the file's title tag. */
   title?: string;
+  /**
+   * Burned-in captions: an ASS file and the fonts folder, as plain relative names (run FFmpeg
+   * with the folder holding them as its working directory). ADR-032.
+   */
+  captions?: { file: string; fontsDir: string } | null;
 }
 
 export interface ExportPlan {
@@ -334,10 +339,19 @@ interface GraphParts {
   height: number;
 }
 
+/** The libass filter for burned-in captions (drawn on the finished, BT.709-tagged frame). */
+function captionsFilter(captions: ExportOptions['captions']): string {
+  if (!captions) return '';
+  const safe = /^[A-Za-z0-9_.\-/]+$/;
+  if (!safe.test(captions.file) || !safe.test(captions.fontsDir))
+    throw new ExportPlanError('Caption files must have plain relative names.');
+  return `,ass=filename=${captions.file}:fontsdir=${captions.fontsDir}:shaping=complex`;
+}
+
 function buildGraph(
   seq: Sequence,
   assets: (assetId: string) => ExportAsset | undefined,
-  options: Pick<ExportOptions, 'scale' | 'tonemap'>,
+  options: Pick<ExportOptions, 'scale' | 'tonemap' | 'captions'>,
   /** Filters after the audio mix; null leaves audio out of the graph. */
   audioFinish: string | null,
   withVideo: boolean,
@@ -434,7 +448,7 @@ function buildGraph(
       last = `o${n}`;
     });
     graph.push(
-      `[${last}]format=yuv420p,setparams=range=tv:color_primaries=bt709:color_trc=bt709:colorspace=bt709[vout]`,
+      `[${last}]format=yuv420p,setparams=range=tv:color_primaries=bt709:color_trc=bt709:colorspace=bt709${captionsFilter(options.captions)}[vout]`,
     );
   }
 
@@ -581,7 +595,7 @@ export function planFrame(
   seq: Sequence,
   assets: (assetId: string) => ExportAsset | undefined,
   timeSec: number,
-  options: Pick<ExportOptions, 'tonemap' | 'scale'>,
+  options: Pick<ExportOptions, 'tonemap' | 'scale' | 'captions'>,
 ): ExportPlan {
   const g = buildGraph(seq, assets, options, null, true);
   const t = Math.min(Math.max(0, timeSec), Math.max(0, g.total - 0.001));

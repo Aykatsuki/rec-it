@@ -1,8 +1,9 @@
-// Text-based editing (Phase 4, ADR-031): maps word-timed transcripts (source seconds) onto the
-// clips of a sequence, and turns a selection of words into cut commands.
+// Text-based editing (Phase 4, ADR-031/032): maps word-timed transcripts (source seconds) onto
+// the clips of a sequence, applies the user's corrections, and turns a selection of words into
+// cut commands.
 import { FLICKS_PER_SECOND, frameDuration } from '../time';
 import type { Command } from './commands';
-import type { Sequence, TimelineItem } from './model';
+import type { Sequence, TimelineItem, TranscriptEdits } from './model';
 
 /** One recognised word. Times are seconds in the media file. */
 export interface TranscriptWord {
@@ -12,21 +13,72 @@ export interface TranscriptWord {
   p?: number;
 }
 
+/** A transcript word after corrections. */
+export interface EditedWord extends TranscriptWord {
+  /** Index of the recognised word this comes from. */
+  index: number;
+  /** Position within a correction that turned one word into several. */
+  part: number;
+  /** Whisper's own text, when corrected. */
+  original?: string;
+  /** Corrected to nothing: kept in the transcript, left out of captions. */
+  hidden?: boolean;
+}
+
 /** A word as it plays in the sequence. */
 export interface SequenceWord {
-  /** Stable key: item id + word index in the asset's transcript. */
+  /** Stable key: item id, word index and part. */
   key: string;
   itemId: string;
-  /** Index into the asset's word list. */
+  assetId: string;
+  /** Index into the asset's recognised words. */
   index: number;
+  part: number;
   text: string;
   /** Timeline seconds. */
   start: number;
   end: number;
+  /** Source seconds (for cutting). */
+  srcStart: number;
+  srcEnd: number;
   p?: number;
+  original?: string;
+  hidden?: boolean;
 }
 
 const sec = (f: number) => f / FLICKS_PER_SECOND;
+
+/**
+ * Applies corrections to a transcript. A correction with several words shares the original
+ * word's time between them by length; one whose `from` no longer matches (the media was
+ * transcribed again) is ignored.
+ */
+export function applyTranscriptEdits(
+  words: readonly TranscriptWord[],
+  edits: TranscriptEdits[string] | undefined,
+): EditedWord[] {
+  const out: EditedWord[] = [];
+  words.forEach((w, index) => {
+    const edit = edits?.[index];
+    if (!edit || edit.from !== w.text) {
+      out.push({ ...w, index, part: 0 });
+      return;
+    }
+    const parts = edit.to.split(' ').filter(Boolean);
+    if (!parts.length) {
+      out.push({ ...w, index, part: 0, original: w.text, hidden: true });
+      return;
+    }
+    const total = parts.reduce((n, t) => n + t.length, 0);
+    let t = w.start;
+    parts.forEach((text, part) => {
+      const end = part === parts.length - 1 ? w.end : t + ((w.end - w.start) * text.length) / total;
+      out.push({ ...w, text, start: t, end, index, part, original: w.text });
+      t = end;
+    });
+  });
+  return out;
+}
 
 /**
  * The words heard in a sequence, in timeline order. A word belongs to a clip when its middle is
@@ -35,7 +87,7 @@ const sec = (f: number) => f / FLICKS_PER_SECOND;
  */
 export function sequenceWords(
   seq: Sequence,
-  wordsOf: (assetId: string) => readonly TranscriptWord[] | undefined,
+  wordsOf: (assetId: string) => readonly EditedWord[] | undefined,
 ): SequenceWord[] {
   const out: SequenceWord[] = [];
   const seenLinks = new Set<string>();
@@ -47,6 +99,7 @@ export function sequenceWords(
   for (const track of tracks) {
     if (track.muted) continue;
     for (const item of track.items) {
+      if (item.muted) continue;
       const words = wordsOf(item.assetId);
       if (!words?.length) continue;
       if (item.linkId) {
@@ -63,24 +116,32 @@ export function sequenceWords(
 }
 
 /** Words of one clip, in timeline seconds. */
-export function wordsInItem(item: TimelineItem, words: readonly TranscriptWord[]): SequenceWord[] {
+export function wordsInItem(item: TimelineItem, words: readonly EditedWord[]): SequenceWord[] {
   const from = sec(item.sourceIn);
   const to = sec(item.sourceIn + item.duration);
   const offset = sec(item.start) - from;
   const out: SequenceWord[] = [];
-  words.forEach((w, index) => {
+  for (const w of words) {
     const mid = (w.start + w.end) / 2;
-    if (mid < from || mid >= to) return;
+    if (mid < from || mid >= to) continue;
+    const srcStart = Math.max(w.start, from);
+    const srcEnd = Math.min(w.end, to);
     out.push({
-      key: `${item.id}:${index}`,
+      key: `${item.id}:${w.index}.${w.part}`,
       itemId: item.id,
-      index,
+      assetId: item.assetId,
+      index: w.index,
+      part: w.part,
       text: w.text,
-      start: Math.max(w.start, from) + offset,
-      end: Math.min(w.end, to) + offset,
+      start: srcStart + offset,
+      end: srcEnd + offset,
+      srcStart,
+      srcEnd,
       ...(w.p !== undefined ? { p: w.p } : {}),
+      ...(w.original !== undefined ? { original: w.original } : {}),
+      ...(w.hidden ? { hidden: true } : {}),
     });
-  });
+  }
   return out;
 }
 
@@ -93,7 +154,6 @@ export function cutWordsCommands(
   seq: Sequence,
   words: readonly SequenceWord[],
   selected: ReadonlySet<string>,
-  wordsOf: (assetId: string) => readonly TranscriptWord[] | undefined,
   ripple = true,
 ): Extract<Command, { type: 'item.cutRange' }>[] {
   const frame = sec(frameDuration(seq.fps));
@@ -104,20 +164,14 @@ export function cutWordsCommands(
     list.push(w);
     byItem.set(w.itemId, list);
   }
-  const items = new Map(seq.tracks.flatMap((t) => t.items.map((i) => [i.id, i] as const)));
   for (const [itemId, list] of byItem) {
-    const item = items.get(itemId);
-    const source = item && wordsOf(item.assetId);
-    if (!item || !source) continue;
-    const end = sec(item.sourceIn + item.duration);
     for (let i = 0; i < list.length; i++) {
       if (!selected.has(list[i]!.key)) continue;
       let j = i;
       while (j + 1 < list.length && selected.has(list[j + 1]!.key)) j++;
-      const first = source[list[i]!.index]!;
       const next = list[j + 1];
-      const from = Math.max(first.start, sec(item.sourceIn));
-      const to = next ? source[next.index]!.start : Math.min(end, source[list[j]!.index]!.end);
+      const from = list[i]!.srcStart;
+      const to = next ? next.srcStart : list[j]!.srcEnd;
       if (to - from >= frame) runs.push({ itemId, from, to, at: list[i]!.start });
       i = j;
     }

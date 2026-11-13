@@ -41,7 +41,9 @@ test.describe('transcript', () => {
       await panel.getByRole('button', { name: 'Transcribe', exact: true }).click({
         timeout: 60_000,
       });
-      await expect(panel.getByText('Transcribed')).toBeVisible({ timeout: 60_000 });
+      await expect(panel.getByText('Transcribed', { exact: true })).toBeVisible({
+        timeout: 60_000,
+      });
 
       const words = page.getByTestId('transcript-words').getByRole('option');
       await expect(words).toHaveText(['word1', 'word2', 'word3', 'word4', 'word5', 'word6']);

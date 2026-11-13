@@ -1,7 +1,7 @@
 import { execFileSync, spawnSync } from 'node:child_process';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { cpSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import {
   FRAME_RATES,
@@ -9,9 +9,11 @@ import {
   emptyDocument,
   secondsToFlicks,
   valueAt,
+  DEFAULT_CAPTIONS,
   type AssetInfo,
   type Command,
 } from '@rec-it/core';
+import { compileAss } from '@rec-it/captions';
 import { runFfmpeg } from '@rec-it/ffmpeg';
 import { findTestFfmpeg } from '@rec-it/ffmpeg/testing';
 import {
@@ -537,6 +539,104 @@ describe.skipIf(!bins)('export renders correct frames (real FFmpeg)', () => {
     expect(level(1)).toBeGreaterThan(level(0.2) + 8);
     expect(level(2.4)).toBeGreaterThan(level(1));
   }, 60_000);
+
+  // Homebrew's FFmpeg (macOS CI) is built without libass; Rec-It's own builds include it.
+  const hasLibass = () =>
+    /\sass\s/.test(
+      spawnSync(bins!.ffmpeg, ['-hide_banner', '-filters'], { encoding: 'utf8' }).stdout ?? '',
+    );
+  it.skipIf(!bins || !hasLibass())(
+    'burns in captions with libass and the bundled fonts, timed to the words',
+    async () => {
+      // Captions are drawn from captions.ass and fonts/ next to the graph (run with cwd).
+      const work = mkdtempSync(join(dir, 'captions-'));
+      cpSync(resolve(__dirname, '../../../resources/fonts'), join(work, 'fonts'), {
+        recursive: true,
+      });
+      const words = [
+        { text: 'Hello', start: 1, end: 1.4 },
+        { text: 'world', start: 1.5, end: 1.9 },
+      ];
+      writeFileSync(
+        join(work, 'captions.ass'),
+        compileAss(
+          words,
+          { ...DEFAULT_CAPTIONS, size: 2, position: 0.5 },
+          { width: 360, height: 640 },
+        ),
+      );
+      const h = new History(emptyDocument());
+      h.execute(
+        {
+          type: 'sequence.create',
+          id: 'seq',
+          name: 'S',
+          width: 360,
+          height: 640,
+          fps: FRAME_RATES.fps30,
+        },
+        (id) => info[id],
+      );
+      const v1 = h.doc.sequences[0]!.tracks[1]!.id;
+      h.execute(
+        { type: 'item.add', sequenceId: 'seq', trackId: v1, assetId: 'blue', start: 0 },
+        (id) => info[id],
+      );
+      const plan = planExport(h.doc.sequences[0]!, exportAssets, {
+        encoder: 'libx264',
+        quality: 'draft',
+        tonemap: false,
+        captions: { file: 'captions.ass', fontsDir: 'fonts' },
+      });
+      expect(plan.filterGraph).toContain(',ass=filename=captions.ass:fontsdir=fonts');
+      writeFileSync(join(work, 'graph.txt'), plan.filterGraph);
+      const out = join(work, 'out.mp4');
+      const { stderrTail } = await runFfmpeg(
+        bins!.ffmpeg,
+        [...plan.inputArgs, '-/filter_complex', 'graph.txt', ...plan.outputArgs, '-f', 'mp4', out],
+        { cwd: work },
+      );
+      // libass found the bundled font rather than a fallback.
+      expect(stderrTail).not.toMatch(/fontselect.*fallback|Glyph .* not found/i);
+      // Count white and yellow pixels in the middle band of the frame.
+      const band = (t: number) => {
+        const buf = execFileSync(bins!.ffmpeg, [
+          '-v',
+          'error',
+          '-ss',
+          String(t),
+          '-i',
+          out,
+          '-frames:v',
+          '1',
+          '-vf',
+          'crop=360:120:0:260',
+          '-f',
+          'rawvideo',
+          '-pix_fmt',
+          'rgb24',
+          '-',
+        ]);
+        let white = 0;
+        let yellow = 0;
+        for (let i = 0; i < buf.length; i += 3) {
+          const [r, g, b] = [buf[i]!, buf[i + 1]!, buf[i + 2]!];
+          if (r > 200 && g > 200 && b > 200) white++;
+          else if (r > 200 && g > 180 && b < 90) yellow++;
+        }
+        return { white, yellow };
+      };
+      expect(band(0.5)).toEqual({ white: 0, yellow: 0 }); // before the first word
+      const first = band(1.2); // "Hello" spoken: highlighted
+      const second = band(1.7); // "world" spoken
+      expect(first.yellow).toBeGreaterThan(200);
+      expect(first.white).toBeGreaterThan(200);
+      expect(second.yellow).toBeGreaterThan(200);
+      expect(Math.abs(first.yellow - second.yellow)).toBeGreaterThan(20); // a different word lit
+      expect(band(2.9)).toEqual({ white: 0, yellow: 0 }); // gone after the hold
+    },
+    60_000,
+  );
 
   it('renders a single frame with the export graph', async () => {
     const h = new History(emptyDocument());

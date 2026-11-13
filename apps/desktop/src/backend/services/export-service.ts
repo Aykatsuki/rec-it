@@ -1,5 +1,5 @@
 import { existsSync } from 'node:fs';
-import { mkdtemp, rename, rm, stat, writeFile } from 'node:fs/promises';
+import { cp, mkdtemp, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
 import type { Sequence } from '@rec-it/core';
@@ -23,7 +23,7 @@ import {
 
 export interface ExportToolchain {
   bins: FfmpegBinaries;
-  ffmpeg: Pick<FfmpegStatus, 'encoders' | 'nvencUsable'>;
+  ffmpeg: Pick<FfmpegStatus, 'encoders' | 'nvencUsable'> & { hasLibass?: boolean };
   tonemap: boolean;
 }
 
@@ -36,6 +36,7 @@ function checkMedia(seq: Sequence, assets: Assets): void {
   const missing = new Set<string>();
   for (const track of seq.tracks) {
     for (const item of track.items) {
+      if (item.caption) continue; // caption clips have no media file
       const asset = assets(item.assetId);
       if (!asset || !existsSync(asset.path))
         missing.add(asset ? basename(asset.path) : item.assetId);
@@ -53,14 +54,45 @@ async function runPlan(
   output: string[],
   options: { signal?: AbortSignal; onProgress?: (p: number) => void } = {},
 ): Promise<string> {
+  // The graph names caption files relative to the work folder (ADR-032).
   const graphFile = join(work, `graph-${Date.now()}-${Math.random().toString(36).slice(2)}.txt`);
   await writeFile(graphFile, plan.filterGraph);
   const { stderrTail } = await runFfmpeg(
     ffmpeg,
     [...plan.inputArgs, '-/filter_complex', graphFile, ...plan.outputArgs, ...output],
-    { signal: options.signal, durationSec: plan.durationSec, onProgress: options.onProgress },
+    {
+      signal: options.signal,
+      durationSec: plan.durationSec,
+      onProgress: options.onProgress,
+      cwd: work,
+    },
   );
   return stderrTail;
+}
+
+/** Burned-in captions: the ASS text and the bundled fonts folder. */
+export interface CaptionsInput {
+  ass: string;
+  fontsDir: string;
+}
+
+/** Writes captions.ass and a copy of the fonts into the work folder; returns the plan option. */
+async function prepareCaptions(
+  work: string,
+  captions: CaptionsInput | null,
+  ffmpeg: ExportToolchain['ffmpeg'],
+): Promise<{ file: string; fontsDir: string } | null> {
+  if (!captions) return null;
+  if (ffmpeg.hasLibass === false)
+    throw new Error(
+      'This FFmpeg cannot draw captions (it was built without libass). Run "pnpm fetch-ffmpeg" or turn captions off.',
+    );
+  await writeFile(join(work, 'captions.ass'), captions.ass, 'utf8');
+  await cp(captions.fontsDir, join(work, 'fonts'), {
+    recursive: true,
+    filter: (src) => !/\.(txt|md)$/i.test(src),
+  });
+  return { file: 'captions.ass', fontsDir: 'fonts' };
 }
 
 /** Runs one export at a time (ARCHITECTURE §10.4) and reports progress. */
@@ -81,6 +113,7 @@ export class ExportService {
     settings: ExportSettings,
     toolchain: () => Promise<ExportToolchain>,
     assets: Assets,
+    captions: CaptionsInput | null = null,
   ): ExportState {
     if (this.current.state === 'running') throw new Error('An export is already running.');
     checkMedia(seq, assets);
@@ -89,7 +122,7 @@ export class ExportService {
       { state: 'running', progress: 0, path, sequenceName: seq.name, startedAt: Date.now() },
       true,
     );
-    void this.run(seq, path, settings, toolchain, assets, this.controller.signal);
+    void this.run(seq, path, settings, toolchain, assets, this.controller.signal, captions);
     return this.current;
   }
 
@@ -104,14 +137,18 @@ export class ExportService {
     path: string,
     toolchain: () => Promise<ExportToolchain>,
     assets: Assets,
+    captions: CaptionsInput | null = null,
   ): Promise<void> {
     checkMedia(seq, assets);
-    const { bins, tonemap } = await toolchain();
+    const { bins, tonemap, ffmpeg } = await toolchain();
     const work = await mkdtemp(join(tmpdir(), 'recit-frame-'));
     const jpeg = /\.jpe?g$/i.test(path);
     const part = join(work, jpeg ? 'frame.jpg' : 'frame.png');
     try {
-      const plan = planFrame(seq, assets, time, { tonemap });
+      const plan = planFrame(seq, assets, time, {
+        tonemap,
+        captions: await prepareCaptions(work, captions, ffmpeg),
+      });
       await runPlan(bins.ffmpeg, plan, work, [...(jpeg ? ['-q:v', '2'] : []), part]);
       await rm(path, { force: true });
       await rename(part, path).catch(async () => {
@@ -131,11 +168,13 @@ export class ExportService {
     toolchain: () => Promise<ExportToolchain>,
     assets: Assets,
     signal: AbortSignal,
+    captions: CaptionsInput | null,
   ): Promise<void> {
     const work = await mkdtemp(join(tmpdir(), 'recit-export-'));
     const part = `${path}.part`;
     try {
       const { bins, ffmpeg, tonemap } = await toolchain();
+      const burned = await prepareCaptions(work, captions, ffmpeg);
       let encoder = pickExportEncoder(settings.codec, settings.encoder, ffmpeg);
       if (!encoder)
         throw new Error(
@@ -166,6 +205,7 @@ export class ExportService {
           scale: settings.scale,
           audioBitrateK: settings.audioBitrate,
           title: seq.name,
+          captions: burned,
           // Silence measures as nothing to normalise; leave it alone.
           loudness:
             settings.loudness === null || !measured
