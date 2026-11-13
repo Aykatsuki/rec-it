@@ -55,6 +55,8 @@ export class SidecarClient {
       env: { ...process.env, PYTHONUNBUFFERED: '1', PYTHONIOENCODING: 'utf-8' },
     });
     this.child = child;
+    // Writing to a helper that has just exited fails with EPIPE; the exit handler reports it.
+    child.stdin.on('error', () => {});
     child.on('error', (error) => {
       this.spawnError = error;
       this.failAll(new SidecarError(`Could not start the media-ai sidecar: ${error.message}`));

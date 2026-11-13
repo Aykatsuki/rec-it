@@ -52,6 +52,21 @@ def _duration(path: str) -> float:
         return w.getnframes() / float(w.getframerate())
 
 
+def _read_pcm(path: str) -> Any:
+    """Reads the backend's 16 kHz mono 16-bit WAV as float32 samples.
+
+    Passing samples (not a path) keeps faster-whisper from decoding with PyAV, whose API changes
+    between releases.
+    """
+    import numpy as np
+
+    with wave.open(path, "rb") as w:
+        if w.getsampwidth() != 2 or w.getnchannels() != 1 or w.getframerate() != 16000:
+            raise ValueError("expected 16 kHz mono 16-bit PCM audio")
+        data = w.readframes(w.getnframes())
+    return np.frombuffer(data, dtype="<i2").astype(np.float32) / 32768.0
+
+
 def _fake(
     audio: str, progress: Callable[[float], None], cancelled: threading.Event
 ) -> dict[str, Any]:
@@ -136,7 +151,7 @@ def _whisper(
 
     total = _duration(audio)
     segments, info = model.transcribe(
-        audio,
+        _read_pcm(audio),
         language=language,
         word_timestamps=True,
         vad_filter=True,
