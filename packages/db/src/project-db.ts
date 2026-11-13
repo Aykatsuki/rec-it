@@ -59,6 +59,17 @@ export const projectMigrations: readonly Migration[] = [
       created_at TEXT NOT NULL
     ) STRICT;`,
   },
+  {
+    version: 4,
+    name: 'face_tracks',
+    // Face detections per media file, for automatic reframing (ADR-035).
+    up: `CREATE TABLE face_tracks (
+      asset_id TEXT PRIMARY KEY REFERENCES assets (id) ON DELETE CASCADE,
+      engine TEXT NOT NULL,
+      json TEXT NOT NULL,
+      created_at TEXT NOT NULL
+    ) STRICT;`,
+  },
 ];
 
 export interface ProjectMeta {
@@ -345,6 +356,30 @@ export class ProjectDatabase {
 
   deleteTranscript(assetId: string): void {
     this.db.prepare('DELETE FROM transcripts WHERE asset_id = ?').run(assetId);
+  }
+
+  /** Stored face detections of a media file (JSON), or null. */
+  loadFaceTrack(assetId: string): string | null {
+    const row = this.db.prepare('SELECT json FROM face_tracks WHERE asset_id = ?').get(assetId) as
+      { json: string } | undefined;
+    return row?.json ?? null;
+  }
+
+  /** Ids of media files whose faces have been analysed. */
+  faceTrackedAssets(): string[] {
+    return (
+      this.db.prepare('SELECT asset_id FROM face_tracks').all() as { asset_id: string }[]
+    ).map((r) => r.asset_id);
+  }
+
+  saveFaceTrack(assetId: string, engine: string, json: string): void {
+    this.db
+      .prepare(
+        `INSERT INTO face_tracks (asset_id, engine, json, created_at) VALUES (?, ?, ?, ?)
+         ON CONFLICT(asset_id) DO UPDATE SET engine = excluded.engine, json = excluded.json,
+           created_at = excluded.created_at`,
+      )
+      .run(assetId, engine, json, new Date().toISOString());
   }
 
   close(): void {

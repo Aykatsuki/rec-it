@@ -6,6 +6,7 @@ import type {
   JobSummary,
   MediaAsset,
   ProjectInfo,
+  FaceStatus,
   Transcript,
   TranscriptionStatus,
 } from '@rec-it/ipc-contract';
@@ -48,6 +49,10 @@ interface AppState {
   transcription: TranscriptionStatus | null;
   /** Loaded transcripts by asset id. */
   transcripts: Record<string, Transcript>;
+  /** Face analysis engine and jobs (automatic reframing, ADR-035). */
+  faces: FaceStatus | null;
+  /** Clips waiting for their media's face analysis, to be reframed when it finishes. */
+  pendingReframe: Record<string, string[]>;
   /** The clip whose crop is being edited in the crop window (ADR-034). */
   cropItemId: string | null;
   /** Show where YouTube's Shorts buttons and text cover the frame. */
@@ -119,6 +124,8 @@ export const useApp = create<AppState>((set) => ({
   transcription: null,
   transcripts: {},
   cropItemId: null,
+  faces: null,
+  pendingReframe: {},
   safeZones: stored('recit.safeZones') === '1',
   setSafeZones: (safeZones) => {
     store('recit.safeZones', safeZones ? '1' : '0');
@@ -177,6 +184,7 @@ export function startBackendSync(): () => void {
     const docState = project ? await backend.invoke('doc.get', {}) : null;
     useApp.setState({ project, assets, jobs, docState, exportState });
     syncTranscripts(await backend.invoke('transcript.status', {}), true);
+    useApp.setState({ faces: await backend.invoke('faces.status', {}) });
   };
   const offs = [
     backend.onConnectionChange((connected) => {
@@ -218,6 +226,15 @@ export function startBackendSync(): () => void {
     ),
     backend.on('export.changed', (exportState) => useApp.setState({ exportState })),
     backend.on('transcript.changed', (status) => syncTranscripts(status)),
+    backend.on('faces.changed', (faces) => {
+      const before = useApp.getState().faces;
+      useApp.setState({ faces });
+      // Clips waiting for this analysis are reframed as soon as it is done.
+      for (const job of faces.jobs) {
+        const was = before?.jobs.find((j) => j.assetId === job.assetId)?.state;
+        if (job.state === 'done' && was !== 'done') onFacesReady?.(job.assetId);
+      }
+    }),
   ];
   return () => offs.forEach((off) => off());
 }
@@ -246,4 +263,10 @@ function syncTranscripts(status: TranscriptionStatus, reload = false): void {
       })
       .catch(() => {});
   }
+}
+
+/** Set by edit.ts: reframes clips that were waiting for an analysis (avoids an import cycle). */
+let onFacesReady: ((assetId: string) => void) | undefined;
+export function setOnFacesReady(fn: (assetId: string) => void): void {
+  onFacesReady = fn;
 }

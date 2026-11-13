@@ -303,6 +303,12 @@ export class MediaService {
   }
 
   /** What timeline commands need to know about an asset (undefined until it has been probed). */
+  /** The video preview copy (proxy) on disk, if it has been made. */
+  proxyPath(assetId: string): string | undefined {
+    const path = join(this.assetDir(assetId), FILES.proxy);
+    return existsSync(path) ? path : undefined;
+  }
+
   assetInfo(assetId: string): AssetInfo | undefined {
     const row = this.o.project.getAsset(assetId);
     const probe = row?.probe ? probeInfoSchema.safeParse(row.probe).data : undefined;

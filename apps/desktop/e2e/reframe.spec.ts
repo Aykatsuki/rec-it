@@ -93,4 +93,56 @@ test.describe('reframing', () => {
       await app.close();
     }
   });
+
+  test('auto reframe follows a face with x keyframes (fake detector)', async () => {
+    const { app, page } = await launch(tempUserData(), {
+      ...(bins!.source === 'path' ? {} : { RECIT_FFMPEG_PATH: bins!.ffmpeg }),
+      RECIT_DISABLE_SIDECAR: '0',
+      RECIT_FAKE_FACES: '1',
+    });
+    const xKeys = () =>
+      page.evaluate(async () => {
+        const r = (await window.recit.backend.invoke('doc.get' as never, {} as never)) as {
+          result: {
+            doc: {
+              sequences: {
+                tracks: { kind: string; items: { keyframes?: { x?: { v: number }[] } }[] }[];
+              }[];
+            };
+          };
+        };
+        const item = r.result.doc.sequences[0]!.tracks.find(
+          (t) => t.kind === 'video' && t.items.length,
+        )!.items[0]!;
+        return item.keyframes?.x?.map((k) => k.v) ?? [];
+      });
+    try {
+      await createProject(page, 'Auto reframe');
+      await mockOpenDialog(app, [fx.h264]);
+      await page.getByRole('button', { name: 'Import footage' }).click();
+      await page.getByLabel(/I have the right/).check();
+      await page.getByRole('button', { name: 'Import' }).last().click();
+      await expect(page.locator('[data-testid=asset-card][data-status=ready]')).toHaveCount(1, {
+        timeout: 60_000,
+      });
+      await page.locator('[data-testid=asset-card]').dblclick();
+      await page.getByTestId('timeline-item').click();
+      await page.getByTestId('auto-reframe').click({ timeout: 60_000 });
+      // Analysed, then applied: the picture slides from showing the left towards the right.
+      await expect.poll(async () => (await xKeys()).length, { timeout: 60_000 }).toBeGreaterThan(1);
+      const xs = await xKeys();
+      expect(xs[0]!).toBeGreaterThan(xs.at(-1)!);
+      expect(xs).toEqual([...xs].sort((a, b) => b - a));
+      await expect(page.getByTestId('timeline-keyframe').first()).toBeVisible();
+      // One undo removes the reframing.
+      await page.keyboard.press('Control+Z');
+      await expect.poll(async () => (await xKeys()).length).toBe(0);
+      // Reframing again uses the stored analysis straight away.
+      await page.getByTestId('timeline-item').click();
+      await page.getByTestId('auto-reframe').click();
+      await expect.poll(async () => (await xKeys()).length).toBeGreaterThan(1);
+    } finally {
+      await app.close();
+    }
+  });
 });

@@ -18,6 +18,7 @@ import {
 } from './schemas/timeline';
 import { systemStatusSchema } from './schemas/status';
 import { transcriptSchema, transcriptionStatusSchema } from './schemas/transcript';
+import { faceStatusSchema, faceTrackSchema } from './schemas/faces';
 
 const empty = z.object({}).strict();
 const ok = z.object({ ok: z.literal(true) });
@@ -121,6 +122,23 @@ export const backendContract = defineContract({
       output: transcriptSchema.nullable(),
     },
 
+    // Face analysis for automatic reframing (Phase 5b, ADR-035).
+    'faces.status': { input: empty, output: faceStatusSchema },
+    /** Installs face detection (OpenCV) into the sidecar's environment, once. */
+    'faces.install': { input: empty, output: ok },
+    'faces.start': {
+      input: z.object({ assetId: z.string().min(1).max(100) }).strict(),
+      output: ok,
+    },
+    'faces.cancel': {
+      input: z.object({ assetId: z.string().min(1).max(100) }).strict(),
+      output: ok,
+    },
+    'faces.get': {
+      input: z.object({ assetId: z.string().min(1).max(100) }).strict(),
+      output: faceTrackSchema.nullable(),
+    },
+
     // Export (ARCHITECTURE §10).
     'export.start': {
       input: z
@@ -170,6 +188,7 @@ export const backendContract = defineContract({
     'doc.changed': documentStateSchema,
     'export.changed': exportStateSchema,
     'transcript.changed': transcriptionStatusSchema,
+    'faces.changed': faceStatusSchema,
   },
 });
 

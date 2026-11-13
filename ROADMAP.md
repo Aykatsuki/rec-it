@@ -172,9 +172,9 @@ The roadmap is ordered so that each phase produces something that works and can 
 
 ---
 
-## Phase 5 · Vertical reframing (M) → **Milestone M2** — 🟡 first slice done (13 Nov 2026)
+## Phase 5 · Vertical reframing (M) → **Milestone M2** — 🟡 two slices done (13 Nov 2026)
 
-**Progress (13 Nov 2026).** Slice A (ADR-034): crop for any clip (crop window with keep-shape, identical in preview and export, parity 0.995), a one-click facecam + gameplay layout (linked, muted camera copy on top), and a Shorts safe-zone overlay. Next: automatic face-tracked reframing (5b), blurred-background fit (with the Phase 6 blur), keyframed crop, then the exit-criteria measurements on real footage.
+**Progress (13 Nov 2026).** Slice A (ADR-034): crop for any clip (crop window with keep-shape, identical in preview and export, parity 0.995), a one-click facecam + gameplay layout (linked, muted camera copy on top), and a Shorts safe-zone overlay. Slice B (ADR-035): automatic reframing — local face detection (OpenCV YuNet, optional one-time install), a smoothed framing path with dead zone, pans and cuts, written as editable Position X keyframes. Next: scene-cut detection and active-speaker choice, blurred-background fit (with the Phase 6 blur), keyframed crop, then the exit-criteria measurements on real footage.
 
 **Goal:** reliable 9:16 conversion.
 

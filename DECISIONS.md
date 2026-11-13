@@ -38,6 +38,7 @@ Each record states the decision, why it was made and what else was considered. R
 | 032 | Automatic captions and transcript corrections | Accepted (caption model superseded by 033) |
 | 033 | Captions become clips on caption tracks | Accepted |
 | 034 | Crop and the facecam + gameplay layout (manual reframing) | Accepted |
+| 035 | Automatic reframing with face detection | Accepted |
 
 ---
 
@@ -472,3 +473,16 @@ Each record states the decision, why it was made and what else was considered. R
 - **Facecam + gameplay layout.** One action turns a video clip into two panels: the clip itself becomes the gameplay (bottom 65%, fit to width, cropped to that panel's shape from the middle of the picture) and a muted, linked copy on the nearest free video track above (or a new one) becomes the facecam (top 35%, cropped to its shape, starting in the top-left corner). The crop window then opens on the facecam so it can be dragged over the camera. Both panels move, trim, split and delete together because they are linked (an existing link with detached audio is kept). One undo step.
 - **Shorts safe zones.** An optional overlay (preview right-click menu) shades where YouTube's Shorts player covers the frame: the top 8%, the bottom 20% (title, channel, music) and a column of buttons on the right. These are approximations of the current player and are labelled as such.
 - **Tests.** Layout and limit unit tests; a real-FFmpeg test that a cropped corner fills the frame on static and keyframed clips; an end-to-end test of the layout, crop window (moving keeps the shape), undo and safe zones; and a golden-frame parity case for the layout (SSIM 0.995).
+
+---
+
+## ADR-035 · Automatic reframing with face detection
+
+**Status.** Accepted (13 Nov 2026, Phase 5 second slice). Implements Phase 5b's tracking and smoothing; scene-cut detection, active-speaker choice and the reframing fixture set remain.
+
+**Decisions.**
+- **Detector: OpenCV's YuNet** (`FaceDetectorYN`, model MIT-licensed, 227 KB, shipped in `services/media-ai/recit_media_ai/models` with its licence; OpenCV is Apache-2.0). Chosen over MediaPipe because it needs no model download at run time, is a single small ONNX file, and runs fast on the CPU at analysis size, so it works on any machine. OpenCV is an optional sidecar extra (`reframe`, about 60 MB), installed from the Inspector like transcription (ADR-031); the install code is now shared (`services/extras.ts`), and installing waits for any running analysis because it restarts the helper.
+- **Analysis** (`faces` job in the sidecar): FFmpeg decodes the media's preview copy at 5 frames a second, scaled to 480 px on the long edge, straight into the detector through a pipe (no temporary frames). Faces with confidence ≥ 0.6 are stored per sampled frame as fractions of the picture in the project file (`face_tracks`, migration 4), once per media file; every clip of that media reuses it. Cancellable with progress. `RECIT_FAKE_FACES=1` gives a deterministic moving face for tests.
+- **Framing path** (`autoReframe` in `packages/core`, pure and unit-tested): the main face is the largest at first, then the one nearest to where it was (among faces at least 40% of the largest); gaps hold the last position; a five-sample median removes single-frame mistakes. A virtual camera then holds still while the face stays within a dead zone (12% of the visible width), pans at up to 0.6 visible widths per second when it leaves it (and keeps panning smoothly while the face keeps moving), and cuts — holding still first, then jumping on one frame — when the face has been far away (more than 55% of the visible width) for 0.6 s. The path respects the clip's crop, fill/fit and zoom, never shows past the picture's edges, and is simplified (Ramer–Douglas–Peucker, 0.4% of the frame width) into linear keyframes on Position X, with `hold` before cuts. A steady walk across the picture becomes about five keyframes.
+- **Applying.** "Auto reframe" (Inspector, or the clip's Framing menu) analyses the media if needed and applies itself when the analysis finishes. It replaces the clip's X keyframes in one undoable batch; "Remove" clears them. Clips that show their full width (fit, or panels of the facecam layout) are refused with an explanation, as are clips with no faces.
+- **Not yet:** scene cuts (the cut rule covers most hard cuts), picking the active speaker among several people, vertical movement and zoom, and measuring against labelled footage (Phase 5 exit criteria) on the reference PC.
