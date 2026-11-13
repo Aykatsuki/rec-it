@@ -2042,6 +2042,11 @@ button.statusbar__item:hover {
   height: 100%;
   pointer-events: none;
 }
+.program__captions-canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
 
 /* Transcript panel (Phase 4) */
 .transcript {

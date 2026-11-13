@@ -23,7 +23,7 @@ import {
 
 export interface ExportToolchain {
   bins: FfmpegBinaries;
-  ffmpeg: Pick<FfmpegStatus, 'encoders' | 'nvencUsable'>;
+  ffmpeg: Pick<FfmpegStatus, 'encoders' | 'nvencUsable'> & { hasLibass?: boolean };
   tonemap: boolean;
 }
 
@@ -79,8 +79,13 @@ export interface CaptionsInput {
 async function prepareCaptions(
   work: string,
   captions: CaptionsInput | null,
+  ffmpeg: ExportToolchain['ffmpeg'],
 ): Promise<{ file: string; fontsDir: string } | null> {
   if (!captions) return null;
+  if (ffmpeg.hasLibass === false)
+    throw new Error(
+      'This FFmpeg cannot draw captions (it was built without libass). Run "pnpm fetch-ffmpeg" or turn captions off.',
+    );
   await writeFile(join(work, 'captions.ass'), captions.ass, 'utf8');
   await cp(captions.fontsDir, join(work, 'fonts'), {
     recursive: true,
@@ -134,14 +139,14 @@ export class ExportService {
     captions: CaptionsInput | null = null,
   ): Promise<void> {
     checkMedia(seq, assets);
-    const { bins, tonemap } = await toolchain();
+    const { bins, tonemap, ffmpeg } = await toolchain();
     const work = await mkdtemp(join(tmpdir(), 'recit-frame-'));
     const jpeg = /\.jpe?g$/i.test(path);
     const part = join(work, jpeg ? 'frame.jpg' : 'frame.png');
     try {
       const plan = planFrame(seq, assets, time, {
         tonemap,
-        captions: await prepareCaptions(work, captions),
+        captions: await prepareCaptions(work, captions, ffmpeg),
       });
       await runPlan(bins.ffmpeg, plan, work, [...(jpeg ? ['-q:v', '2'] : []), part]);
       await rm(path, { force: true });
@@ -168,7 +173,7 @@ export class ExportService {
     const part = `${path}.part`;
     try {
       const { bins, ffmpeg, tonemap } = await toolchain();
-      const burned = await prepareCaptions(work, captions);
+      const burned = await prepareCaptions(work, captions, ffmpeg);
       let encoder = pickExportEncoder(settings.codec, settings.encoder, ffmpeg);
       if (!encoder)
         throw new Error(

@@ -44,15 +44,21 @@ export function CaptionsLayer({
   box: { w: number; h: number };
 }) {
   const ass = useCaptionsAss(seq);
-  const canvas = useRef<HTMLCanvasElement>(null);
+  // JASSUB takes over its canvas (it moves it to a worker and removes it when destroyed), so
+  // the canvas is created here, inside a container React owns, never by React itself. A canvas
+  // can only be handed to a worker once, so each mount (StrictMode mounts twice) gets a new one.
+  const container = useRef<HTMLDivElement>(null);
   const jassub = useRef<JASSUB | null>(null);
   const [ready, setReady] = useState(false);
   const [failed, setFailed] = useState<string | null>(null);
 
   // One renderer per canvas (a canvas can only be handed to a worker once).
   useEffect(() => {
-    const el = canvas.current;
-    if (!el) return;
+    const host = container.current;
+    if (!host) return;
+    const el = document.createElement('canvas');
+    el.className = 'program__captions-canvas';
+    host.appendChild(el);
     let alive = true;
     const fonts = Object.values(FONT_FILES)
       .map(urlOf)
@@ -90,8 +96,10 @@ export function CaptionsLayer({
     return () => {
       alive = false;
       setReady(false);
-      void jassub.current?.destroy().catch(() => {});
+      const j = jassub.current;
       jassub.current = null;
+      if (j) void j.destroy().catch(() => {});
+      el.remove();
     };
   }, []);
 
@@ -126,14 +134,14 @@ export function CaptionsLayer({
       true,
     )
       .then(() => {
-        if (canvas.current) canvas.current.dataset.time = playhead.toFixed(3);
+        if (container.current) container.current.dataset.time = playhead.toFixed(3);
       })
       .catch((e: unknown) => console.error('Caption preview failed:', e));
   }, [ready, playhead, box.w, box.h, seq.width, seq.height]);
 
   return (
-    <canvas
-      ref={canvas}
+    <div
+      ref={container}
       className="program__captions"
       data-testid="captions-canvas"
       data-ready={ready ? 'true' : 'false'}

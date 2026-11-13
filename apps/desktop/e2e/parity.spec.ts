@@ -281,6 +281,12 @@ test.describe('preview and export match', () => {
   });
 
   test('golden frames: captions drawn by libass in both', async () => {
+    test.skip(
+      !/\sass\s/.test(
+        spawnSync(bins!.ffmpeg, ['-hide_banner', '-filters'], { encoding: 'utf8' }).stdout ?? '',
+      ),
+      'This FFmpeg has no libass (Homebrew on macOS); captions cannot be exported',
+    );
     // Fake Whisper ("word1", "word2", … every 0.5 s) through the real sidecar.
     const userData = tempUserData();
     const shots = join(userData, 'shots');
