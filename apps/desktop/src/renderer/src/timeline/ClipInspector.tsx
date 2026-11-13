@@ -37,6 +37,7 @@ import {
 import { formatDuration } from '../format';
 import { useApp } from '../store';
 import { transformFor } from './TransformOverlay';
+import { AutoReframe } from './AutoReframe';
 
 /** A slider that previews locally and commits one undoable edit when released. */
 function Slider({
@@ -274,6 +275,9 @@ export function ClipInspector({
             round handle to rotate. Hold Shift to constrain, Alt to turn snapping off.
           </p>
         </section>
+      )}
+      {visual && asset?.kind === 'video' && (
+        <AutoReframe seq={seq} track={track} item={item} asset={asset} />
       )}
       {hasKeyframes(item) && <KeyframeSection seq={seq} item={item} playhead={playhead} />}
       {(hasAudio || track.kind === 'audio') && (

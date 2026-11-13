@@ -1,6 +1,5 @@
 // Local transcription (Phase 4, ADR-031): FFmpeg extracts 16 kHz mono audio, the Python sidecar
 // runs faster-whisper on it, and the word-timed transcript is stored in the project file.
-import { spawn } from 'node:child_process';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -12,6 +11,7 @@ import {
   type TranscriptionStatus,
 } from '@rec-it/ipc-contract';
 import type { ProjectService } from './project-service';
+import { installExtra } from './extras';
 import type { SidecarClient, SidecarCommand } from './sidecar';
 
 /** Share of the progress bar for extracting the audio. */
@@ -25,6 +25,10 @@ export interface TranscriptDeps {
   device: () => 'auto' | 'cuda' | 'cpu';
   modelsDir: string;
   onChange: (status: TranscriptionStatus) => void;
+  /** Another job uses the helper (installing would restart it). */
+  busyElsewhere?: () => boolean;
+  /** Called after an install, so other services can check their engines again. */
+  onEngineChanged?: () => void;
 }
 
 export class TranscriptService {
@@ -91,41 +95,22 @@ export class TranscriptService {
     if (this.install.state === 'running') return;
     if (this.jobs.some((j) => ['extracting', 'transcribing'].includes(j.state)))
       throw new Error('Wait for the running transcription to finish.');
-    this.install = { state: 'running', message: 'Starting…' };
-    this.emit();
+    if (this.d.busyElsewhere?.()) throw new Error('Wait for the running analysis to finish.');
     // The helper is restarted afterwards so it picks up the new packages cleanly.
     this.d.sidecar?.stop();
-    const child = spawn(
-      cmd.command,
-      ['sync', '--project', cmd.cwd, '--extra', 'transcribe', '--inexact'],
-      { cwd: cmd.cwd, shell: false, windowsHide: true, env: process.env },
-    );
-    let last = '';
-    const onData = (chunk: Buffer) => {
-      const line = chunk.toString('utf8').trim().split(/\r?\n/).pop();
-      if (line) {
-        last = line.slice(0, 200);
-        this.install = { state: 'running', message: last };
-        this.emit();
-      }
-    };
-    child.stdout.on('data', onData);
-    child.stderr.on('data', onData);
-    child.on('error', (e) => {
-      this.install = { state: 'failed', message: e.message };
+    installExtra(cmd, 'transcribe', (state, finished) => {
+      this.install = state.state === 'failed' && !state.message ? this.install : state;
       this.emit();
-    });
-    child.on('close', (code) => {
-      if (this.install.state === 'failed') {
-        void this.refresh();
-      } else if (code === 0) {
-        this.install = { state: 'idle' };
-        void this.refresh();
-      } else {
-        this.install = { state: 'failed', message: last || `uv exited with code ${code}` };
+      if (finished) {
+        this.d.onEngineChanged?.();
         void this.refresh();
       }
     });
+  }
+
+  /** True while a transcription is running (the helper must not be restarted). */
+  busy(): boolean {
+    return this.jobs.some((j) => ['extracting', 'transcribing'].includes(j.state));
   }
 
   get(assetId: string): Transcript | null {

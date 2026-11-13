@@ -1,6 +1,7 @@
 // Timeline editing helpers used by the timeline, inspector and shortcuts.
 import {
   FLICKS_PER_SECOND,
+  autoReframe,
   hasKeyframes,
   normalizeAngle,
   sourceTimeAt,
@@ -19,7 +20,7 @@ import {
 import type { CommandInput, MediaAsset } from '@rec-it/ipc-contract';
 import { backend } from './api';
 import { notify } from './notifications';
-import { activeSequence, useApp, type ClipboardClip } from './store';
+import { activeSequence, setOnFacesReady, useApp, type ClipboardClip } from './store';
 
 /** Drag-and-drop type for media dragged from the media bin to the timeline. */
 export const ASSET_MIME = 'application/x-recit-asset';
@@ -696,3 +697,90 @@ export async function facecamLayout(itemId: string): Promise<void> {
     notify('Drag the box over your camera, then press Apply.', 'info');
   }
 }
+
+/**
+ * Automatic reframing (ADR-035): slides the clip sideways to follow faces, as keyframes on its
+ * x position (replacing any it had). Analyses the media first if needed, then applies itself.
+ */
+export async function autoReframeClip(itemId: string): Promise<void> {
+  const state = useApp.getState();
+  const seq = activeSequence(state);
+  const found = findItem(seq, itemId);
+  if (!seq || !found) return;
+  const { item } = found;
+  const faces = state.faces;
+  if (faces?.analysed.includes(item.assetId)) {
+    await applyReframe(itemId);
+    return;
+  }
+  if (!faces?.available) {
+    notify('Install face detection first (Inspector → Auto reframe).', 'warn');
+    return;
+  }
+  useApp.setState((s) => ({
+    pendingReframe: {
+      ...s.pendingReframe,
+      [item.assetId]: [...new Set([...(s.pendingReframe[item.assetId] ?? []), itemId])],
+    },
+  }));
+  try {
+    await backend.invoke('faces.start', { assetId: item.assetId });
+  } catch (error) {
+    notify(error instanceof Error ? error.message : String(error), 'warn');
+  }
+}
+
+async function applyReframe(itemId: string): Promise<void> {
+  const seq = activeSequence(useApp.getState());
+  const found = findItem(seq, itemId);
+  if (!seq || !found) return;
+  const { item } = found;
+  const asset = useApp.getState().assets.find((a) => a.id === item.assetId);
+  const v = asset?.probe?.video;
+  const track = await backend.invoke('faces.get', { assetId: item.assetId }).catch(() => null);
+  if (!v || !track) return;
+  const result = autoReframe(
+    item,
+    { width: v.displayWidth, height: v.displayHeight },
+    { width: seq.width, height: seq.height },
+    track,
+  );
+  if (!result.ok) {
+    notify(
+      result.reason === 'no-faces'
+        ? 'No faces were found in this clip, so it was left as it is.'
+        : 'This clip already shows its full width. Use Fill frame or zoom in, then reframe again.',
+      'warn',
+    );
+    return;
+  }
+  const ok = await edit({
+    type: 'batch',
+    commands: [
+      { type: 'keyframe.clear', sequenceId: seq.id, itemId, property: 'x', t: item.sourceIn },
+      ...result.keyframes.map((k) => ({
+        type: 'keyframe.set' as const,
+        sequenceId: seq.id,
+        itemId,
+        property: 'x' as const,
+        t: k.t,
+        value: k.v,
+        easing: k.e,
+      })),
+    ],
+  });
+  if (ok)
+    notify(
+      `Reframed to follow faces (${result.keyframes.length} keyframes). Ctrl+Z undoes it.`,
+      'info',
+    );
+}
+
+setOnFacesReady((assetId) => {
+  const ids = useApp.getState().pendingReframe[assetId] ?? [];
+  useApp.setState((s) => {
+    const { [assetId]: _done, ...rest } = s.pendingReframe;
+    return { pendingReframe: rest };
+  });
+  for (const id of ids) void applyReframe(id);
+});

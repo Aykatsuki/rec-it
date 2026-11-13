@@ -14,6 +14,8 @@ transcribe = [
   "nvidia-cublas-cu12>=12.4; sys_platform == 'win32'",
   "nvidia-cudnn-cu12>=9.1,<10; sys_platform == 'win32'",
 ]
+# Installed on demand from the app (about 60 MB): face detection for automatic reframing.
+reframe = ["opencv-python-headless>=4.10", "numpy>=1.26"]
 
 [dependency-groups]
 dev = ["pytest>=8.3", "ruff>=0.8"]

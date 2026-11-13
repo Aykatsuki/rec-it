@@ -35,6 +35,7 @@ import type { Toolchain } from './services/media-service';
 import { ExportService, type CaptionsInput, type ExportToolchain } from './services/export-service';
 import { sequenceCaptionsAss } from '@rec-it/captions';
 import { TranscriptService } from './services/transcript-service';
+import { FaceService } from './services/face-service';
 import { ProjectService } from './services/project-service';
 import type { Command, Sequence } from '@rec-it/core';
 import { SidecarClient, checkSidecar } from './services/sidecar';
@@ -62,6 +63,7 @@ export class BackendApp {
   readonly projects: ProjectService;
   readonly exports: ExportService;
   readonly transcripts: TranscriptService;
+  readonly faces: FaceService;
   private lastProjectId: string | undefined;
   private secrets: Partial<Record<SecretName, string>> = {};
   private ffmpeg: FfmpegStatus = {
@@ -103,6 +105,7 @@ export class BackendApp {
         if (p?.id !== this.lastProjectId) {
           this.lastProjectId = p?.id;
           this.transcripts?.reset();
+          this.faces?.reset();
         }
       },
       onAssetsChanged: (a) => this.emit('media.changed', a),
@@ -118,6 +121,17 @@ export class BackendApp {
       device: () => this.settings.getAll().transcriptionDevice,
       modelsDir: join(config.userDataDir, 'models'),
       onChange: (status) => this.emit('transcript.changed', status),
+      busyElsewhere: () => this.faces.busy(),
+      onEngineChanged: () => void this.faces.refresh(),
+    });
+    this.faces = new FaceService({
+      projects: this.projects,
+      sidecar: this.sidecar,
+      sidecarCommand: config.sidecar,
+      ffmpeg: async () => (await this.toolchain()).bins.ffmpeg,
+      onChange: (status) => this.emit('faces.changed', status),
+      busyElsewhere: () => this.transcripts.busy(),
+      onEngineChanged: () => void this.transcripts.refresh(),
     });
     hooks.onCacheRoot?.(this.cacheRoot());
   }
@@ -210,6 +224,20 @@ export class BackendApp {
       return { ok: true as const };
     },
     'transcript.get': ({ assetId }) => this.transcripts.get(assetId),
+    'faces.status': () => this.faces.status(),
+    'faces.install': () => {
+      this.faces.installEngine();
+      return { ok: true as const };
+    },
+    'faces.start': ({ assetId }) => {
+      this.faces.start(assetId);
+      return { ok: true as const };
+    },
+    'faces.cancel': ({ assetId }) => {
+      this.faces.cancel(assetId);
+      return { ok: true as const };
+    },
+    'faces.get': ({ assetId }) => this.faces.get(assetId),
     'export.target': ({ fileName, directory }) => {
       const dir = directory ?? this.exportDirectory();
       const name = cleanFileName(fileName, '.mp4');
@@ -356,7 +384,7 @@ export class BackendApp {
       const sidecarCheck = checkSidecar(this.sidecar).then(async (result) => {
         this.sidecarStatus = result;
         this.emit('system.statusChanged', this.status());
-        await this.transcripts.refresh();
+        await Promise.all([this.transcripts.refresh(), this.faces.refresh()]);
       });
       await Promise.all([ffmpegCheck, sidecarCheck]);
       return this.status();
@@ -369,6 +397,7 @@ export class BackendApp {
   async dispose(): Promise<void> {
     this.exports.cancel();
     this.transcripts.reset();
+    this.faces.reset();
     await this.projects.close().catch(() => {});
     for (const server of this.servers) server.dispose();
     this.servers.clear();

@@ -26,6 +26,7 @@ import {
   Volume2,
   VolumeX,
   LayoutPanelTop,
+  ScanFace,
 } from 'lucide-react';
 import { DEFAULT_TRANSFORM, type Sequence, type Track } from '@rec-it/core';
 import type { MediaAsset } from '@rec-it/ipc-contract';
@@ -51,6 +52,7 @@ import {
   splitAtPlayhead,
   updateSelected,
   facecamLayout,
+  autoReframeClip,
 } from '../edit';
 import { notify } from '../notifications';
 import { activeSequence, useApp } from '../store';
@@ -147,6 +149,13 @@ export function clipMenu(seq: Sequence, ids: string[]): MenuEntry[] {
             label: 'Facecam + gameplay layout',
             icon: <LayoutPanelTop size={I} />,
             onSelect: () => void facecamLayout(one.item.id),
+          },
+        one &&
+          one.track.kind === 'video' &&
+          asset?.kind === 'video' && {
+            label: 'Auto reframe (follow faces)',
+            icon: <ScanFace size={I} />,
+            onSelect: () => void autoReframeClip(one.item.id),
           },
         sep,
         {
