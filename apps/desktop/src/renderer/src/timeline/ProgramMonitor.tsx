@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { Maximize2, Pause, Play, SkipBack, SkipForward, StepBack, StepForward } from 'lucide-react';
 import {
   computeLayout,
@@ -25,6 +25,7 @@ import { openContextMenu } from '../ui/ContextMenu';
 import { clipMenu, programMenu } from './menus';
 import { TransformOverlay, transformFor, type VisibleLayer } from './TransformOverlay';
 import { CaptionsLayer, useCaptionsAss } from '../engine/captions-layer';
+import { SafeZones } from './SafeZones';
 
 interface Mounted {
   item: TimelineItem;
@@ -96,6 +97,7 @@ export function ProgramMonitor({ seq }: { seq: Sequence }) {
   const shown = useRef(new Set<string>());
   // Only mounted while there are captions to draw, so nothing covers the picture otherwise.
   const captionsAss = useCaptionsAss(seq);
+  const safeZones = useApp((s) => s.safeZones);
   const [box, setBox] = useState({ w: 0, h: 0 });
   const total = sequenceSeconds(seq);
 
@@ -326,7 +328,7 @@ export function ProgramMonitor({ seq }: { seq: Sequence }) {
                   )
                 : null;
               const style = layout
-                ? {
+                ? ({
                     left: `${(layout.left / seq.width) * 100}%`,
                     top: `${(layout.top / seq.height) * 100}%`,
                     width: `${(layout.width / seq.width) * 100}%`,
@@ -335,7 +337,20 @@ export function ProgramMonitor({ seq }: { seq: Sequence }) {
                     transform: layout.rotation ? `rotate(${layout.rotation}deg)` : undefined,
                     // Opacity, not visibility: Chromium does not repaint a hidden video after a seek.
                     opacity: visible ? 1 : 0,
-                  }
+                    // Crop (ADR-034): show only the kept part of the picture.
+                    ...(v &&
+                    (layout.source.w !== v.displayWidth || layout.source.h !== v.displayHeight)
+                      ? {
+                          objectViewBox: `inset(${(layout.source.y / v.displayHeight) * 100}% ${
+                            ((v.displayWidth - layout.source.x - layout.source.w) /
+                              v.displayWidth) *
+                            100
+                          }% ${((v.displayHeight - layout.source.y - layout.source.h) / v.displayHeight) * 100}% ${
+                            (layout.source.x / v.displayWidth) * 100
+                          }%)`,
+                        }
+                      : {}),
+                  } as CSSProperties)
                 : undefined;
               // The GPU engine draws pictures and Web Audio plays the sound.
               if (gpu) return null;
@@ -367,6 +382,7 @@ export function ProgramMonitor({ seq }: { seq: Sequence }) {
                 />
               ) : null;
             })}
+            {safeZones && <SafeZones />}
             {captionsAss && (
               <CaptionsLayer seq={seq} ass={captionsAss} playhead={playhead} box={box} />
             )}

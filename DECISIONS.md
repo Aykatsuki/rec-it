@@ -37,6 +37,7 @@ Each record states the decision, why it was made and what else was considered. R
 | 031 | Local transcription and text-based editing | Accepted |
 | 032 | Automatic captions and transcript corrections | Accepted (caption model superseded by 033) |
 | 033 | Captions become clips on caption tracks | Accepted |
+| 034 | Crop and the facecam + gameplay layout (manual reframing) | Accepted |
 
 ---
 
@@ -456,3 +457,18 @@ Each record states the decision, why it was made and what else was considered. R
 - **Placement.** Each caption clip uses the item transform: `x`/`y` offset its centre from the sequence's caption position, `scale` multiplies the style size, `rotation` turns it (ASS `\pos`, `\fscx/\fscy`, `\frz`). Captions are selected and dragged, resized and rotated in the preview with the same transform box as video; their box is measured from the text with the bundled fonts loaded into the page. They are hit-tested above all pictures. The Captions tab's style settings still apply to all captions; per-caption style overrides can come later.
 - **Rendering.** `sequenceCaptionsAss(seq)` compiles the caption clips of visible caption tracks (upper tracks on higher ASS layers); preview (JASSUB) and export (`ass` filter) both call it, as before. While a caption is dragged its draft transform is compiled, so the text follows the mouse. Golden-frame parity: 0.990 (Highlight) and 0.992 (Karaoke).
 - **Fix in the same change:** clicking the empty area around the preview frame now deselects (a clip that fills the frame left nowhere to click off), and selecting a caption while the Captions tab is open switches to its Inspector.
+
+---
+
+## ADR-034 · Crop and the facecam + gameplay layout (manual reframing)
+
+**Status.** Accepted (13 Nov 2026, Phase 5 first slice). Implements most of Phase 5a; automatic (face-tracked) reframing is the next slice.
+
+**Context.** The common way to turn a landscape stream or gameplay clip into a Short is to stack the streamer's camera above the gameplay. The editor could scale and move clips but not crop them, so neither the camera nor a chosen part of the game could be isolated.
+
+**Decisions.**
+- **Crop is part of the transform**: `crop: {left, top, right, bottom}`, the share of the picture cut from each edge (at least 5% is kept each way; an empty crop is removed). It is static for now (not keyframed). `cropRect` turns it into whole, even source pixels, and `computeLayout` lays out only that part, so fill/fit, scale, position and rotation all apply to the cropped picture, and the selection box in the preview follows it. The GPU preview samples the kept part of the texture; the compatible preview uses CSS `object-view-box`; the export puts `crop=w:h:x:y:exact=1` before the scale (also on animated clips). Everyone uses the same rounded pixels.
+- **Crop window.** "Crop…" (Inspector, or the clip's Framing menu) opens a window showing the clip's own frame at the playhead (the proxy, or the still) with the kept area marked. Drag inside to move it, corners (and edges when the shape is free) to resize. "Keep shape" (on by default) holds the proportions, so a clip keeps its size on screen and a layout panel stays filled. One Apply is one undoable edit.
+- **Facecam + gameplay layout.** One action turns a video clip into two panels: the clip itself becomes the gameplay (bottom 65%, fit to width, cropped to that panel's shape from the middle of the picture) and a muted, linked copy on the nearest free video track above (or a new one) becomes the facecam (top 35%, cropped to its shape, starting in the top-left corner). The crop window then opens on the facecam so it can be dragged over the camera. Both panels move, trim, split and delete together because they are linked (an existing link with detached audio is kept). One undo step.
+- **Shorts safe zones.** An optional overlay (preview right-click menu) shades where YouTube's Shorts player covers the frame: the top 8%, the bottom 20% (title, channel, music) and a column of buttons on the right. These are approximations of the current player and are labelled as such.
+- **Tests.** Layout and limit unit tests; a real-FFmpeg test that a cropped corner fills the frame on static and keyframed clips; an end-to-end test of the layout, crop window (moving keeps the shape), undo and safe zones; and a golden-frame parity case for the layout (SSIM 0.995).

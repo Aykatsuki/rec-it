@@ -10,6 +10,14 @@ const transformShape = {
   x: z.number().min(-2).max(2),
   y: z.number().min(-2).max(2),
   rotation: z.number().min(-3600).max(3600),
+  crop: z
+    .object({
+      left: z.number().min(-1).max(1),
+      top: z.number().min(-1).max(1),
+      right: z.number().min(-1).max(1),
+      bottom: z.number().min(-1).max(1),
+    })
+    .optional(),
 };
 /** Documents saved before rotation existed load with rotation 0. */
 export const transformSchema = z.object({
@@ -23,6 +31,7 @@ const transformPatchSchema = z
     x: transformShape.x.optional(),
     y: transformShape.y.optional(),
     rotation: transformShape.rotation.optional(),
+    crop: transformShape.crop,
   })
   .strict();
 

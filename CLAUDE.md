@@ -5,7 +5,7 @@ ARCHITECTURE.md, ROADMAP.md and DECISIONS.md before making design changes.
 
 ## Current phase
 
-Phases 0 (foundations) and 1 (media pipeline) are complete. Phase 3 (export, ADR-027) is built; manual checks on the reference PC remain. Phase 2 has five slices done (timeline, mouse transforms, context menus, linked clips, keyframes, GPU preview, Web Audio; ADR-025, 026, 028, 029, 030); what remains is measuring the exit criteria on the reference PC. Phase 4 slices A (transcription, text-based editing; ADR-031), B (word corrections, captions; ADR-032) and C (captions as clips on caption tracks; ADR-033) are done. Priority: a fully working editor
+Phases 0 (foundations) and 1 (media pipeline) are complete. Phase 3 (export, ADR-027) is built; manual checks on the reference PC remain. Phase 2 has five slices done (timeline, mouse transforms, context menus, linked clips, keyframes, GPU preview, Web Audio; ADR-025, 026, 028, 029, 030); what remains is measuring the exit criteria on the reference PC. Phase 4 slices A (transcription, text-based editing; ADR-031), B (word corrections, captions; ADR-032) and C (captions as clips on caption tracks; ADR-033) are done. Phase 5 slice A (crop, facecam + gameplay layout, safe zones; ADR-034) is done; next is automatic reframing. Priority: a fully working editor
 (Phases 0–6, Phase 6 = effects) before any Claude features (ADR-019). Reference machine: Windows 11 + RTX 3070 8 GB.
 
 ## Commands
@@ -41,7 +41,8 @@ Phases 0 (foundations) and 1 (media pipeline) are complete. Phase 3 (export, ADR
 - `packages/captions` — caption styles, grouping, `generateCaptions` and the ASS compiler; `sequenceCaptionsAss` (caption clips
   on `caption` tracks, ADR-033) is used by both the preview
   (renderer `engine/captions-layer.tsx`, JASSUB) and the export (`ass` filter). Fonts in `resources/fonts`.
-- Renderer `timeline/` — Timeline, SequenceSettings, ClipInspector, ProgramMonitor, TransformOverlay, ExportDialog,
+- Crop lives in `Transform.crop`; `cropRect`/`computeLayout` give the kept pixels to preview and export alike.
+- Renderer `timeline/` — Timeline, SequenceSettings, ClipInspector, ProgramMonitor, TransformOverlay, ExportDialog, CropDialog,
   `menus.tsx` (right-click menus); edits go through `edit.ts`. `ui/ContextMenu.tsx` is the generic menu.
 - `packages/db` — `node:sqlite` (ADR-020), migrations, repositories.
 - `packages/ffmpeg` — binary resolution, capability detection, ffprobe parsing, abortable runner, proxy /

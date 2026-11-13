@@ -2409,3 +2409,132 @@ button.statusbar__item:hover {
   justify-content: space-between;
   gap: var(--space-2);
 }
+
+/* Reframing (Phase 5): crop window, safe zones */
+.inspector__crop {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin: var(--space-2) 0;
+}
+.crop {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+.crop__area {
+  position: relative;
+  align-self: center;
+  overflow: hidden;
+  background: #000;
+  touch-action: none;
+  user-select: none;
+}
+.crop__picture {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: fill;
+  pointer-events: none;
+}
+.crop__box {
+  position: absolute;
+  box-sizing: border-box;
+  border: 2px solid #fff;
+  box-shadow: 0 0 0 9999px rgb(0 0 0 / 55%);
+  cursor: move;
+}
+.crop__handle {
+  position: absolute;
+  width: 14px;
+  height: 14px;
+  margin: -7px 0 0 -7px;
+  border: 2px solid var(--accent);
+  border-radius: 2px;
+  background: #fff;
+}
+.crop__handle--nw {
+  left: 0;
+  top: 0;
+  cursor: nwse-resize;
+}
+.crop__handle--n {
+  left: 50%;
+  top: 0;
+  cursor: ns-resize;
+}
+.crop__handle--ne {
+  left: 100%;
+  top: 0;
+  cursor: nesw-resize;
+}
+.crop__handle--e {
+  left: 100%;
+  top: 50%;
+  cursor: ew-resize;
+}
+.crop__handle--se {
+  left: 100%;
+  top: 100%;
+  cursor: nwse-resize;
+}
+.crop__handle--s {
+  left: 50%;
+  top: 100%;
+  cursor: ns-resize;
+}
+.crop__handle--sw {
+  left: 0;
+  top: 100%;
+  cursor: nesw-resize;
+}
+.crop__handle--w {
+  left: 0;
+  top: 50%;
+  cursor: ew-resize;
+}
+.crop__footer {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--text-sm);
+}
+.crop__lock {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  color: var(--text-2);
+}
+.crop__size {
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+}
+.crop__spacer {
+  flex: 1;
+}
+.safe-zones {
+  position: absolute;
+  inset: 0;
+  z-index: 1100;
+  pointer-events: none;
+}
+.safe-zones__band {
+  position: absolute;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: repeating-linear-gradient(
+    45deg,
+    rgb(255 90 95 / 22%) 0 6px,
+    rgb(255 90 95 / 10%) 6px 12px
+  );
+  color: rgb(255 255 255 / 80%);
+  font-size: 10px;
+  text-align: center;
+  text-shadow: 0 1px 2px #000;
+}
+.safe-zones__frame {
+  position: absolute;
+  border: 1px dashed rgb(255 255 255 / 55%);
+}

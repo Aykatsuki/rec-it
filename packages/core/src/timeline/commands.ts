@@ -15,6 +15,7 @@ import {
   type TimelineItem,
   type Track,
   type TrackKind,
+  type Crop,
   type Transform,
   type Easing,
   type KeyframeProperty,
@@ -828,13 +829,30 @@ function setStatic(item: TimelineItem, p: KeyframeProperty, v: number): void {
 const clampVolume = (v: number) => Math.min(2, Math.max(0, v));
 
 function cleanTransform(t: Transform): Transform {
+  const crop = cleanCrop(t.crop);
   return {
     fit: t.fit === 'fit' ? 'fit' : 'fill',
     scale: Math.min(10, Math.max(0.05, t.scale)),
     x: Math.min(2, Math.max(-2, t.x)),
     y: Math.min(2, Math.max(-2, t.y)),
     rotation: normalizeAngle(t.rotation ?? 0),
+    ...(crop ? { crop } : {}),
   };
+}
+
+/** Keeps at least 5% of the picture each way; a crop of nothing is removed. */
+function cleanCrop(c: Crop | undefined): Crop | undefined {
+  if (!c) return undefined;
+  const f = (n: number) =>
+    Math.round(Math.min(0.95, Math.max(0, Number.isFinite(n) ? n : 0)) * 10000) / 10000;
+  const left = f(c.left);
+  const top = f(c.top);
+  let right = f(c.right);
+  let bottom = f(c.bottom);
+  if (left + right > 0.95) right = Math.max(0, 0.95 - left);
+  if (top + bottom > 0.95) bottom = Math.max(0, 0.95 - top);
+  if (!left && !top && !right && !bottom) return undefined;
+  return { left, top, right, bottom };
 }
 
 function blankTrack(kind: TrackKind, name: string, id?: string): Track {

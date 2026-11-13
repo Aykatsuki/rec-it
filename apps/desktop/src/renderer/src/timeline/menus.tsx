@@ -25,6 +25,7 @@ import {
   Unlink,
   Volume2,
   VolumeX,
+  LayoutPanelTop,
 } from 'lucide-react';
 import { DEFAULT_TRANSFORM, type Sequence, type Track } from '@rec-it/core';
 import type { MediaAsset } from '@rec-it/ipc-contract';
@@ -49,6 +50,7 @@ import {
   sequenceSeconds,
   splitAtPlayhead,
   updateSelected,
+  facecamLayout,
 } from '../edit';
 import { notify } from '../notifications';
 import { activeSequence, useApp } from '../store';
@@ -127,6 +129,25 @@ export function clipMenu(seq: Sequence, ids: string[]): MenuEntry[] {
           checked: visual.every((c) => c.item.transform.fit === 'fit'),
           onSelect: () => void updateSelected({ transform: { fit: 'fit' } }),
         },
+        sep,
+        one &&
+          one.track.kind === 'video' && {
+            label: 'Crop…',
+            icon: <Crop size={I} />,
+            onSelect: () => useApp.setState({ cropItemId: one.item.id }),
+          },
+        one?.item.transform.crop && {
+          label: 'Remove crop',
+          onSelect: () =>
+            void updateSelected({ transform: { crop: { left: 0, top: 0, right: 0, bottom: 0 } } }),
+        },
+        one &&
+          one.track.kind === 'video' &&
+          asset?.kind === 'video' && {
+            label: 'Facecam + gameplay layout',
+            icon: <LayoutPanelTop size={I} />,
+            onSelect: () => void facecamLayout(one.item.id),
+          },
         sep,
         {
           label: 'Centre',
@@ -296,6 +317,11 @@ export function programMenu(seq: Sequence): MenuEntry[] {
     },
     ...clipboardEntries(),
     sep,
+    {
+      label: 'Shorts safe zones',
+      checked: useApp.getState().safeZones,
+      onSelect: () => useApp.getState().setSafeZones(!useApp.getState().safeZones),
+    },
     {
       label: 'Snapping',
       shortcut: 'N',

@@ -2,6 +2,7 @@
 // and the integration tests render real files from it.
 import {
   computeLayout,
+  cropRect,
   flicksToSeconds,
   hasKeyframes,
   type Keyframe,
@@ -339,6 +340,15 @@ interface GraphParts {
   height: number;
 }
 
+/** Cuts the kept part out of the source (crop, ADR-034); nothing when the whole picture is used. */
+function cropFilter(
+  asset: { width?: number | undefined; height?: number | undefined },
+  r: { x: number; y: number; w: number; h: number },
+): string[] {
+  if (r.x === 0 && r.y === 0 && r.w === asset.width && r.h === asset.height) return [];
+  return [`crop=${r.w}:${r.h}:${r.x}:${r.y}:exact=1`];
+}
+
 /** The libass filter for burned-in captions (drawn on the finished, BT.709-tagged frame). */
 function captionsFilter(captions: ExportOptions['captions']): string {
   if (!captions) return '';
@@ -400,9 +410,10 @@ function buildGraph(
         hasKeyframes(item, 'scale') ||
         hasKeyframes(item, 'rotation')
       ) {
+        const kept = cropRect(asset.width, asset.height, item.transform.crop);
         const a = animatedLayer(
           item,
-          { width: asset.width, height: asset.height },
+          { width: kept.w, height: kept.h },
           W,
           H,
           seq.fps.num / seq.fps.den,
@@ -410,6 +421,7 @@ function buildGraph(
         const chain = [
           ...(asset.hdr && options.tonemap ? [TONEMAP] : []),
           `fps=${fps}`,
+          ...cropFilter(asset, kept),
           ...a.filters,
           `setpts=PTS-STARTPTS+${start}/TB`,
         ];
@@ -420,7 +432,7 @@ function buildGraph(
         last = `o${n}`;
         return;
       }
-      const { width, height, rotation, bounds } = computeLayout(
+      const { width, height, rotation, bounds, source } = computeLayout(
         asset.width,
         asset.height,
         W,
@@ -430,6 +442,7 @@ function buildGraph(
       const chain = [
         ...(asset.hdr && options.tonemap ? [TONEMAP] : []),
         `fps=${fps}`,
+        ...cropFilter(asset, source),
         // Converting to BT.709 here keeps colours the same as the preview for every source.
         `scale=${width}:${height}:flags=bicubic:out_color_matrix=bt709:out_range=tv`,
         'setsar=1',

@@ -48,6 +48,11 @@ interface AppState {
   transcription: TranscriptionStatus | null;
   /** Loaded transcripts by asset id. */
   transcripts: Record<string, Transcript>;
+  /** The clip whose crop is being edited in the crop window (ADR-034). */
+  cropItemId: string | null;
+  /** Show where YouTube's Shorts buttons and text cover the frame. */
+  safeZones: boolean;
+  setSafeZones(on: boolean): void;
 
   select(id: string | null): void;
   selectItems(ids: string[]): void;
@@ -113,6 +118,12 @@ export const useApp = create<AppState>((set) => ({
   clipboard: [],
   transcription: null,
   transcripts: {},
+  cropItemId: null,
+  safeZones: stored('recit.safeZones') === '1',
+  setSafeZones: (safeZones) => {
+    store('recit.safeZones', safeZones ? '1' : '0');
+    set({ safeZones });
+  },
   previewEngine: stored('recit.previewEngine') === 'compatible' ? 'compatible' : 'gpu',
   gpuFailed: null,
   setPreviewEngine: (previewEngine) => {

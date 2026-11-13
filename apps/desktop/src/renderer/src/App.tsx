@@ -10,6 +10,7 @@ import { RightPanel } from './layout/RightPanel';
 import { StatusBar } from './layout/StatusBar';
 import { Timeline } from './timeline/Timeline';
 import { ExportDialogHost, openExportDialog } from './timeline/ExportDialog';
+import { CropDialog } from './timeline/CropDialog';
 import { SequenceSettingsHost } from './timeline/SequenceSettings';
 import { shuttle, stepFrames, togglePlay } from './timeline/ProgramMonitor';
 import { ContextMenuHost } from './ui/ContextMenu';
@@ -55,6 +56,7 @@ export function App() {
       <RightsDialogHost />
       <SequenceSettingsHost />
       <ExportDialogHost />
+      <CropDialog />
       <ContextMenuHost />
       <Toasts />
       {dragging && (

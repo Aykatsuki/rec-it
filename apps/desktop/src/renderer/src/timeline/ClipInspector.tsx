@@ -7,6 +7,8 @@ import {
   RotateCw,
   Volume2,
   VolumeX,
+  Crop as CropIcon,
+  LayoutPanelTop,
 } from 'lucide-react';
 import type { Sequence, TimelineItem, Track, Transform } from '@rec-it/core';
 import type { MediaAsset } from '@rec-it/ipc-contract';
@@ -24,6 +26,7 @@ import {
   commitTransform,
   commitVolume,
   edit,
+  facecamLayout,
   jumpToKeyframe,
   keyframeAt,
   keyframeTimes,
@@ -165,6 +168,39 @@ export function ClipInspector({
                 {f === 'fill' ? 'Fill frame (crop)' : 'Fit whole picture'}
               </button>
             ))}
+          </div>
+          <div className="inspector__crop">
+            <Button
+              size="sm"
+              icon={<CropIcon size={14} />}
+              disabled={track.locked}
+              onClick={() => useApp.setState({ cropItemId: item.id })}
+              data-testid="open-crop"
+            >
+              {item.transform.crop ? 'Edit crop…' : 'Crop…'}
+            </Button>
+            {item.transform.crop && (
+              <Button
+                size="sm"
+                disabled={track.locked}
+                onClick={() =>
+                  void setTransform({ crop: { left: 0, top: 0, right: 0, bottom: 0 } })
+                }
+              >
+                Remove crop
+              </Button>
+            )}
+            {asset?.kind === 'video' && (
+              <Button
+                size="sm"
+                icon={<LayoutPanelTop size={14} />}
+                disabled={track.locked}
+                onClick={() => void facecamLayout(item.id)}
+                title="Facecam on top, gameplay below, from this one clip"
+              >
+                Facecam + gameplay
+              </Button>
+            )}
           </div>
           <Slider
             label="Scale"

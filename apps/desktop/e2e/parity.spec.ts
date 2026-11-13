@@ -400,4 +400,84 @@ test.describe('preview and export match', () => {
       await app.close();
     }
   });
+
+  test('golden frames: cropped clips (facecam + gameplay layout)', async () => {
+    const userData = tempUserData();
+    const shots = join(userData, 'shots');
+    mkdirSync(shots);
+    const { app, page } = await launch(userData, env());
+    try {
+      await createProject(page, 'Crop parity');
+      await mockOpenDialog(app, [fx.video]);
+      await page.getByRole('button', { name: 'Import footage' }).click();
+      await page.getByLabel(/I have the right/).check();
+      await page.getByRole('button', { name: 'Import' }).last().click();
+      await expect(page.locator('[data-testid=asset-card][data-status=ready]')).toHaveCount(1, {
+        timeout: 60_000,
+      });
+      await page.locator('[data-testid=asset-card]').dblclick();
+      await page.getByTestId('timeline-item').click();
+      await page.getByRole('button', { name: 'Facecam + gameplay' }).click();
+      // Put the "facecam" over the moving box's path: the middle of the picture.
+      const box = (await page.getByTestId('crop-box').boundingBox())!;
+      await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+      await page.mouse.down();
+      await page.mouse.move(box.x + box.width / 2 + 120, box.y + box.height / 2 + 90, { steps: 4 });
+      await page.mouse.up();
+      await page.getByRole('button', { name: 'Apply' }).click();
+      await page.keyboard.press('Escape');
+      await expect(page.getByTestId('timeline-item')).toHaveCount(2);
+
+      const t = 1;
+      await page.getByTestId('ruler').click({ position: { x: t * ZOOM, y: 10 } });
+      await expect(page.getByTestId('program-time')).toContainText('00:01.000');
+      await page.waitForFunction((at) => {
+        const c = document.querySelector<HTMLCanvasElement>('[data-testid=program-canvas]');
+        return !c || c.dataset.time === at;
+      }, '1.000');
+      await page.waitForTimeout(300);
+      const preview = join(shots, 'preview-crop.png');
+      await page.locator('.program').screenshot({ path: preview });
+
+      const out = join(userData, 'crop.mp4');
+      await page.getByTestId('export-button').click();
+      await page.getByRole('radio', { name: 'YouTube Short', exact: true }).click();
+      await setExportTarget(app, page, out);
+      await page
+        .getByTestId('export-dialog')
+        .getByRole('button', { name: /Export$/ })
+        .click();
+      await expect(page.getByTestId('export-status')).toHaveAttribute('data-state', 'done', {
+        timeout: 120_000,
+      });
+      const [w, h] = execFileSync(
+        bins!.ffprobe,
+        ['-v', 'error', '-show_entries', 'stream=width,height', '-of', 'csv=p=0', preview],
+        { encoding: 'utf8' },
+      )
+        .trim()
+        .split(',')
+        .map(Number);
+      const exported = join(shots, 'export-crop.png');
+      execFileSync(bins!.ffmpeg, [
+        '-v',
+        'error',
+        '-y',
+        '-ss',
+        String(t),
+        '-i',
+        out,
+        '-frames:v',
+        '1',
+        '-vf',
+        `scale=${w}:${h}:flags=area`,
+        exported,
+      ]);
+      const score = ssim(bins!.ffmpeg, preview, exported);
+      console.info(`Crop SSIM ${score}`);
+      expect(score).toBeGreaterThanOrEqual(MIN_SSIM);
+    } finally {
+      await app.close();
+    }
+  });
 });
