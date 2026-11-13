@@ -314,6 +314,11 @@ test.describe('preview and export match', () => {
       await expect(page.getByTestId('transcript-words').getByRole('option')).toHaveCount(6, {
         timeout: 60_000,
       });
+      await page.getByRole('tab', { name: 'Captions' }).click();
+      await page.getByRole('button', { name: 'Generate captions' }).click();
+      await expect(page.locator('[data-testid=timeline-item][data-kind=caption]')).not.toHaveCount(
+        0,
+      );
       // Big captions so that text, not the video, dominates the comparison; one per style family.
       const cases: [number, string][] = [
         [1.5, 'highlight'],
@@ -335,7 +340,7 @@ test.describe('preview and export match', () => {
             command: {
               type: 'captions.update',
               sequenceId: state.doc.sequences[0]!.id,
-              captions: { enabled: true, style, size: 1.8, position: 0.5, wordsPerLine: 2 },
+              captions: { style, size: 1.8, position: 0.5, wordsPerLine: 2 },
             },
           });
         }, style);

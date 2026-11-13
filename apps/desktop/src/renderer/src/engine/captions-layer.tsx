@@ -8,7 +8,7 @@ import modernWasmUrl from 'jassub/dist/wasm/jassub-worker-modern.wasm?url';
 import wasmWorkerUrl from 'jassub/dist/wasm/jassub-worker.js?url';
 import modernWasmWorkerUrl from 'jassub/dist/wasm/jassub-worker-modern.js?url';
 import { FONT_FILES, sequenceCaptionsAss } from '@rec-it/captions';
-import type { Sequence, TranscriptEdits } from '@rec-it/core';
+import type { Sequence } from '@rec-it/core';
 import { useApp } from '../store';
 
 // The bundled fonts (resources/fonts), as URLs the worker can fetch.
@@ -24,14 +24,29 @@ const urlOf = (file: string) =>
 const EMPTY =
   '[Script Info]\nScriptType: v4.00+\n\n[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n';
 
-/** The sequence's captions as ASS, rebuilt when the timeline, transcripts or corrections change. */
+/**
+ * The sequence's caption clips as ASS. While a caption is being dragged in the preview, its draft
+ * transform is used, so the text follows the mouse.
+ */
 export function useCaptionsAss(seq: Sequence): string | null {
-  const transcripts = useApp((s) => s.transcripts);
-  const edits = useApp((s) => s.docState?.doc.transcriptEdits) as TranscriptEdits | undefined;
-  return useMemo(
-    () => sequenceCaptionsAss(seq, (id) => transcripts[id]?.words, edits),
-    [seq, transcripts, edits],
-  );
+  const draft = useApp((s) => s.draftTransform);
+  return useMemo(() => {
+    const isCaption =
+      draft &&
+      seq.tracks.some((t) => t.kind === 'caption' && t.items.some((i) => i.id === draft.itemId));
+    const shown = isCaption
+      ? {
+          ...seq,
+          tracks: seq.tracks.map((t) => ({
+            ...t,
+            items: t.items.map((i) =>
+              i.id === draft.itemId ? { ...i, transform: draft.transform } : i,
+            ),
+          })),
+        }
+      : seq;
+    return sequenceCaptionsAss(shown);
+  }, [seq, draft]);
 }
 
 export function CaptionsLayer({

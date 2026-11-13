@@ -226,6 +226,24 @@ describe('timeline commands', () => {
                 ripple: rnd() > 0.5,
               },
               {
+                type: 'captions.generate',
+                sequenceId: 'seq',
+                captions: [0, 1, 2].map((k) => {
+                  const start = Math.round(rnd() * secondsToFlicks(8));
+                  return {
+                    start,
+                    duration: Math.round(rnd() * secondsToFlicks(3)),
+                    words: [{ text: `w${k}`, start, end: start + secondsToFlicks(0.3) }],
+                  };
+                }),
+              },
+              {
+                type: 'caption.edit',
+                sequenceId: 'seq',
+                itemId: pick(items).id,
+                text: rnd() > 0.5 ? 'one two' : 'single',
+              },
+              {
                 type: 'item.cutRange',
                 sequenceId: 'seq',
                 itemId: pick(items).id,

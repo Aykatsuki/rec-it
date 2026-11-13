@@ -180,6 +180,17 @@ export function copySelected(): boolean {
     transform: { ...item.transform },
     ...(item.keyframes ? { keyframes: structuredClone(item.keyframes) } : {}),
     ...(item.linkId ? { linkKey: item.linkId } : {}),
+    ...(item.caption
+      ? {
+          caption: item.caption.words
+            .filter((w) => w.end > item.sourceIn && w.start < item.sourceIn + item.duration)
+            .map((w) => ({
+              text: w.text,
+              start: Math.max(0, w.start - item.sourceIn),
+              end: Math.min(item.duration, w.end - item.sourceIn),
+            })),
+        }
+      : {}),
   }));
   useApp.setState({ clipboard });
   return true;
@@ -215,6 +226,20 @@ export async function paste(at?: number, trackId?: string): Promise<void> {
     if (!track) continue;
     const id = `item_${crypto.randomUUID()}`;
     ids.push(id);
+    if (clip.caption) {
+      commands.push({
+        type: 'caption.add',
+        sequenceId: seq.id,
+        trackId: track.id,
+        id,
+        start: start + clip.offset,
+        duration: clip.duration,
+        text: clip.caption.map((w) => w.text).join(' '),
+        words: clip.caption,
+        transform: clip.transform,
+      });
+      continue;
+    }
     commands.push({
       type: 'item.add',
       sequenceId: seq.id,

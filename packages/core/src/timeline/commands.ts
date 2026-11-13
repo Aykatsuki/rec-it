@@ -1,7 +1,9 @@
 import { createId } from '../ids';
 import { frameDuration, snapToFrame, secondsToFlicks, type Flicks, type Rational } from '../time';
 import {
+  CAPTION_ASSET,
   CAPTION_STYLES,
+  type CaptionContent,
   DEFAULT_CAPTIONS,
   DEFAULT_TRANSFORM,
   type CaptionSettings,
@@ -137,6 +139,35 @@ export type Command =
     }
   /** Turns automatic captions on or off and changes their look (ADR-032). */
   | { type: 'captions.update'; sequenceId: string; captions: Partial<CaptionSettings> }
+  /**
+   * Puts captions on a caption track (creating one at the top if needed), replacing what was
+   * there. Times are timeline flicks. ADR-033.
+   */
+  | {
+      type: 'captions.generate';
+      sequenceId: string;
+      trackId?: string;
+      captions: {
+        start: number;
+        duration: number;
+        words: { text: string; start: number; end: number }[];
+      }[];
+    }
+  /** Adds one caption clip with the given text, its words spread evenly over its length. */
+  | {
+      type: 'caption.add';
+      sequenceId: string;
+      trackId: string;
+      start: number;
+      duration: number;
+      text: string;
+      /** Exact word timings (flicks from the clip's start), e.g. when pasting. */
+      words?: { text: string; start: number; end: number }[];
+      transform?: Partial<Transform>;
+      id?: string;
+    }
+  /** Replaces a caption clip's text; timing is kept per word when the word count is unchanged. */
+  | { type: 'caption.edit'; sequenceId: string; itemId: string; text: string }
   /** Corrects one transcript word (empty text hides it from captions). */
   | { type: 'transcript.editWord'; assetId: string; index: number; from: string; to: string }
   /** Several commands applied as one undo step. Fails as a whole if any part fails. */
@@ -209,7 +240,42 @@ function clearRange(track: Track, start: number, end: number, exceptId?: string)
   sortItems(track);
 }
 
+const TRACK_LETTER: Record<TrackKind, string> = { video: 'V', audio: 'A', caption: 'C' };
+
+function captionItem(
+  id: string,
+  start: number,
+  duration: number,
+  words: CaptionContent['words'],
+): TimelineItem {
+  return {
+    id,
+    assetId: CAPTION_ASSET,
+    start: start as Flicks,
+    duration: duration as Flicks,
+    sourceIn: 0 as Flicks,
+    volume: 1,
+    muted: false,
+    transform: { ...DEFAULT_TRANSFORM },
+    caption: { words },
+  };
+}
+
+/** Words of `text` spread over [from, to) (flicks) by letter count. */
+function spreadWords(text: string, from: number, to: number): CaptionContent['words'] {
+  const texts = text.split(/\s+/).filter(Boolean);
+  const total = texts.reduce((n, t) => n + t.length, 0) || 1;
+  let t = from;
+  return texts.map((w, i) => {
+    const end = i === texts.length - 1 ? to : t + Math.round(((to - from) * w.length) / total);
+    const word = { text: w, start: Math.round(t) as Flicks, end: Math.round(end) as Flicks };
+    t = end;
+    return word;
+  });
+}
+
 function checkPlacement(track: Track, kind: 'video' | 'audio' | 'image', hasAudio: boolean): void {
+  if (track.kind === 'caption') fail('Only captions go on caption tracks.');
   if (track.kind === 'video' && kind === 'audio') fail('Audio files go on an audio track.');
   if (track.kind === 'audio' && kind === 'image') fail('Images go on a video track.');
   if (track.kind === 'audio' && kind === 'video' && !hasAudio)
@@ -219,7 +285,7 @@ function checkPlacement(track: Track, kind: 'video' | 'audio' | 'image', hasAudi
 function nextTrackNumber(seq: Sequence, kind: TrackKind): number {
   const used = new Set(seq.tracks.filter((t) => t.kind === kind).map((t) => t.name));
   let n = 1;
-  while (used.has(`${kind === 'video' ? 'V' : 'A'}${n}`)) n++;
+  while (used.has(`${TRACK_LETTER[kind]}${n}`)) n++;
   return n;
 }
 
@@ -271,20 +337,20 @@ export function applyCommand(doc: ProjectDocument, command: Command, assets: Ass
     case 'track.add': {
       const seq = sequenceOf(doc, command.sequenceId);
       const n = nextTrackNumber(seq, command.kind);
-      const track = blankTrack(
-        command.kind,
-        `${command.kind === 'video' ? 'V' : 'A'}${n}`,
-        command.id,
-      );
-      if (command.kind === 'video') seq.tracks.unshift(track);
-      else seq.tracks.push(track);
+      const track = blankTrack(command.kind, `${TRACK_LETTER[command.kind]}${n}`, command.id);
+      if (command.kind === 'caption') seq.tracks.unshift(track);
+      else if (command.kind === 'video') {
+        // New video tracks go on top of the video tracks, below any caption tracks.
+        const firstVideo = seq.tracks.findIndex((t) => t.kind === 'video');
+        seq.tracks.splice(firstVideo < 0 ? 0 : firstVideo, 0, track);
+      } else seq.tracks.push(track);
       return;
     }
     case 'track.remove': {
       const seq = sequenceOf(doc, command.sequenceId);
       const track = trackOf(seq, command.trackId);
       unlocked(track);
-      if (seq.tracks.filter((t) => t.kind === track.kind).length <= 1)
+      if (track.kind !== 'caption' && seq.tracks.filter((t) => t.kind === track.kind).length <= 1)
         fail(`A sequence needs at least one ${track.kind} track.`);
       seq.tracks = seq.tracks.filter((t) => t.id !== track.id);
       return;
@@ -359,6 +425,12 @@ export function applyCommand(doc: ProjectDocument, command: Command, assets: Ass
         const to = trackOf(seq, move.trackId);
         unlocked(from.track);
         unlocked(to);
+        if ((to.kind === 'caption') !== !!from.item.caption)
+          fail(
+            from.item.caption
+              ? 'Captions stay on caption tracks.'
+              : 'Only captions go on caption tracks.',
+          );
         if (to.kind !== from.track.kind) {
           const asset = assets(from.item.assetId);
           if (!asset) fail('That media is missing.');
@@ -524,10 +596,96 @@ export function applyCommand(doc: ProjectDocument, command: Command, assets: Ass
       if (!Object.keys(edits).length) delete doc.transcriptEdits;
       return;
     }
+    case 'captions.generate': {
+      const seq = sequenceOf(doc, command.sequenceId);
+      let track = command.trackId
+        ? trackOf(seq, command.trackId)
+        : seq.tracks.find((t) => t.kind === 'caption');
+      if (track && track.kind !== 'caption') fail('Captions go on a caption track.');
+      if (!track) {
+        track = blankTrack('caption', `C${nextTrackNumber(seq, 'caption')}`, command.trackId);
+        seq.tracks.unshift(track);
+      }
+      unlocked(track);
+      const items: TimelineItem[] = [];
+      for (const c of command.captions) {
+        const start = snap(seq, c.start);
+        const end = Math.max(snap(seq, c.start + c.duration), start + frameOf(seq));
+        const words = c.words
+          .map((w) => ({
+            text: w.text.trim(),
+            start: (w.start - start) as Flicks,
+            end: (w.end - start) as Flicks,
+          }))
+          .filter((w) => w.text);
+        if (!words.length) continue;
+        const prev = items.at(-1);
+        // Captions on one track never overlap: an earlier one ends where the next begins.
+        if (prev && itemEnd(prev) > start) {
+          if (start - prev.start < frameOf(seq)) continue;
+          prev.duration = (start - prev.start) as Flicks;
+        }
+        items.push(captionItem(createId('item'), start, end - start, words));
+      }
+      track.items = items;
+      seq.captions = { ...DEFAULT_CAPTIONS, ...seq.captions, enabled: true };
+      return;
+    }
+    case 'caption.add': {
+      const seq = sequenceOf(doc, command.sequenceId);
+      const track = trackOf(seq, command.trackId);
+      unlocked(track);
+      if (track.kind !== 'caption') fail('Captions go on a caption track.');
+      const start = snap(seq, command.start);
+      const duration = Math.max(snap(seq, command.duration), frameOf(seq));
+      const words = command.words?.length
+        ? command.words.map((w) => ({
+            text: w.text,
+            start: w.start as Flicks,
+            end: w.end as Flicks,
+          }))
+        : spreadWords(command.text, 0, duration);
+      if (!words.length) fail('Type some text for the caption.');
+      clearRange(track, start, start + duration);
+      const item = captionItem(command.id ?? createId('item'), start, duration, words);
+      if (command.transform)
+        item.transform = cleanTransform({ ...item.transform, ...command.transform });
+      track.items.push(item);
+      sortItems(track);
+      seq.captions ??= { ...DEFAULT_CAPTIONS };
+      return;
+    }
+    case 'caption.edit': {
+      const seq = sequenceOf(doc, command.sequenceId);
+      const { track, item } = findItem(seq, command.itemId);
+      unlocked(track);
+      if (!item.caption) fail('That clip is not a caption.');
+      const from = item.sourceIn;
+      const to = item.sourceIn + item.duration;
+      const visible = item.caption!.words.filter(
+        (w) => (w.start + w.end) / 2 >= from && (w.start + w.end) / 2 < to,
+      );
+      const hidden = item.caption!.words.filter((w) => !visible.includes(w));
+      const texts = command.text.split(/\s+/).filter(Boolean);
+      if (!texts.length) fail('A caption needs some text. Delete the clip to remove it.');
+      if (texts.length > 200) fail('That caption is too long.');
+      let words: CaptionContent['words'];
+      if (texts.length === visible.length) {
+        words = visible.map((w, i) => ({ ...w, text: texts[i]! }));
+      } else {
+        // Share the time the old words covered (or the whole clip) by letter count.
+        const a = visible.length ? visible[0]!.start : from;
+        const b = visible.length ? visible.at(-1)!.end : to;
+        words = spreadWords(command.text, Math.max(from, a), Math.min(to, Math.max(b, a + 1)));
+      }
+      item.caption = { words: [...hidden, ...words].sort((x, y) => x.start - y.start) };
+      return;
+    }
     case 'item.link': {
       const seq = sequenceOf(doc, command.sequenceId);
       const items = [...new Set(command.itemIds)].map((id) => findItem(seq, id));
       if (items.length < 2) fail('Select at least two clips to link.');
+      if (items.some((i) => i.item.caption)) fail('Captions cannot be linked.');
       const linkId = command.linkId ?? createId('link');
       for (const { track, item } of items) {
         unlocked(track);
@@ -549,6 +707,7 @@ export function applyCommand(doc: ProjectDocument, command: Command, assets: Ass
       const seq = sequenceOf(doc, command.sequenceId);
       const { track, item } = findItem(seq, command.itemId);
       unlocked(track);
+      if (item.caption) fail('Captions cannot be animated yet.');
       const half = Math.floor(frameOf(seq) / 2);
       // Snap to the sequence's frame grid as seen on the timeline.
       const local = snap(seq, item.start + (command.t - item.sourceIn)) - item.start;

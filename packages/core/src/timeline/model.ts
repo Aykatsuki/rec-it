@@ -56,9 +56,25 @@ export interface TimelineItem {
   keyframes?: Partial<Record<KeyframeProperty, Keyframe[]>>;
   /** Clips sharing a linkId (a video and its detached sound) move, trim, split and delete together. */
   linkId?: string;
+  /** Set on caption clips (on caption tracks; assetId is CAPTION_ASSET). ADR-033. */
+  caption?: CaptionContent;
 }
 
-export type TrackKind = 'video' | 'audio';
+/** The pseudo media id of caption clips (they have no media file). */
+export const CAPTION_ASSET = 'captions';
+
+/**
+ * A caption clip's words. Times are in the clip's own "source" time, like media: the word at
+ * `start` shows at timeline time `item.start + (start - item.sourceIn)`. Trimming and splitting a
+ * caption therefore work exactly like trimming and splitting a video clip.
+ */
+export interface CaptionContent {
+  words: { text: string; start: Flicks; end: Flicks }[];
+}
+
+export const isCaption = (item: TimelineItem): boolean => item.caption !== undefined;
+
+export type TrackKind = 'video' | 'audio' | 'caption';
 
 export interface Track {
   id: string;
@@ -77,7 +93,7 @@ export interface Sequence {
   width: number;
   height: number;
   fps: Rational;
-  /** Video tracks first, top layer first; then audio tracks. */
+  /** Caption tracks first, then video tracks (top layer first), then audio tracks. */
   tracks: Track[];
   /** Automatic captions from the transcripts of the clips (ADR-032). Absent = off. */
   captions?: CaptionSettings;

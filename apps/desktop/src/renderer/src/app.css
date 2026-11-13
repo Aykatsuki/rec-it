@@ -1428,6 +1428,23 @@ button.statusbar__item:hover {
 .tl__header[data-kind='audio'] .track-header__chip {
   background: var(--track-audio);
 }
+.tl__header[data-kind='caption'] .track-header__chip {
+  background: var(--track-caption);
+  color: #1a1400;
+}
+.tl__row[data-kind='caption'] {
+  height: 40px;
+}
+.tl__item[data-kind='caption'] {
+  background: #5a4511;
+  border-color: rgb(245 185 66 / 45%);
+}
+.tl__item-label--caption {
+  overflow: hidden;
+  color: #fff3d1;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .tl__header-buttons {
   display: flex;
 }
@@ -2353,4 +2370,42 @@ button.statusbar__item:hover {
 .captions__segmented button[aria-pressed='true'] {
   background: var(--surface-4);
   color: var(--text-1);
+}
+.captions__generate {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+.captions__buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+.captions__confirm {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--warn);
+  border-radius: var(--radius-md);
+  color: var(--text-1);
+  font-size: var(--text-sm);
+}
+.captions__confirm p {
+  margin: 0;
+}
+.captions__text {
+  width: 100%;
+  box-sizing: border-box;
+  min-height: 64px;
+  resize: vertical;
+  font: inherit;
+  font-size: var(--text-md);
+  line-height: 1.4;
+}
+.inspector__title {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-2);
 }

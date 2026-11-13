@@ -36,7 +36,7 @@ import { ExportService, type CaptionsInput, type ExportToolchain } from './servi
 import { sequenceCaptionsAss } from '@rec-it/captions';
 import { TranscriptService } from './services/transcript-service';
 import { ProjectService } from './services/project-service';
-import type { Command, Sequence, TranscriptEdits } from '@rec-it/core';
+import type { Command, Sequence } from '@rec-it/core';
 import { SidecarClient, checkSidecar } from './services/sidecar';
 
 const BACKEND_VERSION = '0.1.0';
@@ -305,14 +305,13 @@ export class BackendApp {
 
   /** Burned-in captions for an export, built exactly as the preview builds them (ADR-032). */
   private captionsFor(seq: Sequence): CaptionsInput | null {
-    if (!seq.captions?.enabled) return null;
     const fontsDir = this.config.fontsDir;
+    // Caption clips on caption tracks (ADR-033); the same function feeds the preview.
+    const ass = sequenceCaptionsAss(seq);
+    if (!ass) return null;
     if (!fontsDir || !existsSync(fontsDir))
       throw new Error('The caption fonts are missing from this installation.');
-    const edits = this.projects.document().state().doc.transcriptEdits as
-      TranscriptEdits | undefined;
-    const ass = sequenceCaptionsAss(seq, (id) => this.transcripts.get(id)?.words, edits);
-    return ass ? { ass, fontsDir } : null;
+    return { ass, fontsDir };
   }
 
   private sequence(sequenceId: string): Sequence {

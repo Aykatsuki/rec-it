@@ -260,6 +260,13 @@ export function ProgramMonitor({ seq }: { seq: Sequence }) {
       { item: m.item, track: m.track, srcW: v.displayWidth, srcH: v.displayHeight, layer: m.layer },
     ];
   });
+  // Caption clips on screen can be selected and moved too; they sit above every picture.
+  seq.tracks.forEach((track, i) => {
+    if (track.kind !== 'caption' || track.hidden) return;
+    for (const item of track.items)
+      if (playhead >= toSeconds(item.start) && playhead < itemEndSec(item))
+        visibleLayers.push({ item, track, srcW: 1, srcH: 1, layer: 10_000 - i, caption: true });
+  });
 
   const register = (id: string) => (el: HTMLMediaElement | null) => {
     if (el) elements.current.set(id, el);
@@ -268,7 +275,16 @@ export function ProgramMonitor({ seq }: { seq: Sequence }) {
 
   return (
     <>
-      <div className="preview__well" ref={well}>
+      <div
+        className="preview__well"
+        ref={well}
+        data-testid="preview-well"
+        onPointerDown={(e) => {
+          // A click on the empty area around the frame deselects (a clip that fills the frame
+          // leaves nowhere inside it to click off).
+          if (e.button === 0 && e.target === e.currentTarget) useApp.getState().selectItems([]);
+        }}
+      >
         <div
           className="program-stage"
           style={{ width: box.w, height: box.h }}

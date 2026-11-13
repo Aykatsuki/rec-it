@@ -6,8 +6,10 @@ import {
   type Sequence,
   type TimelineItem,
   type Track,
+  type Layout,
   type Transform,
 } from '@rec-it/core';
+import { captionBox } from '../engine/caption-geometry';
 import { commitTransform, primaryClip, toFlicks } from '../edit';
 import { useApp } from '../store';
 
@@ -19,6 +21,17 @@ export interface VisibleLayer {
   srcH: number;
   /** Stacking order, higher is on top. */
   layer: number;
+  /** Caption clips are boxed around their text instead of a picture (ADR-033). */
+  caption?: boolean;
+}
+
+/** Where a layer sits in the frame with transform `t`. */
+function layoutOf(layer: VisibleLayer, seq: Sequence, t: Transform): Layout {
+  if (layer.caption) {
+    const box = captionBox(seq, layer.item, t);
+    if (box) return box;
+  }
+  return computeLayout(layer.srcW, layer.srcH, seq.width, seq.height, t);
 }
 
 type Corner = 'nw' | 'ne' | 'se' | 'sw';
@@ -46,7 +59,7 @@ export const transformFor = (
 ): Transform => (draft?.itemId === item.id ? draft.transform : transformAt(item, toFlicks(at)));
 
 function centreOf(layer: VisibleLayer, seq: Sequence, t: Transform) {
-  const l = computeLayout(layer.srcW, layer.srcH, seq.width, seq.height, t);
+  const l = layoutOf(layer, seq, t);
   return { l, x: l.left + l.width / 2, y: l.top + l.height / 2 };
 }
 
@@ -172,7 +185,7 @@ export function TransformOverlay({
       let cx = d.c0.x + dx;
       let cy = d.c0.y + dy;
       if (snap) {
-        const { bounds } = computeLayout(d.layer.srcW, d.layer.srcH, seq.width, seq.height, d.t0);
+        const { bounds } = layoutOf(d.layer, seq, d.t0);
         const snapAxis = (c: number, size: number, frame: number) => {
           const targets = [frame / 2, size / 2, frame - size / 2];
           for (const target of targets) if (Math.abs(c - target) < th) return target;
@@ -239,7 +252,7 @@ export function TransformOverlay({
   let frame = null;
   if (target) {
     const t = transformFor(target.item, draft, playhead);
-    const l = computeLayout(target.srcW, target.srcH, seq.width, seq.height, t);
+    const l = layoutOf(target, seq, t);
     const corners: Corner[] = ['nw', 'ne', 'se', 'sw'];
     frame = (
       <div

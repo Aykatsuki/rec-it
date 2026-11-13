@@ -46,7 +46,7 @@ test.describe('captions', () => {
     if (fx) rmSync(fx.dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 500 });
   });
 
-  test('correct a word, turn on captions, and see them in the preview', async () => {
+  test('generate caption clips, edit, move and delete them, and deselect by clicking off', async () => {
     const { app, page } = await launch(tempUserData(), {
       ...(bins!.source === 'path' ? {} : { RECIT_FFMPEG_PATH: bins!.ffmpeg }),
       RECIT_DISABLE_SIDECAR: '0',
@@ -89,36 +89,82 @@ test.describe('captions', () => {
       await page.getByTestId('word-input').press('Enter');
       await expect(words.nth(3)).toHaveClass(/is-hidden/);
 
-      // Captions off: nothing drawn.
-      // Captions off: no caption layer over the picture at all.
+      // No captions yet: no caption layer over the picture at all.
       const canvas = page.getByTestId('captions-canvas');
       await words.nth(1).click(); // playhead into "Hello"
       await expect(canvas).toHaveCount(0);
       await page.mouse.move(0, 0);
       const baseline = await page.getByTestId('program-monitor').screenshot();
 
+      // Generate: caption clips on a new caption track, drawn over the picture.
       await page.getByRole('tab', { name: 'Captions' }).click();
-      await page.getByLabel('Show captions').click();
-      await expect(page.getByLabel('Show captions')).toBeChecked();
+      await page.getByRole('button', { name: 'Generate captions' }).click();
+      const captionClips = page.locator('[data-testid=timeline-item][data-kind=caption]');
+      // Six words fit one caption (3 per line × 2 lines); the hidden "word3" is left out.
+      await expect(captionClips).toHaveCount(1);
+      await expect(captionClips.first()).toHaveAttribute(
+        'title',
+        'word1 Hello there word4 word5 word6',
+      );
       await expect(canvas).toHaveAttribute('data-ready', 'true', { timeout: 30_000 });
       await expect
         .poll(() => changedPixels(page, baseline), { timeout: 10_000 })
         .toBeGreaterThan(400);
-      const highlight = await page.getByTestId('program-monitor').screenshot();
+      const generated = await page.getByTestId('program-monitor').screenshot();
 
-      // Another style draws something else; undo brings back the first.
+      // Click the caption in the preview: it is selected (above the video) and can be dragged up.
+      const box = (await page.getByTestId('program-monitor').boundingBox())!;
+      const captionY = box.y + box.height * 0.68;
+      await page.mouse.click(box.x + box.width / 2, captionY);
+      await expect(page.getByTestId('caption-inspector')).toBeVisible();
+      await page.mouse.move(box.x + box.width / 2, captionY);
+      await page.mouse.down();
+      await page.mouse.move(box.x + box.width / 2, captionY - box.height * 0.3, { steps: 6 });
+      await page.mouse.up();
+      await expect(
+        page.locator('.captions__row', { hasText: 'Up / down' }).locator('.captions__value'),
+      ).toHaveText(/^-(29|30|31)%$/);
+      await expect
+        .poll(() => changedPixels(page, generated), { timeout: 10_000 })
+        .toBeGreaterThan(400);
+
+      // Edit its words in the inspector.
+      await page.getByTestId('caption-text').fill('Totally new words');
+      await page.getByTestId('caption-text').press('Enter');
+      await expect(captionClips.first()).toHaveAttribute('title', 'Totally new words');
+
+      // Clicking the empty area around the frame deselects (the clip fills the frame).
+      await expect(page.getByTestId('transform-box')).toBeVisible();
+      const well = (await page.getByTestId('preview-well').boundingBox())!;
+      await page.mouse.click(well.x + 5, well.y + well.height / 2);
+      await expect(page.getByTestId('transform-box')).toHaveCount(0);
+
+      // Delete the caption from the timeline; generate again (asks first if any are left).
+      await page.getByRole('tab', { name: 'Captions' }).click();
+      // A caption added at the playhead overwrites the middle of the generated one (3 clips).
+      await page.getByRole('button', { name: 'Add caption' }).click();
+      await expect(captionClips).toHaveCount(3);
+      await expect(captionClips.nth(1)).toHaveAttribute('title', 'New caption');
+      await captionClips.first().click();
+      await page.keyboard.press('Delete');
+      await expect(captionClips).toHaveCount(2);
+      await page.getByRole('tab', { name: 'Captions' }).click();
+      await page.getByRole('button', { name: 'Generate again' }).click();
+      await page.getByRole('button', { name: 'Replace captions' }).click();
+      await expect(captionClips).toHaveCount(1);
+      await expect(captionClips.first()).toHaveAttribute(
+        'title',
+        'word1 Hello there word4 word5 word6',
+      );
+
+      // Another style changes the picture; undo brings the first one back.
+      const highlight = await page.getByTestId('program-monitor').screenshot();
       await page.getByRole('button', { name: /Clean box/ }).click();
       await expect
         .poll(() => changedPixels(page, highlight), { timeout: 10_000 })
         .toBeGreaterThan(400);
       await page.keyboard.press('Control+Z');
       await expect.poll(() => changedPixels(page, highlight), { timeout: 10_000 }).toBeLessThan(50);
-
-      // Turning captions off removes the layer.
-      await page.getByLabel('Show captions').click();
-      await expect(page.getByLabel('Show captions')).not.toBeChecked();
-      await expect(canvas).toHaveCount(0);
-      await expect.poll(() => changedPixels(page, baseline), { timeout: 10_000 }).toBeLessThan(50);
       expect(errors.filter((e) => /caption/i.test(e))).toEqual([]);
     } finally {
       await app.close();

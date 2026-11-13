@@ -35,7 +35,8 @@ Each record states the decision, why it was made and what else was considered. R
 | 029 | GPU preview engine (WebCodecs + WebGL2), first version | Accepted |
 | 030 | Web Audio playback, keyframe dragging and a fast DOM timeline | Accepted |
 | 031 | Local transcription and text-based editing | Accepted |
-| 032 | Automatic captions and transcript corrections | Accepted |
+| 032 | Automatic captions and transcript corrections | Accepted (caption model superseded by 033) |
+| 033 | Captions become clips on caption tracks | Accepted |
 
 ---
 
@@ -439,3 +440,19 @@ Each record states the decision, why it was made and what else was considered. R
 - **JASSUB is patched to draw on normal canvases** (`patches/jassub@2.5.37.patch`, applied by pnpm). It requested `desynchronized` canvases, which Chromium on Windows with a hardware GPU presents as overlays without transparency: the whole caption layer became opaque black over the preview (found on the reference PC; CI's software rendering ignores the flag, so no automated test could see it). A unit test fails if an upgrade drops the patch, and the caption layer is only mounted while captions are shown.
 - **No libass, no burned-in captions.** If the FFmpeg in use lacks libass (Homebrew's build on macOS), exporting with captions on says so instead of failing inside FFmpeg; Rec-It's own FFmpeg builds include libass.
 - **Layout.** The placeholder Claude tab in the right panel is removed until Phase 7 (the top bar still shows the connection), so Inspector, Transcript and Captions fit.
+
+---
+
+## ADR-033 · Captions become clips on caption tracks
+
+**Status.** Accepted (13 Nov 2026, Phase 4 third slice). Supersedes the "captions are derived, not stored" part of ADR-032; keeps its styles, renderer, fonts and parity rules. Brings back the stored caption segments of ARCHITECTURE §6.5.
+
+**Context.** Derived captions always followed the transcript, but the user wants to edit captions freely after they are generated: move, resize, retime, rewrite and delete individual captions like any other layer.
+
+**Decisions.**
+- **Caption tracks.** A third track kind, `caption` (named C1, C2, …), sits above the video tracks. "Generate captions" (`captions.generate`) groups the timeline's transcript words (with corrections, ADR-032) into captions and puts one **caption clip** per caption on the first caption track, creating it if needed and replacing what was there (the button asks first when captions exist; Ctrl+Z undoes it). "Add caption" (`caption.add`) adds one at the playhead. After generation, captions no longer follow the transcript; generating again rebuilds them.
+- **Caption clips are ordinary timeline items** with `assetId: 'captions'` and a `caption: { words }` field. Word times are in the clip's own source time (like media), so the existing move, trim, split, delete, ripple, copy/paste and undo commands work on captions unchanged, and a trimmed or split caption shows only its words. Captions cannot move to video/audio tracks (nor media to caption tracks), be linked, or be keyframed (yet); the export's missing-media check skips them.
+- **Text.** `caption.edit` replaces a clip's text from the Inspector. With the same number of words each word keeps its timing (spelling fixes); otherwise the old words' time span is shared out by letter count.
+- **Placement.** Each caption clip uses the item transform: `x`/`y` offset its centre from the sequence's caption position, `scale` multiplies the style size, `rotation` turns it (ASS `\pos`, `\fscx/\fscy`, `\frz`). Captions are selected and dragged, resized and rotated in the preview with the same transform box as video; their box is measured from the text with the bundled fonts loaded into the page. They are hit-tested above all pictures. The Captions tab's style settings still apply to all captions; per-caption style overrides can come later.
+- **Rendering.** `sequenceCaptionsAss(seq)` compiles the caption clips of visible caption tracks (upper tracks on higher ASS layers); preview (JASSUB) and export (`ass` filter) both call it, as before. While a caption is dragged its draft transform is compiled, so the text follows the mouse. Golden-frame parity: 0.990 (Highlight) and 0.992 (Karaoke).
+- **Fix in the same change:** clicking the empty area around the preview frame now deselects (a clip that fills the frame left nowhere to click off), and selecting a caption while the Captions tab is open switches to its Inspector.

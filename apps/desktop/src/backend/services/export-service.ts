@@ -36,6 +36,7 @@ function checkMedia(seq: Sequence, assets: Assets): void {
   const missing = new Set<string>();
   for (const track of seq.tracks) {
     for (const item of track.items) {
+      if (item.caption) continue; // caption clips have no media file
       const asset = assets(item.assetId);
       if (!asset || !existsSync(asset.path))
         missing.add(asset ? basename(asset.path) : item.assetId);

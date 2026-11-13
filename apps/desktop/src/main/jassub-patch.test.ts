@@ -8,7 +8,7 @@ import { describe, expect, it } from 'vitest';
 // patches/jassub@*.patch turns it off; this fails if an upgrade drops the patch.
 describe('JASSUB patch', () => {
   it('draws captions on normal (transparent) canvases', () => {
-    const require = createRequire(join(__dirname, '../../../../package.json'));
+    const require = createRequire(join(__dirname, '../../package.json'));
     const root = dirname(require.resolve('jassub/package.json'));
     for (const file of ['2d-renderer.js', 'webgl1-renderer.js', 'webgl2-renderer.js']) {
       const source = readFileSync(join(root, 'dist/worker/renderers', file), 'utf8');

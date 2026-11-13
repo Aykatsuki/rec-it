@@ -1,6 +1,21 @@
 import { describe, expect, it } from 'vitest';
-import { DEFAULT_CAPTIONS } from '@rec-it/core';
-import { assColour, assTime, compileAss, segmentCaptions, type CaptionWord } from './index';
+import {
+  DEFAULT_CAPTIONS,
+  FRAME_RATES,
+  History,
+  emptyDocument,
+  secondsToFlicks,
+  type Command,
+} from '@rec-it/core';
+import {
+  assColour,
+  assTime,
+  compileAss,
+  generateCaptions,
+  segmentCaptions,
+  sequenceCaptionsAss,
+  type CaptionWord,
+} from './index';
 
 const say = (text: string, start = 0, gap = 0.1, len = 0.3): CaptionWord[] => {
   let t = start;
@@ -67,5 +82,76 @@ describe('ASS output', () => {
       expect(
         compileAss(words, { ...DEFAULT_CAPTIONS, style }, { width: 1080, height: 1920 }),
       ).toMatchSnapshot(style);
+  });
+});
+
+describe('caption clips', () => {
+  const S = secondsToFlicks;
+  const build = () => {
+    const h = new History(emptyDocument());
+    const lookup = (id: string) =>
+      id === 'clip'
+        ? { kind: 'video' as const, duration: S(10), hasAudio: true, width: 1920, height: 1080 }
+        : undefined;
+    const run = (c: Command) => h.execute(c, lookup);
+    run({
+      type: 'sequence.create',
+      id: 's',
+      name: 'S',
+      width: 1080,
+      height: 1920,
+      fps: FRAME_RATES.fps30,
+    });
+    const v1 = h.doc.sequences[0]!.tracks[1]!.id;
+    run({ type: 'item.add', sequenceId: 's', trackId: v1, assetId: 'clip', start: 0 });
+    // Transcript: "w1 w2 … w8", one word every 0.5 s.
+    const transcript = say('w1 w2 w3 w4 w5 w6 w7 w8', 0.1, 0.1, 0.4);
+    const captions = generateCaptions(
+      h.doc.sequences[0]!,
+      (id) => (id === 'clip' ? transcript : undefined),
+      undefined,
+    );
+    run({ type: 'captions.generate', sequenceId: 's', captions });
+    return { h, run, seq: () => h.doc.sequences[0]! };
+  };
+
+  it('generates one clip per caption from the transcript', () => {
+    const { seq } = build();
+    const track = seq().tracks[0]!;
+    expect(track.kind).toBe('caption');
+    expect(track.items.map((i) => i.caption!.words.map((w) => w.text).join(' '))).toEqual([
+      'w1 w2 w3 w4 w5 w6',
+      'w7 w8',
+    ]);
+  });
+
+  it('draws each clip where it was moved, sized and turned, and only its visible words', () => {
+    const { run, seq } = build();
+    const [first, second] = seq().tracks[0]!.items.map((i) => i.id);
+    run({
+      type: 'item.update',
+      sequenceId: 's',
+      itemId: first!,
+      transform: { x: 0.1, y: -0.2, scale: 1.5, rotation: 10 },
+    });
+    run({ type: 'item.trim', sequenceId: 's', itemId: second!, edge: 'start', time: S(3.5) });
+    const ass = sequenceCaptionsAss(seq())!;
+    const events = ass.split('\n').filter((l) => l.startsWith('Dialogue:'));
+    // 540 + 0.1 × 1080, 1306 − 0.2 × 1920; scale 150 %; angle −10° in ASS terms.
+    expect(events[0]).toContain('{\\an5\\pos(648,922)\\fscx150\\fscy150\\frz-10}');
+    // The trimmed clip starts at 3.5 s and shows "w8" only.
+    const last = events.at(-1)!;
+    expect(last).toContain('0:00:03.50');
+    expect(last).not.toContain('w7');
+    expect(last).toContain('w8');
+  });
+
+  it('leaves hidden caption tracks out, and caption text edits show up', () => {
+    const { run, seq } = build();
+    const track = seq().tracks[0]!;
+    run({ type: 'caption.edit', sequenceId: 's', itemId: track.items[1]!.id, text: 'the end' });
+    expect(sequenceCaptionsAss(seq())).toMatch(/the.* end/);
+    run({ type: 'track.update', sequenceId: 's', trackId: track.id, hidden: true });
+    expect(sequenceCaptionsAss(seq())).toBeNull();
   });
 });

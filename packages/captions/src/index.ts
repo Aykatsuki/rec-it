@@ -2,8 +2,11 @@
 // with a style, into an ASS subtitle file. The same file is drawn by libass in the preview
 // (JASSUB) and in the export (FFmpeg's `ass` filter), so both look the same.
 import {
+  DEFAULT_CAPTIONS,
+  FLICKS_PER_SECOND,
   applyTranscriptEdits,
   sequenceWords,
+  type TimelineItem,
   type CaptionSettings,
   type CaptionStyleId,
   type Sequence,
@@ -26,6 +29,13 @@ export interface Caption {
   start: number;
   end: number;
   lines: CaptionLine[];
+  /** Per-caption placement (caption clips): offset as a fraction of the frame, size, angle. */
+  x?: number;
+  y?: number;
+  scale?: number;
+  rotation?: number;
+  /** Higher is drawn on top (upper caption tracks). */
+  layer?: number;
 }
 
 type Animation = 'highlight' | 'pop' | 'karaoke' | 'none';
@@ -221,10 +231,26 @@ function clean(text: string, upper: boolean): string {
 }
 
 /**
- * Compiles captions into an ASS file for a `width × height` frame. Times are timeline seconds.
+ * Compiles captions into an ASS file for a `width × height` frame, grouping the words with the
+ * settings first. Times are timeline seconds.
  */
 export function compileAss(
   words: readonly CaptionWord[],
+  settings: CaptionSettings,
+  frame: { width: number; height: number },
+): string {
+  const style = CAPTION_STYLE_DEFS[settings.style];
+  const captions = segmentCaptions(words, {
+    wordsPerLine: settings.wordsPerLine,
+    lines: settings.lines,
+    oneWord: style.animation === 'pop',
+  });
+  return compileCaptions(captions, settings, frame);
+}
+
+/** Compiles already-grouped captions (e.g. caption clips) into an ASS file. */
+export function compileCaptions(
+  captions: readonly Caption[],
   settings: CaptionSettings,
   frame: { width: number; height: number },
 ): string {
@@ -283,23 +309,28 @@ export function compileAss(
   ];
 
   const events: string[] = [];
-  const pos = `{\\an5\\pos(${x},${y})}`;
+  let pos = '';
+  let layer = 0;
   const dialogue = (start: number, end: number, text: string) => {
     if (assTime(end) === assTime(start)) return;
-    events.push(`Dialogue: 0,${assTime(start)},${assTime(end)},Caption,,0,0,0,,${pos}${text}`);
+    events.push(
+      `Dialogue: ${layer},${assTime(start)},${assTime(end)},Caption,,0,0,0,,${pos}${text}`,
+    );
   };
   const lineText = (cap: Caption, render: (w: CaptionWord, i: number) => string) => {
     let i = 0;
     return cap.lines.map((line) => line.words.map((w) => render(w, i++)).join(' ')).join('\\N');
   };
 
-  const captions = segmentCaptions(words, {
-    wordsPerLine: settings.wordsPerLine,
-    lines: settings.lines,
-    oneWord: style.animation === 'pop',
-  });
   for (const cap of captions) {
     const all = cap.lines.flatMap((l) => l.words);
+    if (!all.length) continue;
+    layer = cap.layer ?? 0;
+    const cx = Math.round(x + (cap.x ?? 0) * frame.width);
+    const cy = Math.round(y + (cap.y ?? 0) * frame.height);
+    const k = Math.round((cap.scale ?? 1) * 100);
+    const angle = Math.round(-(cap.rotation ?? 0) * 100) / 100;
+    pos = `{\\an5\\pos(${cx},${cy})${k !== 100 ? `\\fscx${k}\\fscy${k}` : ''}${angle ? `\\frz${angle}` : ''}}`;
     switch (style.animation) {
       case 'none':
         dialogue(
@@ -309,8 +340,25 @@ export function compileAss(
         );
         break;
       case 'pop': {
+        if (all.length > 1) {
+          // A caption clip with several words: each word pops up in turn.
+          all.forEach((w, k2) => {
+            const from = k2 === 0 ? cap.start : w.start;
+            const to = k2 + 1 < all.length ? all[k2 + 1]!.start : cap.end;
+            const kk = (cap.scale ?? 1) * 100;
+            const f = (n: number) => Math.round(kk * n);
+            dialogue(
+              from,
+              to,
+              `{\\fscx${f(0.7)}\\fscy${f(0.7)}\\t(0,90,\\fscx${f(1.08)}\\fscy${f(1.08)})\\t(90,160,\\fscx${f(1)}\\fscy${f(1)})}{\\c${hi}}${clean(w.text, upper)}`,
+            );
+          });
+          break;
+        }
         const w = all[0]!;
-        const grow = '{\\fscx70\\fscy70\\t(0,90,\\fscx108\\fscy108)\\t(90,160,\\fscx100\\fscy100)}';
+        const kk = (cap.scale ?? 1) * 100;
+        const f = (n: number) => Math.round(kk * n);
+        const grow = `{\\fscx${f(0.7)}\\fscy${f(0.7)}\\t(0,90,\\fscx${f(1.08)}\\fscy${f(1.08)})\\t(90,160,\\fscx${f(1)}\\fscy${f(1)})}`;
         dialogue(cap.start, cap.end, `${grow}{\\c${hi}}${clean(w.text, upper)}`);
         break;
       }
@@ -344,17 +392,79 @@ export function compileAss(
   return [...header, ...events, ''].join('\n');
 }
 
+/** Caption clips' words in timeline seconds (only the part of each clip that is shown). */
+export function captionClipWords(item: TimelineItem): CaptionWord[] {
+  if (!item.caption) return [];
+  const from = item.sourceIn;
+  const to = item.sourceIn + item.duration;
+  const sec = (f: number) => f / FLICKS_PER_SECOND;
+  const offset = item.start - item.sourceIn;
+  return item.caption.words
+    .filter((w) => (w.start + w.end) / 2 >= from && (w.start + w.end) / 2 < to)
+    .map((w) => ({
+      text: w.text,
+      start: sec(Math.max(w.start, from) + offset),
+      end: sec(Math.min(w.end, to) + offset),
+    }));
+}
+
+/** The words of a caption clip grouped into lines with the sequence's settings. */
+export function captionClipLines(
+  words: readonly CaptionWord[],
+  settings: Pick<CaptionSettings, 'wordsPerLine' | 'lines'>,
+): CaptionLine[] {
+  if (!words.length) return [];
+  const perLine = Math.max(1, settings.wordsPerLine);
+  const count = Math.min(settings.lines, Math.ceil(words.length / perLine));
+  const per = Math.ceil(words.length / count);
+  const lines: CaptionLine[] = [];
+  for (let l = 0; l < count; l++) {
+    const slice = words.slice(l * per, (l + 1) * per);
+    if (slice.length) lines.push({ words: slice });
+  }
+  return lines;
+}
+
 /**
- * The captions file for a sequence: the words its clips play (with the user's corrections,
- * hidden words left out), compiled with the sequence's caption settings. null when captions are
- * off or there are no words. Preview and export both call this, so they get the same file.
+ * Captions for a sequence's caption tracks (ADR-033): each caption clip, with its own position,
+ * size and rotation, in the sequence's caption style. null when there are none. Preview and
+ * export both call this, so they draw the same file.
  */
-export function sequenceCaptionsAss(
+export function sequenceCaptionsAss(seq: Sequence): string | null {
+  const tracks = seq.tracks.filter((t) => t.kind === 'caption' && !t.hidden);
+  const settings = { ...DEFAULT_CAPTIONS, ...seq.captions };
+  const captions: Caption[] = [];
+  tracks.forEach((track, i) => {
+    for (const item of track.items) {
+      const words = captionClipWords(item);
+      if (!words.length) continue;
+      captions.push({
+        start: item.start / FLICKS_PER_SECOND,
+        end: (item.start + item.duration) / FLICKS_PER_SECOND,
+        lines: captionClipLines(words, settings),
+        x: item.transform.x,
+        y: item.transform.y,
+        scale: item.transform.scale,
+        rotation: item.transform.rotation,
+        layer: tracks.length - i,
+      });
+    }
+  });
+  if (!captions.length) return null;
+  return compileCaptions(captions, settings, { width: seq.width, height: seq.height });
+}
+
+/**
+ * Caption clips for a sequence from its transcripts (the words its clips play, with the user's
+ * corrections; hidden words left out), grouped with the caption settings. For the
+ * captions.generate command.
+ */
+export function generateCaptions(
   seq: Sequence,
   transcriptOf: (assetId: string) => readonly TranscriptWord[] | undefined,
   edits: TranscriptEdits | undefined,
-): string | null {
-  if (!seq.captions?.enabled) return null;
+): { start: number; duration: number; words: { text: string; start: number; end: number }[] }[] {
+  const settings = { ...DEFAULT_CAPTIONS, ...seq.captions };
   const cache = new Map<string, ReturnType<typeof applyTranscriptEdits> | undefined>();
   const wordsOf = (assetId: string) => {
     if (!cache.has(assetId)) {
@@ -364,6 +474,16 @@ export function sequenceCaptionsAss(
     return cache.get(assetId);
   };
   const words = sequenceWords(seq, wordsOf).filter((w) => !w.hidden);
-  if (!words.length) return null;
-  return compileAss(words, seq.captions, { width: seq.width, height: seq.height });
+  const f = (s: number) => Math.round(s * FLICKS_PER_SECOND);
+  return segmentCaptions(words, {
+    wordsPerLine: settings.wordsPerLine,
+    lines: settings.lines,
+    oneWord: CAPTION_STYLE_DEFS[settings.style].animation === 'pop',
+  }).map((c) => ({
+    start: f(c.start),
+    duration: f(c.end) - f(c.start),
+    words: c.lines
+      .flatMap((l) => l.words)
+      .map((w) => ({ text: w.text, start: f(w.start), end: f(w.end) })),
+  }));
 }

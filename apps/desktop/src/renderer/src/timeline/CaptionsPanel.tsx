@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Captions } from 'lucide-react';
-import { CAPTION_STYLE_DEFS, FONT_FILES } from '@rec-it/captions';
+import { CAPTION_STYLE_DEFS } from '@rec-it/captions';
 import {
   CAPTION_STYLES,
   DEFAULT_CAPTIONS,
@@ -8,35 +8,17 @@ import {
   type Sequence,
 } from '@rec-it/core';
 import { EmptyState } from '@rec-it/ui';
-import { useCaptionsAss } from '../engine/captions-layer';
+import { ensureCaptionFonts } from '../engine/caption-geometry';
+import { CaptionsGenerate } from './CaptionsGenerate';
 import { edit } from '../edit';
-import { useApp, useSequence } from '../store';
-
-// Load the caption fonts into the page so each style button shows its own lettering.
-const fontUrls = import.meta.glob('../../../../../../resources/fonts/*.ttf', {
-  query: '?url',
-  import: 'default',
-  eager: true,
-}) as Record<string, string>;
-let fontsLoaded = false;
-function loadFonts(): void {
-  if (fontsLoaded || typeof FontFace === 'undefined') return;
-  fontsLoaded = true;
-  for (const [family, file] of Object.entries(FONT_FILES)) {
-    const url = Object.entries(fontUrls).find(([p]) => p.endsWith(`/${file}`))?.[1];
-    if (!url) continue;
-    const face = new FontFace(`Caption ${family}`, `url(${url})`);
-    document.fonts.add(face);
-    void face.load().catch(() => {});
-  }
-}
+import { useSequence } from '../store';
 
 const update = (seq: Sequence, captions: Partial<CaptionSettings>) =>
   edit({ type: 'captions.update', sequenceId: seq.id, captions });
 
 export function CaptionsPanel() {
   const seq = useSequence();
-  useEffect(loadFonts, []);
+  useEffect(ensureCaptionFonts, []);
   if (!seq)
     return (
       <EmptyState icon={<Captions size={20} />} title="Captions">
@@ -47,35 +29,19 @@ export function CaptionsPanel() {
 }
 
 function CaptionsSettings({ seq }: { seq: Sequence }) {
-  const settings = seq.captions ?? { ...DEFAULT_CAPTIONS, enabled: false };
-  const ass = useCaptionsAss({ ...seq, captions: { ...settings, enabled: true } });
-  const transcribed = useApp((s) => s.transcription?.transcribed.length ?? 0);
+  const settings = seq.captions ?? DEFAULT_CAPTIONS;
   const style = CAPTION_STYLE_DEFS[settings.style];
   const usesHighlight = style.animation !== 'none';
-  const off = !settings.enabled;
 
   return (
     <div className="captions" data-testid="captions-panel">
-      <label className="captions__switch">
-        <input
-          type="checkbox"
-          checked={settings.enabled}
-          onChange={(e) => void update(seq, { enabled: e.target.checked })}
-        />
-        <span>Show captions</span>
-      </label>
-      {!ass && (
-        <p className="transcript__hint">
-          {transcribed
-            ? 'None of the clips on the timeline has a transcript yet. Transcribe them in the Transcript tab.'
-            : 'Captions come from the transcript. Transcribe your clips in the Transcript tab first.'}
-        </p>
-      )}
+      <CaptionsGenerate seq={seq} />
       <p className="transcript__hint">
-        Captions follow the spoken words automatically, including your corrections and cuts.
+        The look below applies to every caption. Move, resize or turn a caption by dragging it in
+        the preview; edit its words in the Inspector; trim, split or delete it on the timeline.
       </p>
 
-      <fieldset className="captions__styles" disabled={off}>
+      <fieldset className="captions__styles">
         <legend>Style</legend>
         {CAPTION_STYLES.map((id) => {
           const def = CAPTION_STYLE_DEFS[id];
@@ -110,7 +76,7 @@ function CaptionsSettings({ seq }: { seq: Sequence }) {
         })}
       </fieldset>
 
-      <fieldset className="captions__fields" disabled={off}>
+      <fieldset className="captions__fields">
         <CommitSlider
           label="Size"
           value={settings.size}
@@ -183,7 +149,7 @@ function CaptionsSettings({ seq }: { seq: Sequence }) {
 }
 
 /** A slider that shows its value while dragging and saves one undoable edit on release. */
-function CommitSlider({
+export function CommitSlider({
   label,
   value,
   min,

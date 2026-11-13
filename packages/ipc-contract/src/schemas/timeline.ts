@@ -41,11 +41,20 @@ export const timelineItemSchema = z.object({
   transform: transformSchema,
   keyframes: z.partialRecord(keyframeProperty, z.array(keyframeSchema).max(10_000)).optional(),
   linkId: id.optional(),
+  caption: z
+    .object({
+      words: z
+        .array(
+          z.object({ text: z.string().max(200), start: z.number().int(), end: z.number().int() }),
+        )
+        .max(400),
+    })
+    .optional(),
 });
 
 export const trackSchema = z.object({
   id,
-  kind: z.enum(['video', 'audio']),
+  kind: z.enum(['video', 'audio', 'caption']),
   name: z.string(),
   muted: z.boolean(),
   hidden: z.boolean(),
@@ -109,7 +118,7 @@ const singleCommandSchema = z.discriminatedUnion('type', [
   z.object({
     type: z.literal('track.add'),
     ...seqId,
-    kind: z.enum(['video', 'audio']),
+    kind: z.enum(['video', 'audio', 'caption']),
     id: id.optional(),
   }),
   z.object({ type: z.literal('track.remove'), ...seqId, trackId: id }),
@@ -196,6 +205,44 @@ const singleCommandSchema = z.discriminatedUnion('type', [
     type: z.literal('captions.update'),
     ...seqId,
     captions: captionSettingsSchema.partial(),
+  }),
+  z.object({
+    type: z.literal('captions.generate'),
+    ...seqId,
+    trackId: id.optional(),
+    captions: z
+      .array(
+        z.object({
+          start: flicks,
+          duration: flicks,
+          words: z
+            .array(z.object({ text: z.string().max(200), start: flicks, end: flicks }))
+            .max(400),
+        }),
+      )
+      .max(20_000),
+  }),
+  z.object({
+    type: z.literal('caption.add'),
+    ...seqId,
+    trackId: id,
+    start: flicks,
+    duration: flicks,
+    text: z.string().max(2000),
+    words: z
+      .array(
+        z.object({ text: z.string().max(200), start: z.number().int(), end: z.number().int() }),
+      )
+      .max(400)
+      .optional(),
+    transform: transformPatchSchema.optional(),
+    id: id.optional(),
+  }),
+  z.object({
+    type: z.literal('caption.edit'),
+    ...seqId,
+    itemId: id,
+    text: z.string().max(2000),
   }),
   z.object({
     type: z.literal('transcript.editWord'),
