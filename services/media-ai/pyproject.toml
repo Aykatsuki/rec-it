@@ -36,3 +36,8 @@ target-version = "py311"
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "B", "UP"]
+
+[tool.uv]
+# Windows + NVIDIA is the reference platform (ADR-017): only lock versions that publish Windows
+# wheels. NVIDIA sometimes ships a CUDA library release for Linux only (cuBLAS 12.9.3.13 did).
+required-environments = ["sys_platform == 'win32'"]

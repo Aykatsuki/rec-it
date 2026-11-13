@@ -37,6 +37,14 @@ jobs:
           uv run ruff check .
           uv run ruff format --check .
           uv run pytest -q
+      # The "Install transcription" button runs `uv sync --extra transcribe` on Windows; make sure
+      # every locked package has a Windows wheel (NVIDIA sometimes publishes Linux-only releases).
+      - name: Transcription extra resolves for Windows
+        working-directory: services/media-ai
+        run: |
+          uv export --quiet --extra transcribe --no-hashes --no-emit-project > /tmp/req.txt
+          uv pip install --dry-run --python-platform x86_64-pc-windows-msvc --python-version 3.12 \
+            --target /tmp/wincheck -r /tmp/req.txt
 
   whisper:
     name: Real Whisper transcription (tiny model, CPU)
