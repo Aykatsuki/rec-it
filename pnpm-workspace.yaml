@@ -2,7 +2,8 @@ packages:
   - apps/*
   - packages/*
 
-# Packages allowed to run install scripts (pnpm blocks them by default).
-# Electron 45+ has no install script; apps/desktop runs `install-electron` in its own postinstall.
 onlyBuiltDependencies:
   - esbuild
+
+patchedDependencies:
+  jassub@2.5.37: patches/jassub@2.5.37.patch
