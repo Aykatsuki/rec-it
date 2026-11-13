@@ -90,17 +90,17 @@ test.describe('captions', () => {
       await expect(words.nth(3)).toHaveClass(/is-hidden/);
 
       // Captions off: nothing drawn.
+      // Captions off: no caption layer over the picture at all.
       const canvas = page.getByTestId('captions-canvas');
-      await expect(canvas).toHaveAttribute('data-ready', 'true', { timeout: 30_000 });
       await words.nth(1).click(); // playhead into "Hello"
-      await expect(canvas).toHaveAttribute('data-active', 'false');
+      await expect(canvas).toHaveCount(0);
       await page.mouse.move(0, 0);
       const baseline = await page.getByTestId('program-monitor').screenshot();
 
       await page.getByRole('tab', { name: 'Captions' }).click();
       await page.getByLabel('Show captions').click();
       await expect(page.getByLabel('Show captions')).toBeChecked();
-      await expect(canvas).toHaveAttribute('data-active', 'true');
+      await expect(canvas).toHaveAttribute('data-ready', 'true', { timeout: 30_000 });
       await expect
         .poll(() => changedPixels(page, baseline), { timeout: 10_000 })
         .toBeGreaterThan(400);
@@ -114,9 +114,10 @@ test.describe('captions', () => {
       await page.keyboard.press('Control+Z');
       await expect.poll(() => changedPixels(page, highlight), { timeout: 10_000 }).toBeLessThan(50);
 
-      // Turning captions off clears them.
+      // Turning captions off removes the layer.
       await page.getByLabel('Show captions').click();
       await expect(page.getByLabel('Show captions')).not.toBeChecked();
+      await expect(canvas).toHaveCount(0);
       await expect.poll(() => changedPixels(page, baseline), { timeout: 10_000 }).toBeLessThan(50);
       expect(errors.filter((e) => /caption/i.test(e))).toEqual([]);
     } finally {

@@ -36,14 +36,15 @@ export function useCaptionsAss(seq: Sequence): string | null {
 
 export function CaptionsLayer({
   seq,
+  ass,
   playhead,
   box,
 }: {
   seq: Sequence;
+  ass: string;
   playhead: number;
   box: { w: number; h: number };
 }) {
-  const ass = useCaptionsAss(seq);
   // JASSUB takes over its canvas (it moves it to a worker and removes it when destroyed), so
   // the canvas is created here, inside a container React owns, never by React itself. A canvas
   // can only be handed to a worker once, so each mount (StrictMode mounts twice) gets a new one.
@@ -112,7 +113,7 @@ export function CaptionsLayer({
     const j = jassub.current;
     if (!ready || !j) return;
     void (async () => {
-      await j.renderer.setTrack(ass ?? EMPTY);
+      await j.renderer.setTrack(ass);
       await j.manualRender(
         {
           mediaTime: useApp.getState().playhead,
@@ -145,7 +146,6 @@ export function CaptionsLayer({
       className="program__captions"
       data-testid="captions-canvas"
       data-ready={ready ? 'true' : 'false'}
-      data-active={ass ? 'true' : 'false'}
     />
   );
 }

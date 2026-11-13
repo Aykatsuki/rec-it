@@ -54,6 +54,17 @@ function createWindow(): BrowserWindow {
     },
   });
 
+  // Renderer warnings and errors (GPU preview, captions) go to the terminal and the log, so
+  // problems on a user's machine are visible without developer tools. Secrets never reach the
+  // renderer, so its messages are safe to print.
+  win.webContents.on('console-message', (event) => {
+    if (event.level === 'warning' || event.level === 'error')
+      console.warn(`[renderer ${event.level}] ${event.message.slice(0, 2000)}`);
+  });
+  win.webContents.on('render-process-gone', (_e, details) =>
+    console.error(`[renderer] process gone: ${details.reason} (${details.exitCode})`),
+  );
+
   win.once('ready-to-show', () => {
     // On smaller screens start maximised, like most editors.
     if (process.env.RECIT_E2E !== '1' && (work.width < 1700 || work.height < 1000)) win.maximize();

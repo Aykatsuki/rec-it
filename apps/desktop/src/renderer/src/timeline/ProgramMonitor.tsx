@@ -24,7 +24,7 @@ import { useApp } from '../store';
 import { openContextMenu } from '../ui/ContextMenu';
 import { clipMenu, programMenu } from './menus';
 import { TransformOverlay, transformFor, type VisibleLayer } from './TransformOverlay';
-import { CaptionsLayer } from '../engine/captions-layer';
+import { CaptionsLayer, useCaptionsAss } from '../engine/captions-layer';
 
 interface Mounted {
   item: TimelineItem;
@@ -94,6 +94,8 @@ export function ProgramMonitor({ seq }: { seq: Sequence }) {
   const elements = useRef(new Map<string, HTMLMediaElement>());
   /** Clips that were on screen at the last sync, to spot ones that have just appeared. */
   const shown = useRef(new Set<string>());
+  // Only mounted while there are captions to draw, so nothing covers the picture otherwise.
+  const captionsAss = useCaptionsAss(seq);
   const [box, setBox] = useState({ w: 0, h: 0 });
   const total = sequenceSeconds(seq);
 
@@ -349,7 +351,9 @@ export function ProgramMonitor({ seq }: { seq: Sequence }) {
                 />
               ) : null;
             })}
-            <CaptionsLayer seq={seq} playhead={playhead} box={box} />
+            {captionsAss && (
+              <CaptionsLayer seq={seq} ass={captionsAss} playhead={playhead} box={box} />
+            )}
           </div>
           <TransformOverlay
             seq={seq}
