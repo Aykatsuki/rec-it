@@ -13,7 +13,7 @@ Each record states the decision, why it was made and what else was considered. R
 | 007 | FFmpeg build and licensing: GPL, open source | Accepted |
 | 008 | Custom WebCodecs + WebGL2 preview engine | Accepted (first version: ADR-029) |
 | 009 | Claude analyses signals, transcripts and frames, not raw video | Accepted |
-| 010 | Local transcription with faster-whisper | Accepted |
+| 010 | Local transcription with faster-whisper | Accepted (built: ADR-031) |
 | 011 | Captions as ASS rendered by libass in preview and export | Accepted |
 | 012 | No downloading from YouTube; rights-aware local import | Accepted |
 | 013 | Claude model routing and cost controls | Superseded by 018 |
@@ -34,6 +34,7 @@ Each record states the decision, why it was made and what else was considered. R
 | 028 | Export folder, linked clips and keyframes | Accepted |
 | 029 | GPU preview engine (WebCodecs + WebGL2), first version | Accepted |
 | 030 | Web Audio playback, keyframe dragging and a fast DOM timeline | Accepted |
+| 031 | Local transcription and text-based editing | Accepted |
 
 ---
 
