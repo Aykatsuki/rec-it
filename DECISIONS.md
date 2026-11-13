@@ -18,7 +18,7 @@ Each record states the decision, why it was made and what else was considered. R
 | 012 | No downloading from YouTube; rights-aware local import | Accepted |
 | 013 | Claude model routing and cost controls | Superseded by 018 |
 | 014 | Python sidecar over JSON-RPC on stdio | Accepted |
-| 015 | Canvas-rendered timeline | Accepted |
+| 015 | Canvas-rendered timeline | Deferred (ADR-030) |
 | 016 | Permission tiers for Claude's tools | Accepted (revised for MCP) |
 | 017 | Target platform: Windows + NVIDIA first | Accepted |
 | 018 | Claude through the user's own Claude app via MCP | Accepted |
@@ -33,6 +33,7 @@ Each record states the decision, why it was made and what else was considered. R
 | 027 | Export settings, two-pass loudness and preview/export parity | Accepted |
 | 028 | Export folder, linked clips and keyframes | Accepted |
 | 029 | GPU preview engine (WebCodecs + WebGL2), first version | Accepted |
+| 030 | Web Audio playback, keyframe dragging and a fast DOM timeline | Accepted |
 
 ---
 
@@ -387,3 +388,17 @@ Each record states the decision, why it was made and what else was considered. R
 - **Tests.** A frame-accuracy test uses a fixture whose frames each have a different brightness and checks the exact frame after stepping forward, backward and jumping; the parity suite now runs against the GPU engine (SSIM 0.995–0.997).
 - **Development mode and lost contexts (fix, 12 Nov 2026).** In `pnpm dev`, React StrictMode mounts effects twice on the same canvas. The first version deliberately lost the WebGL context when unmounting, and a canvas hands back that same lost context, so the second mount failed with an empty message ("The GPU preview could not start ()"). The compositor now frees its resources without losing the context, handles real context loss (driver reset, sleep) by restoring and redrawing, and errors name their cause. A decoder that does not deliver a frame is restarted and late frames are always closed (a decoder has a fixed pool of frames; leaking them would freeze it). Choosing the GPU engine again in the preview menu retries after a failure. Rendering no longer lets a newer request cancel one that is already decoding: requests are coalesced (one render at a time, then the newest waiting one), because when a render took longer than a screen refresh — on slower machines or in development mode — every render was cancelled and playback froze. The frame test now plays back with the CPU throttled 4× to cover this. CI runs the GPU tests on Windows against a React development build (`RECIT_REACT_DEV=1`) as well, and the frame test loses and restores the context.
 - **Proxy frame-rate fix.** The proxy rate picked the *first* standard rate within 1% instead of the nearest, so 24, 30 and 60 fps footage got 23.976, 29.97 and 59.94 fps proxies: the preview drifted by a frame every ~33 s. The nearest rate is now used. Proxies are now named `proxy-v2.mp4`; projects with older proxies regenerate them automatically (which also applies the BT.709 tagging of ADR-027) and the old file is deleted.
+
+---
+
+## ADR-030 · Web Audio playback, keyframe dragging and a fast DOM timeline
+
+**Status.** Accepted (12 Nov 2026, Phase 2 fifth slice). Completes ADR-008's audio part; defers ADR-015.
+
+**Decisions.**
+- **Audio.** `AudioSource` reads a proxy's AAC track with mp4box (header and needed ranges only, edit list applied) and decodes ranges with WebCodecs `AudioDecoder` (one frame of pre-roll). `AudioEngine` schedules each audible clip in one-second blocks, two seconds ahead, as `AudioBufferSourceNode`s at exact context times; static volume is a gain value, keyframed volume a gain curve (50 points per second). The audible-clip rules are the export's (muted tracks/clips silent, hidden tracks still heard).
+- **Clock.** In the GPU engine at normal speed the playhead follows the audio clock. If the audio clock does not move within 300 ms of wall time (no audio device), playback follows the wall clock instead. J/K/L at other speeds and the compatible engine use the wall clock without Web Audio. An edit during playback restarts the sound from the current position.
+- **Verification.** `AudioEngine.renderOffline` uses the same scheduling with an `OfflineAudioContext`. An end-to-end test compares the preview's offline mix with the exported audio (10 ms RMS envelopes): correlation ≥ 0.98, offset ≤ 20 ms, level within 1 dB (measured 0.9975, 0 ms, 0.1 dB).
+- **Keyframe dragging.** Dragging a diamond on a clip moves every keyframe at that time to another frame inside the clip (one undo step); clicking still jumps to it.
+- **Timeline performance without a canvas (for now).** Rendering only clips near the visible area, memoising clips (they no longer re-render on every playhead change), sharing each file's waveform between clips and drawing clips under 24 px as plain blocks makes 1,000 clips scroll at 60 fps and zoom at a median of 60 fps even in CI's software rendering. The canvas timeline of ADR-015 is deferred until the DOM timeline is shown to be too slow.
+- **Fixed:** with the audio clock, playback stopped at once because the clock reads 0 during the start-up latency and the playback loop treated time 0 as "reached the start".
