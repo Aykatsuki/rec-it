@@ -2095,6 +2095,7 @@ button.statusbar__item:hover {
 }
 .transcript__row {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: var(--space-2);
   min-height: 28px;
@@ -2181,4 +2182,19 @@ button.statusbar__item:hover {
 .transcript__word[aria-selected='true'] {
   background: var(--selection);
   color: var(--text-on-accent);
+}
+.transcript__detail {
+  flex-basis: 100%;
+  margin: 0;
+  color: var(--text-3);
+  font-size: var(--text-xs);
+  overflow-wrap: anywhere;
+  user-select: text;
+}
+.transcript__detail--error {
+  max-height: 8em;
+  overflow-y: auto;
+  color: var(--error);
+  font-family: var(--font-mono);
+  white-space: pre-wrap;
 }

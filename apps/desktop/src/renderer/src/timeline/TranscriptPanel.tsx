@@ -231,15 +231,17 @@ function MediaRow({
         </>
       ) : (
         <>
-          {job?.state === 'failed' && (
-            <span className="transcript__failed" title={job.error}>
-              Failed
-            </span>
-          )}
+          {job?.state === 'failed' && <span className="transcript__failed">Failed</span>}
           <Button size="sm" onClick={start}>
-            Transcribe
+            {job?.state === 'failed' ? 'Try again' : 'Transcribe'}
           </Button>
         </>
+      )}
+      {active && job.message && <p className="transcript__detail">{job.message}</p>}
+      {job?.state === 'failed' && job.error && (
+        <p className="transcript__detail transcript__detail--error" data-testid="transcript-error">
+          {job.error}
+        </p>
       )}
     </li>
   );

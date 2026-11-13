@@ -1,6 +1,5 @@
 import io
 import json
-import os
 import shutil
 import subprocess
 import threading
@@ -84,6 +83,7 @@ def test_real_whisper_transcribes_speech(tmp_path):
         check=True,
     )
     out = tmp_path / "t.json"
+    messages: list[str | None] = []
     result = transcribe.run(
         {
             "audio": str(audio),
@@ -91,11 +91,12 @@ def test_real_whisper_transcribes_speech(tmp_path):
             "model": "tiny.en",
             "device": "cpu",
             "language": "en",
-            "modelsDir": os.environ.get("RECIT_MODELS_DIR"),
+            "modelsDir": str(tmp_path / "models"),
         },
-        lambda p: None,
+        lambda p, m=None: messages.append(m),
         threading.Event(),
     )
+    assert any(m and m.startswith("Downloading the speech model") for m in messages)
     words = [w["text"].lower().strip(",.") for w in json.loads(out.read_text())["words"]]
     assert result["device"] == "cpu"
     # tiny.en on robotic espeak speech is not perfect ("hello" can come out as "the low"), so
@@ -104,3 +105,53 @@ def test_real_whisper_transcribes_speech(tmp_path):
     assert len(expected & set(words)) >= 4, words
     starts = [w["start"] for w in json.loads(out.read_text())["words"]]
     assert starts == sorted(starts)
+
+
+def test_gpu_failure_while_transcribing_falls_back_to_the_cpu(tmp_path, monkeypatch):
+    """On Windows CTranslate2 loads cuBLAS only when it first runs, so CUDA errors surface while
+    iterating the segments, after the model loaded fine."""
+    fw = pytest.importorskip("faster_whisper")
+
+    audio = tmp_path / "a.wav"
+    with wave.open(str(audio), "wb") as w:
+        w.setnchannels(1)
+        w.setsampwidth(2)
+        w.setframerate(16000)
+        w.writeframes(b"\0\0" * 16000 * 2)
+
+    class Word:
+        def __init__(self, word, start, end):
+            self.word, self.start, self.end, self.probability = word, start, end, 0.9
+
+    class Segment:
+        def __init__(self):
+            self.end = 2.0
+            self.words = [Word(" hi", 0.2, 0.5)]
+
+    class Info:
+        language = "en"
+
+    class FakeModel:
+        def __init__(self, path, device, compute_type):
+            self.device = device
+
+        def transcribe(self, samples, **kwargs):
+            def gen():
+                if self.device == "cuda":
+                    raise RuntimeError("Library cublas64_12.dll is not found or cannot be loaded")
+                yield Segment()
+
+            return gen(), Info()
+
+    monkeypatch.setattr(fw, "WhisperModel", FakeModel)
+    monkeypatch.setattr(transcribe, "_fetch_model", lambda name, *a: name)
+    messages = []
+    out = tmp_path / "t.json"
+    result = transcribe.run(
+        {"audio": str(audio), "out": str(out), "device": "auto"},
+        lambda p, m=None: messages.append(m),
+        threading.Event(),
+    )
+    assert result["device"] == "cpu" and result["model"] == "small"
+    assert any(m and "cublas64_12.dll" in m for m in messages)
+    assert json.loads(out.read_text())["words"][0]["text"] == "hi"

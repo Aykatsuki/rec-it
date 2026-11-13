@@ -72,8 +72,11 @@ class Server:
         cancelled = threading.Event()
         self._running[request_id] = cancelled
 
-        def progress(fraction: float) -> None:
-            self.notify("job.progress", {"id": request_id, "progress": fraction})
+        def progress(fraction: float, message: str | None = None) -> None:
+            params: dict[str, Any] = {"id": request_id, "progress": fraction}
+            if message:
+                params["message"] = message
+            self.notify("job.progress", params)
 
         def work() -> None:
             try:

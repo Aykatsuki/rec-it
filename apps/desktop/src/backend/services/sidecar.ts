@@ -31,7 +31,7 @@ export class SidecarError extends Error {
 export class SidecarClient {
   private child: ChildProcessWithoutNullStreams | null = null;
   private readonly pending = new Map<number, Pending>();
-  private readonly progress = new Map<number, (fraction: number) => void>();
+  private readonly progress = new Map<number, (fraction: number, message?: string) => void>();
   private nextId = 1;
   private spawnError: Error | null = null;
 
@@ -97,7 +97,10 @@ export class SidecarClient {
   job<T>(
     method: string,
     params: Record<string, unknown>,
-    options: { onProgress?: (fraction: number) => void; signal?: AbortSignal } = {},
+    options: {
+      onProgress?: (fraction: number, message?: string) => void;
+      signal?: AbortSignal;
+    } = {},
   ): Promise<T> {
     const child = this.child;
     if (!child)
@@ -148,9 +151,15 @@ export class SidecarClient {
       this.log(`[sidecar] ignored non-JSON output: ${line.slice(0, 200)}`);
       return;
     }
-    const note = message as { method?: string; params?: { id?: number; progress?: number } };
+    const note = message as {
+      method?: string;
+      params?: { id?: number; progress?: number; message?: string };
+    };
     if (note.method === 'job.progress' && typeof note.params?.id === 'number') {
-      this.progress.get(note.params.id)?.(Math.min(1, Math.max(0, note.params.progress ?? 0)));
+      this.progress.get(note.params.id)?.(
+        Math.min(1, Math.max(0, note.params.progress ?? 0)),
+        typeof note.params.message === 'string' ? note.params.message : undefined,
+      );
       return;
     }
     if (typeof message.id !== 'number') return;

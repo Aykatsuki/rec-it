@@ -22,6 +22,8 @@ export const transcriptionJobSchema = z.object({
   assetId: z.string(),
   state: z.enum(['queued', 'extracting', 'transcribing', 'done', 'failed', 'cancelled']),
   progress: z.number().min(0).max(1),
+  /** What it is doing now, e.g. "Downloading the speech model (large-v3-turbo)…". */
+  message: z.string().optional(),
   error: z.string().optional(),
 });
 export type TranscriptionJob = z.output<typeof transcriptionJobSchema>;

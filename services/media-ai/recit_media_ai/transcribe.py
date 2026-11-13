@@ -17,6 +17,8 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
+from .rpc import log
+
 #: Models by device (ADR-010): large-v3-turbo on a GPU with 6 GB or more, small on the CPU.
 DEFAULT_MODEL = {"cuda": "large-v3-turbo", "cpu": "small"}
 
@@ -36,15 +38,27 @@ def available() -> dict[str, Any]:
         return {"available": False, "error": str(e) or type(e).__name__}
 
 
-def _add_cuda_dll_dirs() -> None:
-    """On Windows, CUDA libraries from the nvidia-* wheels must be added to the DLL search path."""
+def _add_cuda_dll_dirs() -> list[str]:
+    """On Windows, make the CUDA DLLs from the nvidia-* wheels findable.
+
+    CTranslate2 loads cuBLAS and cuDNN with a plain LoadLibrary when it first runs on the GPU,
+    which searches PATH but not directories added with os.add_dll_directory, so both are set.
+    """
     if sys.platform != "win32":
-        return
+        return []
+    found: list[str] = []
     for base in map(Path, sys.path):
         nvidia = base / "nvidia"
         if nvidia.is_dir():
             for bin_dir in nvidia.glob("*/bin"):
-                os.add_dll_directory(str(bin_dir))
+                found.append(str(bin_dir))
+    for d in found:
+        os.add_dll_directory(d)
+    path = os.environ.get("PATH", "")
+    missing = [d for d in found if d not in path.split(os.pathsep)]
+    if missing:
+        os.environ["PATH"] = os.pathsep.join([*missing, path])
+    return found
 
 
 def _duration(path: str) -> float:
@@ -117,62 +131,122 @@ class Cancelled(Exception):
     pass
 
 
+#: Approximate download sizes, for the progress message.
+MODEL_MB = {"large-v3-turbo": 1620, "small": 490, "tiny.en": 75, "tiny": 75, "base": 145}
+
+
+def _dir_bytes(path: Path) -> int:
+    total = 0
+    for f in path.rglob("*"):
+        try:
+            if f.is_file():
+                total += f.stat().st_size
+        except OSError:
+            pass
+    return total
+
+
+def _fetch_model(
+    name: str,
+    models_dir: str | None,
+    progress: Callable[..., None],
+    cancelled: threading.Event,
+) -> str:
+    """Returns a local folder with the model, downloading it the first time."""
+    from faster_whisper.utils import download_model
+
+    if not models_dir:
+        return download_model(name)
+    target = Path(models_dir) / name.replace("/", "--")
+    if (target / "model.bin").is_file() and (target / "config.json").is_file():
+        try:
+            return download_model(name, output_dir=str(target), local_files_only=True)
+        except Exception:  # noqa: BLE001 - incomplete; download again
+            pass
+    expected = MODEL_MB.get(name)
+    done = threading.Event()
+
+    def report() -> None:
+        while not done.wait(1.0):
+            mb = _dir_bytes(target) / 1e6
+            of = f" of about {expected:,} MB" if expected else ""
+            progress(0.0, f"Downloading the speech model {name} ({mb:,.0f} MB{of})…")
+
+    log("downloading model", name, "to", str(target))
+    progress(0.0, f"Downloading the speech model {name}…")
+    reporter = threading.Thread(target=report, daemon=True)
+    reporter.start()
+    try:
+        path = download_model(name, output_dir=str(target))
+    finally:
+        done.set()
+    if cancelled.is_set():
+        raise Cancelled()
+    return path
+
+
 def _whisper(
     audio: str,
     params: dict[str, Any],
-    progress: Callable[[float], None],
+    progress: Callable[..., None],
     cancelled: threading.Event,
 ) -> dict[str, Any]:
-    _add_cuda_dll_dirs()
+    dll_dirs = _add_cuda_dll_dirs()
+    if dll_dirs:
+        log("CUDA DLL folders", *dll_dirs)
     from faster_whisper import WhisperModel
 
     requested = params.get("device", "auto")
     models_dir = params.get("modelsDir")
     language = params.get("language") or None
+    samples = _read_pcm(audio)
+    total = len(samples) / 16000
 
-    def load(device: str) -> tuple[Any, str, str]:
+    def attempt(device: str) -> dict[str, Any]:
         name = params.get("model") or DEFAULT_MODEL[device]
+        path = _fetch_model(name, models_dir, progress, cancelled)
+        where = "graphics card" if device == "cuda" else "processor"
+        progress(0.0, f"Loading {name} on the {where}…")
         compute = "float16" if device == "cuda" else "int8"
-        return (
-            WhisperModel(name, device=device, compute_type=compute, download_root=models_dir),
-            name,
-            device,
+        model = WhisperModel(path, device=device, compute_type=compute)
+        progress(0.0, f"Transcribing with {name} on the {where}…")
+        segments, info = model.transcribe(
+            samples,
+            language=language,
+            word_timestamps=True,
+            vad_filter=True,
+            beam_size=5,
         )
+        words: list[dict[str, Any]] = []
+        # A generator: the work (and CUDA's first use) happens while iterating.
+        for segment in segments:
+            if cancelled.is_set():
+                raise Cancelled()
+            for w in segment.words or []:
+                text = w.word.strip()
+                if text:
+                    words.append(
+                        {
+                            "text": text,
+                            "start": round(w.start, 3),
+                            "end": round(w.end, 3),
+                            "p": round(w.probability, 3),
+                        }
+                    )
+            if total > 0:
+                progress(min(1.0, segment.end / total))
+        progress(1.0)
+        return {"language": info.language, "model": name, "device": device, "words": words}
 
     if requested == "cpu":
-        model, name, device = load("cpu")
-    else:
-        try:
-            model, name, device = load("cuda")
-        except Exception:  # noqa: BLE001 - no CUDA, missing libraries, not enough memory
-            if requested == "cuda":
-                raise
-            model, name, device = load("cpu")
-
-    total = _duration(audio)
-    segments, info = model.transcribe(
-        _read_pcm(audio),
-        language=language,
-        word_timestamps=True,
-        vad_filter=True,
-        beam_size=5,
-    )
-    words: list[dict[str, Any]] = []
-    for segment in segments:  # a generator: transcription happens while iterating
-        if cancelled.is_set():
-            raise Cancelled()
-        for w in segment.words or []:
-            text = w.word.strip()
-            if text:
-                words.append(
-                    {
-                        "text": text,
-                        "start": round(w.start, 3),
-                        "end": round(w.end, 3),
-                        "p": round(w.probability, 3),
-                    }
-                )
-        if total > 0:
-            progress(min(1.0, segment.end / total))
-    progress(1.0)
-    return {"language": info.language, "model": name, "device": device, "words": words}
+        return attempt("cpu")
+    try:
+        return attempt("cuda")
+    except Cancelled:
+        raise
+    except Exception as e:  # noqa: BLE001 - no CUDA, missing DLLs, out of GPU memory
+        if requested == "cuda":
+            raise
+        log("GPU transcription failed, using the CPU:", repr(e))
+        progress(0.0, f"The graphics card could not be used ({e}); using the processor…")
+        return attempt("cpu")

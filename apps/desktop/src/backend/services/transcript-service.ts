@@ -231,10 +231,11 @@ export class TranscriptService {
         },
         {
           signal: controller.signal,
-          onProgress: (p) =>
+          onProgress: (p, message) =>
             this.update(assetId, (j) => ({
               ...j,
               progress: EXTRACT_SHARE + p * (1 - EXTRACT_SHARE),
+              ...(message ? { message } : {}),
             })),
         },
       );
@@ -244,7 +245,7 @@ export class TranscriptService {
       this.d.projects
         .database()
         .saveTranscript(assetId, parsed.language, parsed.model, JSON.stringify(stored));
-      this.update(assetId, (j) => ({ ...j, state: 'done', progress: 1 }));
+      this.update(assetId, ({ message: _m, ...j }) => ({ ...j, state: 'done', progress: 1 }));
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       this.update(assetId, (j) =>

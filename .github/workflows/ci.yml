@@ -59,7 +59,7 @@ jobs:
         working-directory: services/media-ai
         run: |
           uv sync --extra transcribe
-          uv run pytest -q -m whisper
+          uv run pytest -q -o addopts=""
 
   desktop:
     name: Build and end-to-end (${{ matrix.os }})
