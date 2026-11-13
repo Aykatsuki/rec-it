@@ -14,6 +14,7 @@
     "@rec-it/core": "workspace:*"
   },
   "devDependencies": {
+    "@rec-it/captions": "workspace:*",
     "@rec-it/ffmpeg": "workspace:*"
   }
 }

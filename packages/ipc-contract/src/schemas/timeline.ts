@@ -53,6 +53,18 @@ export const trackSchema = z.object({
   items: z.array(timelineItemSchema),
 });
 
+const captionStyle = z.enum(['highlight', 'pop', 'karaoke', 'caps', 'clean', 'bebas']);
+export const captionSettingsSchema = z.object({
+  enabled: z.boolean(),
+  style: captionStyle,
+  size: z.number().min(0.5).max(2),
+  position: z.number().min(0.1).max(0.9),
+  wordsPerLine: z.number().int().min(1).max(8),
+  lines: z.union([z.literal(1), z.literal(2)]),
+  uppercase: z.boolean(),
+  highlight: z.string().regex(/^#[0-9a-fA-F]{6}$/),
+});
+
 export const sequenceSchema = z.object({
   id,
   name: z.string(),
@@ -60,12 +72,19 @@ export const sequenceSchema = z.object({
   height: z.number().int(),
   fps: rational,
   tracks: z.array(trackSchema),
+  captions: captionSettingsSchema.optional(),
 });
 
 export const projectDocumentSchema = z.object({
   schemaVersion: z.literal(1),
   sequences: z.array(sequenceSchema),
   activeSequenceId: id.nullable(),
+  transcriptEdits: z
+    .record(
+      z.string(),
+      z.record(z.string(), z.object({ from: z.string(), to: z.string().max(200) })),
+    )
+    .optional(),
 });
 
 const seqId = { sequenceId: id };
@@ -172,6 +191,18 @@ const singleCommandSchema = z.discriminatedUnion('type', [
     ...seqId,
     itemIds: z.array(id).min(1),
     ripple: z.boolean().optional(),
+  }),
+  z.object({
+    type: z.literal('captions.update'),
+    ...seqId,
+    captions: captionSettingsSchema.partial(),
+  }),
+  z.object({
+    type: z.literal('transcript.editWord'),
+    assetId: id,
+    index: z.number().int().nonnegative(),
+    from: z.string().max(200),
+    to: z.string().max(400),
   }),
   z.object({
     type: z.literal('item.cutRange'),

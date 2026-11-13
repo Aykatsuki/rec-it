@@ -9,11 +9,14 @@ import {
 } from 'react';
 import { CheckCircle2, Download, FileText, RotateCcw, Scissors, X } from 'lucide-react';
 import {
+  applyTranscriptEdits,
   cutWordsCommands,
   sequenceWords,
   wordAt,
+  type EditedWord,
   type Sequence,
   type SequenceWord,
+  type TranscriptEdits,
 } from '@rec-it/core';
 import type { MediaAsset, TranscriptionJob } from '@rec-it/ipc-contract';
 import { Button, EmptyState, IconButton } from '@rec-it/ui';
@@ -69,7 +72,16 @@ export function TranscriptPanel() {
   const seq = useSequence();
   const [language, setLanguage] = useState(storedLanguage);
 
-  const wordsOf = useMemo(() => (id: string) => transcripts[id]?.words, [transcripts]);
+  const edits = useApp((s) => s.docState?.doc.transcriptEdits) as TranscriptEdits | undefined;
+  const wordsOf = useMemo(() => {
+    const edited: Record<string, EditedWord[]> = Object.fromEntries(
+      Object.entries(transcripts).map(([id, t]) => [
+        id,
+        applyTranscriptEdits(t.words, edits?.[id]),
+      ]),
+    );
+    return (id: string) => edited[id];
+  }, [transcripts, edits]);
   const words = useMemo(() => (seq ? sequenceWords(seq, wordsOf) : []), [seq, wordsOf]);
   const spoken = assets.filter((a) => a.status === 'ready' && a.probe?.audio && a.kind !== 'image');
 
@@ -123,7 +135,7 @@ export function TranscriptPanel() {
         </>
       )}
       {seq && words.length > 0 ? (
-        <WordEditor seq={seq} words={words} wordsOf={wordsOf} />
+        <WordEditor seq={seq} words={words} />
       ) : (
         status?.transcribed.length !== 0 &&
         status && (
@@ -248,18 +260,12 @@ function MediaRow({
 }
 
 /** The words the sequence plays. Click to jump; select and delete to cut them out. */
-function WordEditor({
-  seq,
-  words,
-  wordsOf,
-}: {
-  seq: Sequence;
-  words: SequenceWord[];
-  wordsOf: (assetId: string) => readonly { text: string; start: number; end: number }[] | undefined;
-}) {
+function WordEditor({ seq, words }: { seq: Sequence; words: SequenceWord[] }) {
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [anchor, setAnchor] = useState<number | null>(null);
   const [ripple, setRipple] = useState(true);
+  /** The word being corrected (its key). */
+  const [editing, setEditing] = useState<string | null>(null);
   const list = useRef<HTMLDivElement>(null);
 
   // Keep only words that still exist after edits.
@@ -287,7 +293,36 @@ function WordEditor({
     });
   }, [words]);
 
+  const startEditing = (key: string) => {
+    setEditing(key);
+    setSelected(new Set([key]));
+  };
+
+  /** Saves a correction for the recognised word behind `word` (all its parts at once). */
+  const commitEdit = async (word: SequenceWord, text: string) => {
+    setEditing(null);
+    const from = word.original ?? word.text;
+    if (text.replace(/\s+/g, ' ').trim() === correctionText(words, word)) {
+      list.current?.focus();
+      return;
+    }
+    await edit({
+      type: 'transcript.editWord',
+      assetId: word.assetId,
+      index: word.index,
+      from,
+      to: text,
+    });
+    list.current?.focus();
+  };
+
+  const onDoubleClick = (e: MouseEvent<HTMLDivElement>) => {
+    const target = (e.target as HTMLElement).closest<HTMLElement>('[data-key]');
+    if (target?.dataset.key) startEditing(target.dataset.key);
+  };
+
   const onClick = (e: MouseEvent<HTMLDivElement>) => {
+    if ((e.target as HTMLElement).closest('input')) return;
     const target = (e.target as HTMLElement).closest<HTMLElement>('[data-key]');
     if (!target) return;
     const index = Number(target.dataset.index);
@@ -310,7 +345,7 @@ function WordEditor({
 
   const cut = async () => {
     if (!live.size) return;
-    const commands = cutWordsCommands(seq, words, live, wordsOf, ripple);
+    const commands = cutWordsCommands(seq, words, live, ripple);
     if (!commands.length) {
       notify('Those words are too short to cut.', 'warn');
       return;
@@ -323,7 +358,12 @@ function WordEditor({
   };
 
   const onKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
-    if (e.key === 'Delete' || e.key === 'Backspace') {
+    if ((e.target as HTMLElement).closest('input')) return;
+    if ((e.key === 'Enter' || e.key === 'F2') && live.size === 1) {
+      e.preventDefault();
+      e.stopPropagation();
+      startEditing([...live][0]!);
+    } else if (e.key === 'Delete' || e.key === 'Backspace') {
       e.preventDefault();
       e.stopPropagation();
       void cut();
@@ -362,40 +402,139 @@ function WordEditor({
         aria-multiselectable="true"
         tabIndex={0}
         onClick={onClick}
+        onDoubleClick={onDoubleClick}
         onKeyDown={onKeyDown}
         data-testid="transcript-words"
       >
-        <Words words={words} selected={live} />
+        <Words
+          words={words}
+          selected={live}
+          editing={editing}
+          onCommit={(w, text) => void commitEdit(w, text)}
+          onCancel={() => {
+            setEditing(null);
+            list.current?.focus();
+          }}
+        />
       </div>
       <p className="transcript__hint">
-        Click a word to jump to it. Shift-click to select a stretch, then press Delete to cut it.
+        Click a word to jump to it. Double-click (or press Enter) to correct it; captions use your
+        corrections, and an empty word is hidden from captions. Shift-click to select a stretch,
+        then press Delete to cut it from the video.
       </p>
     </div>
   );
 }
 
+/** The current correction of a recognised word: all its parts, or its own text. */
+function correctionText(words: readonly SequenceWord[], word: SequenceWord): string {
+  if (word.hidden) return '';
+  return words
+    .filter((w) => w.itemId === word.itemId && w.index === word.index)
+    .map((w) => w.text)
+    .join(' ');
+}
+
 const Words = memo(function Words({
   words,
   selected,
+  editing,
+  onCommit,
+  onCancel,
 }: {
   words: SequenceWord[];
   selected: ReadonlySet<string>;
+  editing: string | null;
+  onCommit: (word: SequenceWord, text: string) => void;
+  onCancel: () => void;
 }) {
+  const editingWord = editing ? words.find((w) => w.key === editing) : undefined;
   return (
     <>
-      {words.map((w, i) => (
-        <span
-          key={w.key}
-          role="option"
-          aria-selected={selected.has(w.key)}
-          data-key={w.key}
-          data-index={i}
-          className={(w.p ?? 1) < 0.5 ? 'transcript__word is-unsure' : 'transcript__word'}
-          title={(w.p ?? 1) < 0.5 ? 'Whisper was unsure about this word' : undefined}
-        >
-          {w.text.trim()}{' '}
-        </span>
-      ))}
+      {words.map((w, i) => {
+        // A correction that became several words is edited as one, at its first part.
+        if (editingWord && w.itemId === editingWord.itemId && w.index === editingWord.index) {
+          if (w.part !== 0) return null;
+          return (
+            <WordInput
+              key={w.key}
+              word={w}
+              initial={correctionText(words, w)}
+              onCommit={(text) => onCommit(w, text)}
+              onCancel={onCancel}
+            />
+          );
+        }
+        const unsure = (w.p ?? 1) < 0.5 && w.original === undefined;
+        const className = [
+          'transcript__word',
+          unsure && 'is-unsure',
+          w.original !== undefined && 'is-edited',
+          w.hidden && 'is-hidden',
+        ]
+          .filter(Boolean)
+          .join(' ');
+        return (
+          <span
+            key={w.key}
+            role="option"
+            aria-selected={selected.has(w.key)}
+            data-key={w.key}
+            data-index={i}
+            className={className}
+            title={
+              w.hidden
+                ? `Hidden from captions (was "${w.original}")`
+                : w.original !== undefined
+                  ? `Corrected from "${w.original}"`
+                  : unsure
+                    ? 'Whisper was unsure about this word'
+                    : undefined
+            }
+          >
+            {w.hidden ? w.original : w.text.trim()}{' '}
+          </span>
+        );
+      })}
     </>
   );
 });
+
+function WordInput({
+  word,
+  initial,
+  onCommit,
+  onCancel,
+}: {
+  word: SequenceWord;
+  initial: string;
+  onCommit: (text: string) => void;
+  onCancel: () => void;
+}) {
+  const [value, setValue] = useState(initial);
+  const [done, setDone] = useState(false);
+  const finish = (save: boolean) => {
+    if (done) return;
+    setDone(true);
+    if (save) onCommit(value);
+    else onCancel();
+  };
+  return (
+    <input
+      className="transcript__input"
+      aria-label={`Correct "${word.original ?? word.text}"`}
+      data-testid="word-input"
+      value={value}
+      size={Math.max(3, value.length + 1)}
+      autoFocus
+      onFocus={(e) => e.currentTarget.select()}
+      onChange={(e) => setValue(e.target.value)}
+      onKeyDown={(e) => {
+        e.stopPropagation();
+        if (e.key === 'Enter') finish(true);
+        else if (e.key === 'Escape') finish(false);
+      }}
+      onBlur={() => finish(true)}
+    />
+  );
+}

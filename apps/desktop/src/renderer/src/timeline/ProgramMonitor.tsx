@@ -24,6 +24,7 @@ import { useApp } from '../store';
 import { openContextMenu } from '../ui/ContextMenu';
 import { clipMenu, programMenu } from './menus';
 import { TransformOverlay, transformFor, type VisibleLayer } from './TransformOverlay';
+import { CaptionsLayer } from '../engine/captions-layer';
 
 interface Mounted {
   item: TimelineItem;
@@ -348,6 +349,7 @@ export function ProgramMonitor({ seq }: { seq: Sequence }) {
                 />
               ) : null;
             })}
+            <CaptionsLayer seq={seq} playhead={playhead} box={box} />
           </div>
           <TransformOverlay
             seq={seq}

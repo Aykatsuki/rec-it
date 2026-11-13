@@ -3,7 +3,7 @@ import { join } from 'node:path';
 import { IPC } from '../shared/bridge';
 import { BackendHost } from './backend-host';
 import { handleMediaProtocol, registerMediaScheme } from './media-protocol';
-import { bundledFfmpegDir, sidecarCommand } from './paths';
+import { bundledFfmpegDir, bundledFontsDir, sidecarCommand } from './paths';
 import { SecretStore } from './secrets';
 import { applyGlobalSecurity, isAppUrl, setAllowedOrigin } from './security';
 import { registerShellIpc } from './shell-ipc';
@@ -83,6 +83,7 @@ void app.whenReady().then(() => {
       electronVersion: process.versions.electron,
       ffmpeg: { envPath: process.env.RECIT_FFMPEG_PATH, bundledDir: bundledFfmpegDir() },
       sidecar: process.env.RECIT_DISABLE_SIDECAR === '1' ? null : sidecarCommand(),
+      fontsDir: bundledFontsDir(),
     },
     secrets,
   );

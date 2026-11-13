@@ -146,9 +146,9 @@ The roadmap is ordered so that each phase produces something that works and can 
 
 ---
 
-## Phase 4 · Transcription and captions (M) — 🟡 first slice done (13 Nov 2026)
+## Phase 4 · Transcription and captions (M) — 🟡 two slices done (13 Nov 2026)
 
-**Progress.** Slice A (ADR-031): local faster-whisper transcription with word timestamps (GPU with CPU fallback, one-click install of the engine, progress and cancel), a transcript panel that follows the playhead and seeks on click, and text-based editing (select words, press Delete to cut them, with ripple). Next: captions (styles, ASS compiler, JASSUB preview, export), transcript search and word corrections, then the WER and timing measurements.
+**Progress.** Slice A (ADR-031): local faster-whisper transcription with word timestamps (GPU with CPU fallback, one-click install of the engine, progress and cancel), a transcript panel that follows the playhead and seeks on click, and text-based editing (select words, press Delete to cut them, with ripple). Slice B (ADR-032): correcting transcript words (undoable; several words or none), and automatic captions that follow the transcript and every timeline edit, in six styles with size, position, words per line, lines, capitals and highlight colour; libass draws them in the preview (JASSUB) and the export from the same ASS file and bundled fonts (parity SSIM 0.992–0.996). Next: per-caption adjustments, transcript search, more styles and animations, then the WER and ±50 ms timing measurements.
 
 **Goal:** accurate word-timed transcripts and animated captions.
 

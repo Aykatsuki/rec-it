@@ -1,18 +1,19 @@
 import { useState } from 'react';
-import { MousePointerClick, Sparkles } from 'lucide-react';
+import { MousePointerClick } from 'lucide-react';
 import { EmptyState, Tabs } from '@rec-it/ui';
 import { AssetDetails } from '../media/AssetDetails';
 import { primaryClip } from '../edit';
 import { useApp, useSelectedAsset, useSequence } from '../store';
 import { ClipInspector } from '../timeline/ClipInspector';
 import { TranscriptPanel } from '../timeline/TranscriptPanel';
+import { CaptionsPanel } from '../timeline/CaptionsPanel';
 
-type RightTab = 'inspector' | 'transcript' | 'claude';
+type RightTab = 'inspector' | 'transcript' | 'captions';
 
 const TABS = [
   { id: 'inspector', label: 'Inspector' },
   { id: 'transcript', label: 'Transcript' },
-  { id: 'claude', label: 'Claude' },
+  { id: 'captions', label: 'Captions' },
 ] as const;
 
 export function RightPanel() {
@@ -44,13 +45,8 @@ export function RightPanel() {
             2.
           </EmptyState>
         )}
-        {tab === 'claude' && (
-          <EmptyState icon={<Sparkles size={20} />} title="Claude activity">
-            In Phase 6 you will connect Claude from your Claude desktop app. Every edit Claude makes
-            will appear here and can be undone in one step.
-          </EmptyState>
-        )}
         {tab === 'transcript' && <TranscriptPanel />}
+        {tab === 'captions' && <CaptionsPanel />}
       </div>
     </section>
   );

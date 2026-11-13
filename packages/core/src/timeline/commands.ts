@@ -1,7 +1,10 @@
 import { createId } from '../ids';
 import { frameDuration, snapToFrame, secondsToFlicks, type Flicks, type Rational } from '../time';
 import {
+  CAPTION_STYLES,
+  DEFAULT_CAPTIONS,
   DEFAULT_TRANSFORM,
+  type CaptionSettings,
   itemEnd,
   normalizeAngle,
   type AssetLookup,
@@ -132,6 +135,10 @@ export type Command =
       muted?: boolean;
       transform?: Partial<Transform>;
     }
+  /** Turns automatic captions on or off and changes their look (ADR-032). */
+  | { type: 'captions.update'; sequenceId: string; captions: Partial<CaptionSettings> }
+  /** Corrects one transcript word (empty text hides it from captions). */
+  | { type: 'transcript.editWord'; assetId: string; index: number; from: string; to: string }
   /** Several commands applied as one undo step. Fails as a whole if any part fails. */
   | { type: 'batch'; commands: Command[] };
 
@@ -491,6 +498,30 @@ export function applyCommand(doc: ProjectDocument, command: Command, assets: Ass
           for (const x of tr.items) if (x.start >= b) x.start = (x.start - gap) as Flicks;
       }
       for (const tr of new Set(targets.map((t) => t.track))) sortItems(tr);
+      return;
+    }
+    case 'captions.update': {
+      const seq = sequenceOf(doc, command.sequenceId);
+      const next = { ...DEFAULT_CAPTIONS, ...seq.captions, ...command.captions };
+      if (!CAPTION_STYLES.includes(next.style)) fail('Unknown caption style.');
+      if (!/^#[0-9a-fA-F]{6}$/.test(next.highlight)) fail('Colours look like #FFE600.');
+      next.size = Math.min(2, Math.max(0.5, next.size));
+      next.position = Math.min(0.9, Math.max(0.1, next.position));
+      next.wordsPerLine = Math.min(8, Math.max(1, Math.round(next.wordsPerLine)));
+      next.lines = next.lines === 1 ? 1 : 2;
+      seq.captions = next;
+      return;
+    }
+    case 'transcript.editWord': {
+      if (!Number.isInteger(command.index) || command.index < 0) fail('No such word.');
+      const to = command.to.replace(/\s+/g, ' ').trim();
+      if (to.length > 200) fail('That correction is too long.');
+      const edits = (doc.transcriptEdits ??= {});
+      const forAsset = (edits[command.assetId] ??= {});
+      if (to === command.from.trim()) delete forAsset[command.index];
+      else forAsset[command.index] = { from: command.from, to };
+      if (!Object.keys(forAsset).length) delete edits[command.assetId];
+      if (!Object.keys(edits).length) delete doc.transcriptEdits;
       return;
     }
     case 'item.link': {

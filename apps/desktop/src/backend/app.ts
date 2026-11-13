@@ -32,10 +32,11 @@ import {
 } from '@rec-it/ffmpeg';
 import type { BackendConfig } from '../shared/backend-messages';
 import type { Toolchain } from './services/media-service';
-import { ExportService, type ExportToolchain } from './services/export-service';
+import { ExportService, type CaptionsInput, type ExportToolchain } from './services/export-service';
+import { sequenceCaptionsAss } from '@rec-it/captions';
 import { TranscriptService } from './services/transcript-service';
 import { ProjectService } from './services/project-service';
-import type { Command, Sequence } from '@rec-it/core';
+import type { Command, Sequence, TranscriptEdits } from '@rec-it/core';
 import { SidecarClient, checkSidecar } from './services/sidecar';
 
 const BACKEND_VERSION = '0.1.0';
@@ -220,22 +221,26 @@ export class BackendApp {
       // Remember the folder so the next export starts there.
       if (isAbsolute(path))
         this.emit('settings.changed', this.settings.update({ exportDirectory: dirname(path) }));
+      const seq = this.sequence(sequenceId);
       return this.exports.start(
-        this.sequence(sequenceId),
+        seq,
         path,
         settings,
         () => this.exportToolchain(),
         (id) => media.exportAsset(id),
+        this.captionsFor(seq),
       );
     },
     'export.frame': async ({ sequenceId, time, path }) => {
       const media = this.projects.media();
+      const seq = this.sequence(sequenceId);
       await this.exports.frame(
-        this.sequence(sequenceId),
+        seq,
         time,
         path,
         () => this.exportToolchain(),
         (id) => media.exportAsset(id),
+        this.captionsFor(seq),
       );
       return { ok: true as const };
     },
@@ -296,6 +301,18 @@ export class BackendApp {
   async exportToolchain(): Promise<ExportToolchain> {
     const { bins, tonemap } = await this.toolchain();
     return { bins, tonemap, ffmpeg: this.ffmpeg };
+  }
+
+  /** Burned-in captions for an export, built exactly as the preview builds them (ADR-032). */
+  private captionsFor(seq: Sequence): CaptionsInput | null {
+    if (!seq.captions?.enabled) return null;
+    const fontsDir = this.config.fontsDir;
+    if (!fontsDir || !existsSync(fontsDir))
+      throw new Error('The caption fonts are missing from this installation.');
+    const edits = this.projects.document().state().doc.transcriptEdits as
+      TranscriptEdits | undefined;
+    const ass = sequenceCaptionsAss(seq, (id) => this.transcripts.get(id)?.words, edits);
+    return ass ? { ass, fontsDir } : null;
   }
 
   private sequence(sequenceId: string): Sequence {

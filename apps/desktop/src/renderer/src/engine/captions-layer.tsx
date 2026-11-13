@@ -1,0 +1,143 @@
+// Captions in the preview (ADR-011, ADR-032): libass compiled to WebAssembly (JASSUB) draws the
+// same ASS file, with the same bundled fonts, that FFmpeg's `ass` filter burns into the export.
+import { useEffect, useMemo, useRef, useState } from 'react';
+import JASSUB from 'jassub';
+import workerUrl from 'jassub/dist/worker/worker.js?worker&url';
+import wasmUrl from 'jassub/dist/wasm/jassub-worker.wasm?url';
+import modernWasmUrl from 'jassub/dist/wasm/jassub-worker-modern.wasm?url';
+import wasmWorkerUrl from 'jassub/dist/wasm/jassub-worker.js?url';
+import modernWasmWorkerUrl from 'jassub/dist/wasm/jassub-worker-modern.js?url';
+import { FONT_FILES, sequenceCaptionsAss } from '@rec-it/captions';
+import type { Sequence, TranscriptEdits } from '@rec-it/core';
+import { useApp } from '../store';
+
+// The bundled fonts (resources/fonts), as URLs the worker can fetch.
+const fontUrls = import.meta.glob('../../../../../../resources/fonts/*.ttf', {
+  query: '?url',
+  import: 'default',
+  eager: true,
+}) as Record<string, string>;
+const urlOf = (file: string) =>
+  Object.entries(fontUrls).find(([path]) => path.endsWith(`/${file}`))?.[1];
+
+/** An ASS file with no events: clears the canvas when captions are off. */
+const EMPTY =
+  '[Script Info]\nScriptType: v4.00+\n\n[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n';
+
+/** The sequence's captions as ASS, rebuilt when the timeline, transcripts or corrections change. */
+export function useCaptionsAss(seq: Sequence): string | null {
+  const transcripts = useApp((s) => s.transcripts);
+  const edits = useApp((s) => s.docState?.doc.transcriptEdits) as TranscriptEdits | undefined;
+  return useMemo(
+    () => sequenceCaptionsAss(seq, (id) => transcripts[id]?.words, edits),
+    [seq, transcripts, edits],
+  );
+}
+
+export function CaptionsLayer({
+  seq,
+  playhead,
+  box,
+}: {
+  seq: Sequence;
+  playhead: number;
+  box: { w: number; h: number };
+}) {
+  const ass = useCaptionsAss(seq);
+  const canvas = useRef<HTMLCanvasElement>(null);
+  const jassub = useRef<JASSUB | null>(null);
+  const [ready, setReady] = useState(false);
+  const [failed, setFailed] = useState<string | null>(null);
+
+  // One renderer per canvas (a canvas can only be handed to a worker once).
+  useEffect(() => {
+    const el = canvas.current;
+    if (!el) return;
+    let alive = true;
+    const fonts = Object.values(FONT_FILES)
+      .map(urlOf)
+      .filter((u): u is string => !!u);
+    const availableFonts = Object.fromEntries(
+      Object.entries(FONT_FILES)
+        .map(([family, file]) => [family.toLowerCase(), urlOf(file)] as const)
+        .filter((e): e is readonly [string, string] => !!e[1]),
+    );
+    try {
+      const instance = new JASSUB({
+        canvas: el,
+        subContent: EMPTY,
+        workerUrl,
+        wasmUrl,
+        modernWasmUrl,
+        wasmWorkerUrl,
+        modernWasmWorkerUrl,
+        fonts,
+        availableFonts,
+        defaultFont: 'montserrat extrabold',
+        // Only the bundled fonts, so the preview matches the export on every computer.
+        queryFonts: false,
+        prescaleHeightLimit: 4096,
+      });
+      jassub.current = instance;
+      instance.ready.then(
+        () => alive && setReady(true),
+        (e: unknown) => alive && setFailed(e instanceof Error ? e.message : String(e)),
+      );
+    } catch (e) {
+      // WebAssembly or OffscreenCanvas unavailable: the preview simply has no captions.
+      console.error('Caption preview failed:', e);
+    }
+    return () => {
+      alive = false;
+      setReady(false);
+      void jassub.current?.destroy().catch(() => {});
+      jassub.current = null;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (failed) console.error('Caption preview failed:', failed);
+  }, [failed]);
+
+  // New captions file.
+  useEffect(() => {
+    const j = jassub.current;
+    if (!ready || !j) return;
+    void (async () => {
+      await j.renderer.setTrack(ass ?? EMPTY);
+      await j.manualRender(
+        {
+          mediaTime: useApp.getState().playhead,
+          width: seq.width,
+          height: seq.height,
+          expectedDisplayTime: 0,
+        },
+        true,
+      );
+    })().catch((e: unknown) => console.error('Caption preview failed:', e));
+  }, [ass, ready, seq.width, seq.height]);
+
+  // Each new playhead position (playback, scrubbing) and size change redraws.
+  useEffect(() => {
+    const j = jassub.current;
+    if (!ready || !j || !box.w) return;
+    j.manualRender(
+      { mediaTime: playhead, width: seq.width, height: seq.height, expectedDisplayTime: 0 },
+      true,
+    )
+      .then(() => {
+        if (canvas.current) canvas.current.dataset.time = playhead.toFixed(3);
+      })
+      .catch((e: unknown) => console.error('Caption preview failed:', e));
+  }, [ready, playhead, box.w, box.h, seq.width, seq.height]);
+
+  return (
+    <canvas
+      ref={canvas}
+      className="program__captions"
+      data-testid="captions-canvas"
+      data-ready={ready ? 'true' : 'false'}
+      data-active={ass ? 'true' : 'false'}
+    />
+  );
+}

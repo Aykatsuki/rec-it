@@ -79,12 +79,52 @@ export interface Sequence {
   fps: Rational;
   /** Video tracks first, top layer first; then audio tracks. */
   tracks: Track[];
+  /** Automatic captions from the transcripts of the clips (ADR-032). Absent = off. */
+  captions?: CaptionSettings;
 }
+
+/** Built-in caption looks (packages/captions defines them). */
+export const CAPTION_STYLES = ['highlight', 'pop', 'karaoke', 'caps', 'clean', 'bebas'] as const;
+export type CaptionStyleId = (typeof CAPTION_STYLES)[number];
+
+export interface CaptionSettings {
+  enabled: boolean;
+  style: CaptionStyleId;
+  /** Text size relative to the style's own size (0.5–2). */
+  size: number;
+  /** Vertical position of the caption's centre, as a fraction of the frame height (0.1–0.9). */
+  position: number;
+  /** Words per line (1–8) and lines per caption (1–2). */
+  wordsPerLine: number;
+  lines: 1 | 2;
+  uppercase: boolean;
+  /** Colour of the spoken word (highlight, pop, karaoke), "#RRGGBB". */
+  highlight: string;
+}
+
+export const DEFAULT_CAPTIONS: CaptionSettings = {
+  enabled: true,
+  style: 'highlight',
+  size: 1,
+  position: 0.68,
+  wordsPerLine: 3,
+  lines: 2,
+  uppercase: false,
+  highlight: '#FFE600',
+};
+
+/**
+ * Corrections to a transcript word, by asset and word index. `from` is the word as Whisper wrote
+ * it, so a correction is ignored if the media is transcribed again and the word changed. `to`
+ * may hold several words (they share the original timing) or be empty (hidden from captions).
+ */
+export type TranscriptEdits = Record<string, Record<number, { from: string; to: string }>>;
 
 export interface ProjectDocument {
   schemaVersion: 1;
   sequences: Sequence[];
   activeSequenceId: string | null;
+  transcriptEdits?: TranscriptEdits;
 }
 
 /** What commands need to know about media (supplied by the backend from the asset table). */
