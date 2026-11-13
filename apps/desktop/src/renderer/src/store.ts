@@ -186,8 +186,10 @@ export function startBackendSync(): () => void {
     backend.on('project.changed', (project) =>
       useApp.setState((s) =>
         // Updates to the same project (rename, save, recent list) keep the selection and
-        // playhead; only opening, creating or closing a project resets them.
-        s.project?.id === project?.id && project
+        // playhead; only opening, creating or closing a project resets them. Until the first
+        // load has said which project is open (`undefined`), nothing is reset: whatever was
+        // selected meanwhile belongs to this project (a click during start-up was lost before).
+        project && (s.project === undefined || s.project?.id === project.id)
           ? { project }
           : {
               project,
