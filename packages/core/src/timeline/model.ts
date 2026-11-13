@@ -12,6 +12,33 @@ export interface Transform {
   y: number;
   /** Clockwise rotation in degrees, -180..180, around the picture's centre. */
   rotation: number;
+  /** Part of the picture cut off each edge, as fractions of its size (ADR-034). */
+  crop?: Crop;
+}
+
+export interface Crop {
+  left: number;
+  top: number;
+  right: number;
+  bottom: number;
+}
+
+/**
+ * The part of a `srcW × srcH` picture that a crop keeps, in whole, even pixels (so preview and
+ * export cut exactly the same pixels, and H.264's chroma subsampling stays aligned).
+ */
+export function cropRect(
+  srcW: number,
+  srcH: number,
+  crop: Crop | undefined,
+): { x: number; y: number; w: number; h: number } {
+  if (!crop) return { x: 0, y: 0, w: srcW, h: srcH };
+  const evenDown = (n: number) => Math.max(0, Math.floor(n / 2) * 2);
+  const x = Math.min(evenDown(crop.left * srcW), Math.max(0, srcW - 2));
+  const y = Math.min(evenDown(crop.top * srcH), Math.max(0, srcH - 2));
+  const w = Math.max(2, Math.min(srcW - x, evenDown(srcW * (1 - crop.left - crop.right))));
+  const h = Math.max(2, Math.min(srcH - y, evenDown(srcH * (1 - crop.top - crop.bottom))));
+  return { x, y, w, h };
 }
 
 /** Properties that can be animated with keyframes. */
@@ -194,16 +221,22 @@ export interface Layout {
    * unrotated box when rotation is 0. Export rotates into this box and overlays it here.
    */
   bounds: { width: number; height: number; left: number; top: number };
+  /** The part of the source picture shown (after cropping), in source pixels. */
+  source: { x: number; y: number; w: number; h: number };
 }
 
 /** Where a source of `srcW`×`srcH` lands in a `frameW`×`frameH` frame. Shared by preview and export. */
 export function computeLayout(
-  srcW: number,
-  srcH: number,
+  fullW: number,
+  fullH: number,
   frameW: number,
   frameH: number,
   t: Transform,
 ): Layout {
+  // A cropped picture is laid out as if it were only the part that is kept.
+  const source = cropRect(fullW, fullH, t.crop);
+  const srcW = source.w;
+  const srcH = source.h;
   const base =
     t.fit === 'fill'
       ? Math.max(frameW / srcW, frameH / srcH)
@@ -216,7 +249,7 @@ export function computeLayout(
   const top = Math.round((frameH - height) / 2 + t.y * frameH);
   const rotation = normalizeAngle(t.rotation ?? 0);
   if (rotation === 0)
-    return { width, height, left, top, rotation, bounds: { width, height, left, top } };
+    return { width, height, left, top, rotation, bounds: { width, height, left, top }, source };
   const r = (rotation * Math.PI) / 180;
   const cos = Math.abs(Math.cos(r));
   const sin = Math.abs(Math.sin(r));
@@ -228,7 +261,7 @@ export function computeLayout(
     left: left + (width - bw) / 2,
     top: top + (height - bh) / 2,
   };
-  return { width, height, left, top, rotation, bounds };
+  return { width, height, left, top, rotation, bounds, source };
 }
 
 /** Easing curve applied to progress 0..1. */

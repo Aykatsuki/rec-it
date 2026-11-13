@@ -37,6 +37,7 @@ export interface Box {
   rotation: number;
   /** Axis-aligned box around the rotated rectangle. */
   bounds: { left: number; top: number; width: number; height: number };
+  source: { x: number; y: number; w: number; h: number };
 }
 
 let measure: CanvasRenderingContext2D | null = null;
@@ -81,5 +82,6 @@ export function captionBox(seq: Sequence, item: TimelineItem, t: Transform): Box
     height,
     rotation: t.rotation,
     bounds: { left: cx - bw / 2, top: cy - bh / 2, width: bw, height: bh },
+    source: { x: 0, y: 0, w: width, h: height },
   };
 }

@@ -14,6 +14,7 @@ import {
   type Track,
   type Transform,
   type KeyframeProperty,
+  type Crop,
 } from '@rec-it/core';
 import type { CommandInput, MediaAsset } from '@rec-it/ipc-contract';
 import { backend } from './api';
@@ -567,5 +568,131 @@ export function jumpToKeyframe(item: TimelineItem, dir: -1 | 1, property?: Keyfr
   if (target !== undefined) {
     setPlaying(false);
     setPlayhead(target);
+  }
+}
+
+// ---------------------------------------------------------------------------------------------
+// Reframing (ADR-034).
+
+/** Height of the facecam panel in the facecam + gameplay layout, as a share of the frame. */
+export const FACECAM_SHARE = 0.35;
+
+/**
+ * Crop (fractions) that gives a picture of `aspect` (width / height) out of a source of
+ * `srcAspect`, at most `maxHeight` of the source tall, placed at (`x`, `y`) in 0..1 of the room
+ * left over.
+ */
+export function cropForAspect(
+  srcAspect: number,
+  aspect: number,
+  maxHeight: number,
+  x: number,
+  y: number,
+): Crop {
+  let h = maxHeight;
+  let w = (h * aspect) / srcAspect;
+  if (w > 1) {
+    w = 1;
+    h = (w * srcAspect) / aspect;
+  }
+  const left = (1 - w) * x;
+  const top = (1 - h) * y;
+  return { left, top, right: 1 - w - left, bottom: 1 - h - top };
+}
+
+/**
+ * Facecam + gameplay: the clip becomes the gameplay panel (bottom), and a muted, linked copy on
+ * the video track above becomes the facecam panel (top). Both are cropped to their panel's shape;
+ * the crop window then opens on the facecam so it can be placed over the camera.
+ */
+export async function facecamLayout(itemId: string): Promise<void> {
+  const state = useApp.getState();
+  const seq = activeSequence(state);
+  const found = findItem(seq, itemId);
+  if (!seq || !found || found.track.kind !== 'video') return;
+  const { item, track } = found;
+  const asset = state.assets.find((a) => a.id === item.assetId);
+  const v = asset?.probe?.video;
+  if (!v || asset?.kind !== 'video') {
+    notify('The facecam layout needs a video clip.', 'warn');
+    return;
+  }
+  const srcAspect = v.displayWidth / v.displayHeight;
+  const W = seq.width;
+  const H = seq.height;
+  const camH = Math.round((H * FACECAM_SHARE) / 2) * 2;
+  const camAspect = W / camH;
+  const gameAspect = W / (H - camH);
+  // A free video track above this one for the facecam (or a new one at the top).
+  const videoTracks = seq.tracks.filter((t) => t.kind === 'video');
+  const above = videoTracks
+    .slice(0, videoTracks.indexOf(track))
+    .reverse()
+    .find(
+      (t) =>
+        !t.locked &&
+        !t.items.some(
+          (i) => i.start < item.start + item.duration && i.start + i.duration > item.start,
+        ),
+    );
+  const camTrackId = above?.id ?? `track_${crypto.randomUUID()}`;
+  const camId = `item_${crypto.randomUUID()}`;
+  const ok = await edit({
+    type: 'batch',
+    commands: [
+      ...(above
+        ? []
+        : [
+            {
+              type: 'track.add' as const,
+              sequenceId: seq.id,
+              kind: 'video' as const,
+              id: camTrackId,
+            },
+          ]),
+      {
+        type: 'item.add',
+        sequenceId: seq.id,
+        trackId: camTrackId,
+        assetId: item.assetId,
+        id: camId,
+        start: item.start,
+        sourceIn: item.sourceIn,
+        duration: item.duration,
+        muted: true,
+        volume: item.volume,
+        transform: {
+          fit: 'fit',
+          scale: 1,
+          x: 0,
+          y: (camH / 2 - H / 2) / H,
+          rotation: 0,
+          crop: cropForAspect(srcAspect, camAspect, 0.4, 0, 0),
+        },
+      },
+      {
+        type: 'item.update',
+        sequenceId: seq.id,
+        itemId: item.id,
+        transform: {
+          fit: 'fit',
+          scale: 1,
+          x: 0,
+          y: (camH + (H - camH) / 2 - H / 2) / H,
+          rotation: 0,
+          crop: cropForAspect(srcAspect, gameAspect, 1, 0.5, 0.5),
+        },
+      },
+      {
+        type: 'item.link',
+        sequenceId: seq.id,
+        itemIds: [item.id, camId],
+        ...(item.linkId ? { linkId: item.linkId } : {}),
+      },
+    ],
+  });
+  if (ok) {
+    useApp.setState({ selectedItemIds: [camId], focus: 'timeline', cropItemId: camId });
+    notify('Drag the box over your camera, then press Apply.', 'info');
   }
 }

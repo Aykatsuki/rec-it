@@ -5,6 +5,7 @@ import { History } from './history';
 import {
   transformAt,
   volumeAt,
+  DEFAULT_TRANSFORM,
   computeLayout,
   emptyDocument,
   sequenceDuration,
@@ -290,6 +291,23 @@ describe('timeline commands', () => {
 });
 
 describe('computeLayout', () => {
+  it('lays out only the cropped part, cut on even pixels', () => {
+    // A 1920×1080 picture cropped to its left third and top half (a facecam corner).
+    const crop = { left: 0, top: 0, right: 2 / 3, bottom: 0.5 };
+    const l = computeLayout(1920, 1080, 1080, 1920, { ...DEFAULT_TRANSFORM, fit: 'fit', crop });
+    expect(l.source).toEqual({ x: 0, y: 0, w: 640, h: 540 });
+    expect([l.width, l.height]).toEqual([1080, 912]); // 640×540 fitted to 1080 wide
+    // Odd sizes round down to even pixels, never past the picture.
+    const odd = computeLayout(1279, 721, 1080, 1920, {
+      ...DEFAULT_TRANSFORM,
+      crop: { left: 0.333, top: 0.1, right: 0.2, bottom: 0.0 },
+    });
+    expect((odd.source.x % 2) + (odd.source.y % 2) + (odd.source.w % 2) + (odd.source.h % 2)).toBe(
+      0,
+    );
+    expect(odd.source.x + odd.source.w).toBeLessThanOrEqual(1279);
+  });
+
   it('fills a 9:16 frame from 16:9 by cropping the sides', () => {
     expect(
       computeLayout(1920, 1080, 1080, 1920, { fit: 'fill', scale: 1, x: 0, y: 0, rotation: 0 }),

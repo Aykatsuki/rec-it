@@ -131,3 +131,37 @@ describe('caption tracks', () => {
     ).toThrow(/Only captions/);
   });
 });
+
+describe('crop', () => {
+  it('is kept within limits on update and removed when empty', () => {
+    const h = new History(emptyDocument());
+    const run = (c: Command) => h.execute(c, lookup);
+    run({
+      type: 'sequence.create',
+      id: 's',
+      name: 'S',
+      width: 1080,
+      height: 1920,
+      fps: FRAME_RATES.fps30,
+    });
+    const v1 = h.doc.sequences[0]!.tracks[1]!.id;
+    run({ type: 'item.add', sequenceId: 's', trackId: v1, assetId: 'clip', start: 0, id: 'c' });
+    const item = () => h.doc.sequences[0]!.tracks[1]!.items[0]!;
+    run({
+      type: 'item.update',
+      sequenceId: 's',
+      itemId: 'c',
+      transform: { crop: { left: 0.7, top: -1, right: 0.6, bottom: 0.2 } },
+    });
+    expect(item().transform.crop).toEqual({ left: 0.7, top: 0, right: 0.25, bottom: 0.2 });
+    run({
+      type: 'item.update',
+      sequenceId: 's',
+      itemId: 'c',
+      transform: { crop: { left: 0, top: 0, right: 0, bottom: 0 } },
+    });
+    expect(item().transform.crop).toBeUndefined();
+    h.undo();
+    expect(item().transform.crop?.left).toBe(0.7);
+  });
+});

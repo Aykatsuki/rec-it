@@ -158,12 +158,17 @@ export class Compositor {
       const r = (l.rotation * Math.PI) / 180;
       const cos = Math.cos(r);
       const sin = Math.sin(r);
+      // Texture coordinates of the part that is kept (crop, ADR-034).
+      const u0 = l.source.x / layer.width;
+      const v0 = l.source.y / layer.height;
+      const du = l.source.w / layer.width;
+      const dv = l.source.h / layer.height;
       const corner = (u: number, v: number) => {
         const dx = (u - 0.5) * l.width;
         const dy = (v - 0.5) * l.height;
         const px = cx + dx * cos - dy * sin;
         const py = cy + dx * sin + dy * cos;
-        return [(px / frameW) * 2 - 1, 1 - (py / frameH) * 2, u, v];
+        return [(px / frameW) * 2 - 1, 1 - (py / frameH) * 2, u0 + u * du, v0 + v * dv];
       };
       // Two triangles: (0,0) (1,0) (0,1) and (1,0) (1,1) (0,1).
       const data = new Float32Array([

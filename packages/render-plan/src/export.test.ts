@@ -638,6 +638,71 @@ describe.skipIf(!bins)('export renders correct frames (real FFmpeg)', () => {
     60_000,
   );
 
+  it('crops before scaling, also on animated clips', async () => {
+    // 400×400: red top-left, green top-right, blue bottom-left, white bottom-right.
+    const quad = join(dir, 'quad.png');
+    execFileSync(bins!.ffmpeg, [
+      '-v',
+      'error',
+      '-y',
+      '-f',
+      'lavfi',
+      '-i',
+      'color=red:s=200x200',
+      '-f',
+      'lavfi',
+      '-i',
+      'color=0x00ff00:s=200x200',
+      '-f',
+      'lavfi',
+      '-i',
+      'color=blue:s=200x200',
+      '-f',
+      'lavfi',
+      '-i',
+      'color=white:s=200x200',
+      '-filter_complex',
+      '[0][1]hstack[t];[2][3]hstack[b];[t][b]vstack',
+      '-frames:v',
+      '1',
+      quad,
+    ]);
+    info.quad = { kind: 'image', duration: null, hasAudio: false, width: 400, height: 400 };
+    files.quad = quad;
+    // Keep the top-right quarter (green), filled to the whole 360×640 frame.
+    const crop = { left: 0.5, top: 0, right: 0, bottom: 0.5 };
+    const { out } = await render(({ v1 }) => [
+      {
+        type: 'item.add',
+        trackId: v1,
+        assetId: 'quad',
+        start: 0,
+        duration: s(1),
+        transform: { fit: 'fill', crop },
+      },
+      {
+        type: 'item.add',
+        trackId: v1,
+        assetId: 'quad',
+        start: s(1),
+        duration: s(1),
+        id: 'anim',
+        transform: { fit: 'fill', crop },
+      },
+      { type: 'keyframe.set', itemId: 'anim', property: 'scale', t: 0, value: 1 },
+      { type: 'keyframe.set', itemId: 'anim', property: 'scale', t: s(1), value: 1.2 },
+    ]);
+    for (const t of [0.5, 1.5])
+      for (const [x, y] of [
+        [8, 8],
+        [340, 8],
+        [8, 620],
+        [340, 620],
+        [176, 316],
+      ])
+        expect(colour(pixel(out, t, x!, y!)), `${t}s at ${x},${y}`).toBe('green');
+  }, 60_000);
+
   it('renders a single frame with the export graph', async () => {
     const h = new History(emptyDocument());
     h.execute(

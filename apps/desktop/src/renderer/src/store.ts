@@ -48,6 +48,11 @@ interface AppState {
   transcription: TranscriptionStatus | null;
   /** Loaded transcripts by asset id. */
   transcripts: Record<string, Transcript>;
+  /** The clip whose crop is being edited in the crop window (ADR-034). */
+  cropItemId: string | null;
+  /** Show where YouTube's Shorts buttons and text cover the frame. */
+  safeZones: boolean;
+  setSafeZones(on: boolean): void;
 
   select(id: string | null): void;
   selectItems(ids: string[]): void;
@@ -113,6 +118,12 @@ export const useApp = create<AppState>((set) => ({
   clipboard: [],
   transcription: null,
   transcripts: {},
+  cropItemId: null,
+  safeZones: stored('recit.safeZones') === '1',
+  setSafeZones: (safeZones) => {
+    store('recit.safeZones', safeZones ? '1' : '0');
+    set({ safeZones });
+  },
   previewEngine: stored('recit.previewEngine') === 'compatible' ? 'compatible' : 'gpu',
   gpuFailed: null,
   setPreviewEngine: (previewEngine) => {
@@ -175,8 +186,10 @@ export function startBackendSync(): () => void {
     backend.on('project.changed', (project) =>
       useApp.setState((s) =>
         // Updates to the same project (rename, save, recent list) keep the selection and
-        // playhead; only opening, creating or closing a project resets them.
-        s.project?.id === project?.id && project
+        // playhead; only opening, creating or closing a project resets them. Until the first
+        // load has said which project is open (`undefined`), nothing is reset: whatever was
+        // selected meanwhile belongs to this project (a click during start-up was lost before).
+        project && (s.project === undefined || s.project?.id === project.id)
           ? { project }
           : {
               project,
