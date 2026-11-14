@@ -47,6 +47,7 @@ Each record states the decision, why it was made and what else was considered. R
 | 041 | Green screen (chroma key) | Accepted |
 | 042 | Sound effects: EQ, compressor, ducking | Accepted |
 | 043 | Wipe, slide and zoom transitions | Accepted |
+| 044 | The Claude connector (MCP) | Accepted |
 
 ---
 
