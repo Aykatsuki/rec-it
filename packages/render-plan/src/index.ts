@@ -86,6 +86,11 @@ export interface ExportOptions {
    * with the folder holding them as its working directory). ADR-032.
    */
   captions?: { file: string; fontsDir: string } | null;
+  /**
+   * LUT files by effect id, relative to the working directory FFmpeg runs in (ADR-040); each is
+   * already blended by the effect's strength.
+   */
+  luts?: Record<string, string>;
 }
 
 export interface ExportPlan {
@@ -429,6 +434,23 @@ function blurFilter(item: TimelineItem, height: number): string[] {
   ];
 }
 
+/**
+ * The clip's LUT (ADR-040) on full-range RGB converted from the BT.709 TV-range picture (as the
+ * preview's texture is), with trilinear interpolation like the preview's 3D texture, then back.
+ */
+function lutFilters(item: TimelineItem, luts: Record<string, string> | undefined): string[] {
+  const e = item.effects?.find((x) => x.kind === 'lut' && x.enabled && x.strength > 0);
+  if (!e) return [];
+  const file = luts?.[e.id];
+  if (!file) throw new ExportPlanError('A LUT this clip uses is missing from the project.');
+  return [
+    'scale=in_color_matrix=bt709:in_range=tv',
+    'format=gbrap',
+    `lut3d=file=${file}:interp=trilinear`,
+    'scale=out_color_matrix=bt709:out_range=tv',
+  ];
+}
+
 /** Static opacity scales the layer's alpha (the layer is yuva420p by then). */
 function opacityFilter(item: TimelineItem): string[] {
   const o = item.opacity ?? 1;
@@ -502,7 +524,7 @@ function captionsFilter(captions: ExportOptions['captions']): string {
 function buildGraph(
   seq: Sequence,
   assets: (assetId: string) => ExportAsset | undefined,
-  options: Pick<ExportOptions, 'scale' | 'tonemap' | 'captions'>,
+  options: Pick<ExportOptions, 'scale' | 'tonemap' | 'captions' | 'luts'>,
   /** Filters after the audio mix; null leaves audio out of the graph. */
   audioFinish: string | null,
   withVideo: boolean,
@@ -591,6 +613,7 @@ function buildGraph(
           ...retimeTrim(item),
           ...cropFilter(asset, kept),
           ...colorFilter(item),
+          ...lutFilters(item, options.luts),
           ...a.filters,
           ...opacityFilter(item),
           `setpts=PTS-STARTPTS+${start}/TB`,
@@ -621,6 +644,7 @@ function buildGraph(
         'setsar=1',
         ...blurFilter(item, height),
         ...colorFilter(item),
+        ...lutFilters(item, options.luts),
         'format=yuva420p',
         ...opacityFilter(item),
         ...(rotation
@@ -785,7 +809,7 @@ export function planFrame(
   seq: Sequence,
   assets: (assetId: string) => ExportAsset | undefined,
   timeSec: number,
-  options: Pick<ExportOptions, 'tonemap' | 'scale' | 'captions'>,
+  options: Pick<ExportOptions, 'tonemap' | 'scale' | 'captions' | 'luts'>,
 ): ExportPlan {
   const g = buildGraph(seq, assets, options, null, true);
   const t = Math.min(Math.max(0, timeSec), Math.max(0, g.total - 0.001));

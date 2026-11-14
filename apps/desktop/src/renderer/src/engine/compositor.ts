@@ -11,6 +11,8 @@ export interface Layer {
   transform: Transform;
   /** Opacity × fade and colour effects (ADR-036). Missing means unchanged. */
   picture?: PictureState;
+  /** The clip's LUT and its table (ADR-040). */
+  lut?: { id: string; size: number; data: Float32Array; strength: number };
 }
 
 const VS = `#version 300 es
@@ -20,8 +22,10 @@ void main() { v_uv = uv; gl_Position = vec4(pos, 0.0, 1.0); }`;
 // out = gain·code + offset per plane, with the gains and offsets from eqCodes (ADR-036).
 const FS = `#version 300 es
 precision highp float;
+precision highp sampler3D;
 in vec2 v_uv; uniform sampler2D tex; out vec4 color;
 uniform float u_alpha; uniform vec4 u_eq; uniform bool u_color; uniform vec4 u_tint;
+uniform sampler3D u_lut; uniform float u_lutMix; uniform float u_lutSize;
 void main() {
   vec4 t = texture(tex, v_uv);
   vec3 c = t.rgb;
@@ -37,6 +41,11 @@ void main() {
     float b = Y + 1.8556 * cb;
     float g = (Y - 0.2126 * r - 0.0722 * b) / 0.7152;
     c = clamp(vec3(r, g, b), 0.0, 1.0);
+  }
+  // LUT (ADR-040): trilinear lookup at the texel centres, blended by strength.
+  if (u_lutMix > 0.0) {
+    vec3 p = clamp(c, 0.0, 1.0) * ((u_lutSize - 1.0) / u_lutSize) + 0.5 / u_lutSize;
+    c = mix(c, texture(u_lut, p).rgb, u_lutMix);
   }
   // Dip transitions (ADR-037): FFmpeg's fade moves the codes linearly towards the colour's.
   c = mix(c, u_tint.rgb, u_tint.a);
@@ -87,6 +96,7 @@ export class Compositor {
   private program!: WebGLProgram;
   private blurProgram!: WebGLProgram;
   private targets: Target[] = [];
+  private readonly luts = new Map<string, WebGLTexture>();
   private buffer!: WebGLBuffer;
   private readonly textures = new Map<string, WebGLTexture>();
   private lost = false;
@@ -145,6 +155,34 @@ export class Compositor {
     this.blurProgram = link(BLUR_FS);
     this.buffer = gl.createBuffer()!;
     this.targets = [];
+    this.luts.clear();
+  }
+
+  /** The 3D texture of a LUT, uploaded once. */
+  private lutTexture(lut: NonNullable<Layer['lut']>): WebGLTexture {
+    const gl = this.gl;
+    let tex = this.luts.get(lut.id);
+    if (tex) return tex;
+    tex = gl.createTexture()!;
+    const n = lut.size;
+    const rgba = new Float32Array(n * n * n * 4);
+    for (let i = 0, j = 0; i < lut.data.length; i += 3, j += 4) {
+      rgba[j] = lut.data[i]!;
+      rgba[j + 1] = lut.data[i + 1]!;
+      rgba[j + 2] = lut.data[i + 2]!;
+      rgba[j + 3] = 1;
+    }
+    gl.activeTexture(gl.TEXTURE1);
+    gl.bindTexture(gl.TEXTURE_3D, tex);
+    // Half floats are filterable everywhere WebGL2 runs; red changes fastest, like .cube.
+    gl.texImage3D(gl.TEXTURE_3D, 0, gl.RGBA16F, n, n, n, 0, gl.RGBA, gl.FLOAT, rgba);
+    gl.texParameteri(gl.TEXTURE_3D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_3D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+    for (const w of [gl.TEXTURE_WRAP_S, gl.TEXTURE_WRAP_T, gl.TEXTURE_WRAP_R])
+      gl.texParameteri(gl.TEXTURE_3D, w, gl.CLAMP_TO_EDGE);
+    gl.activeTexture(gl.TEXTURE0);
+    this.luts.set(lut.id, tex);
+    return tex;
   }
 
   /** An offscreen texture of at least w×h for blur passes (two are kept and reused). */
@@ -324,6 +362,10 @@ export class Compositor {
     const eqLoc = gl.getUniformLocation(this.program, 'u_eq');
     const colorLoc = gl.getUniformLocation(this.program, 'u_color');
     const tintLoc = gl.getUniformLocation(this.program, 'u_tint');
+    const lutLoc = gl.getUniformLocation(this.program, 'u_lut');
+    const lutMixLoc = gl.getUniformLocation(this.program, 'u_lutMix');
+    const lutSizeLoc = gl.getUniformLocation(this.program, 'u_lutSize');
+    gl.uniform1i(lutLoc, 1);
     for (const layer of layers) {
       let tex = this.textures.get(layer.key);
       if (!tex) continue;
@@ -344,6 +386,14 @@ export class Compositor {
         [u0, v0, du, dv] = [0, 0, 1, 1];
       }
       gl.uniform1f(alphaLoc, p?.alpha ?? 1);
+      if (layer.lut && layer.lut.strength > 0) {
+        const lutTex = this.lutTexture(layer.lut);
+        gl.activeTexture(gl.TEXTURE1);
+        gl.bindTexture(gl.TEXTURE_3D, lutTex);
+        gl.activeTexture(gl.TEXTURE0);
+        gl.uniform1f(lutMixLoc, layer.lut.strength);
+        gl.uniform1f(lutSizeLoc, layer.lut.size);
+      } else gl.uniform1f(lutMixLoc, 0);
       const white = p?.tintColor === 'white' ? 1 : 0;
       gl.uniform4f(tintLoc, white, white, white, p?.tint ?? 0);
       const neutral = !p || (p.brightness === 0 && p.contrast === 1 && p.saturation === 1);
@@ -395,6 +445,8 @@ export class Compositor {
       this.gl.deleteTexture(t.tex);
     }
     this.gl.deleteProgram(this.blurProgram);
+    for (const t of this.luts.values()) this.gl.deleteTexture(t);
+    this.luts.clear();
     this.gl.deleteProgram(this.program);
   }
 }

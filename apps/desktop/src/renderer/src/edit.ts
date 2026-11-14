@@ -21,8 +21,8 @@ import {
   type KeyframeProperty,
   type Crop,
 } from '@rec-it/core';
-import type { CommandInput, MediaAsset } from '@rec-it/ipc-contract';
-import { backend } from './api';
+import type { CommandInput, LutInfo, MediaAsset } from '@rec-it/ipc-contract';
+import { backend, shell } from './api';
 import { notify } from './notifications';
 import { activeSequence, setOnFacesReady, useApp, type ClipboardClip } from './store';
 
@@ -1007,4 +1007,24 @@ export async function freezeFrame(itemId: string, seconds = FREEZE_SECONDS): Pro
     })
   )
     useApp.getState().selectItems([id]);
+}
+
+/** Asks for a .cube file and adds it to the project's LUTs (ADR-040). */
+export async function importLut(): Promise<LutInfo | null> {
+  const { path } = await shell.invoke('dialog.importLut', {});
+  if (!path) return null;
+  try {
+    return await backend.invoke('luts.import', { path });
+  } catch (error) {
+    notify(error instanceof Error ? error.message : String(error), 'warn');
+    return null;
+  }
+}
+
+/** Puts a LUT on a clip: the newest one in the project, or one imported now. */
+export async function addLut(seq: Sequence, itemId: string): Promise<void> {
+  const luts = useApp.getState().luts;
+  const lut = luts.at(-1) ?? (await importLut());
+  if (!lut) return;
+  await edit({ type: 'effect.add', sequenceId: seq.id, itemId, kind: 'lut', lutId: lut.id });
 }

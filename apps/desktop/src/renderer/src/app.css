@@ -2646,3 +2646,14 @@ button.statusbar__item:hover {
   font-size: 10px;
   font-weight: 600;
 }
+.effect__select {
+  flex: 1;
+  min-width: 0;
+  padding: 3px 6px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2, transparent);
+  color: inherit;
+  font: inherit;
+  font-size: 12px;
+}

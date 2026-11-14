@@ -70,7 +70,25 @@ export const projectMigrations: readonly Migration[] = [
       created_at TEXT NOT NULL
     ) STRICT;`,
   },
+  {
+    version: 5,
+    name: 'luts',
+    // 3D colour lookup tables imported into the project (ADR-040): float32 RGB, red fastest.
+    up: `CREATE TABLE luts (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      size INTEGER NOT NULL,
+      data BLOB NOT NULL,
+      created_at TEXT NOT NULL
+    ) STRICT;`,
+  },
 ];
+
+export interface LutRow {
+  id: string;
+  name: string;
+  size: number;
+}
 
 export interface ProjectMeta {
   id: string;
@@ -380,6 +398,34 @@ export class ProjectDatabase {
            created_at = excluded.created_at`,
       )
       .run(assetId, engine, json, new Date().toISOString());
+  }
+
+  /** LUTs imported into the project, oldest first. */
+  listLuts(): LutRow[] {
+    return this.db
+      .prepare('SELECT id, name, size FROM luts ORDER BY created_at, id')
+      .all() as unknown as LutRow[];
+  }
+
+  /** A LUT's table (size³ RGB float32 values), or null. */
+  loadLut(id: string): (LutRow & { data: Float32Array }) | null {
+    const row = this.db.prepare('SELECT id, name, size, data FROM luts WHERE id = ?').get(id) as
+      (LutRow & { data: Uint8Array }) | undefined;
+    if (!row) return null;
+    const bytes = Uint8Array.from(row.data);
+    return { id: row.id, name: row.name, size: row.size, data: new Float32Array(bytes.buffer) };
+  }
+
+  saveLut(id: string, name: string, size: number, data: Float32Array): void {
+    this.db
+      .prepare('INSERT INTO luts (id, name, size, data, created_at) VALUES (?, ?, ?, ?, ?)')
+      .run(
+        id,
+        name,
+        size,
+        new Uint8Array(data.buffer, data.byteOffset, data.byteLength),
+        new Date().toISOString(),
+      );
   }
 
   close(): void {

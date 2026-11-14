@@ -43,6 +43,7 @@ Each record states the decision, why it was made and what else was considered. R
 | 037 | Transitions: cross dissolve and dips | Accepted |
 | 038 | Blur and the blurred-background fit | Accepted |
 | 039 | Speed, reverse and freeze frames | Accepted |
+| 040 | 3D LUTs (.cube) | Accepted |
 
 ---
 
@@ -586,4 +587,20 @@ Each record states the decision, why it was made and what else was considered. R
   - The audio parity test now includes a clip at 1.5× (r = 0.998, 0.1 dB).
   - A golden-frame case with speed, reverse and a freeze frame (SSIM 0.996–0.997).
   - An end-to-end test of the Inspector, the menu, badges, the freeze frame and undo.
+
+---
+
+## ADR-040 · 3D LUTs (.cube)
+
+**Status.** Accepted (14 Nov 2026, Phase 6 fifth slice).
+
+**Decisions.**
+- **Stored in the project.** Importing a `.cube` file parses and checks it in `packages/core` (`parseCube`): 3D tables of 2–65 points, 0–1 domain; 1D LUTs and other domains are refused with a clear message. The table is stored in the project file (`luts` table, migration 5, float32 blob). Projects keep working when the original file moves, and the document only holds a small LUT id. IPC: `dialog.importLut` (main) picks the file; `luts.import`, `luts.list`, `luts.get` (base64 table) and the `luts.changed` event go through the backend.
+- **Effect.** A `lut` effect refers to one of the project's LUTs and has a strength (0–1). A clip takes one LUT. It applies after the colour effects and before transition dips.
+- **One interpolation, one colour path.** The preview uploads the table as a half-float 3D texture and looks it up with hardware trilinear filtering at the texel centres. The export uses `lut3d` with `interp=trilinear` on full-range RGB, converted explicitly from and back to the BT.709 TV-range picture: the same colour the preview's texture holds. Strength is a blend with "no change", and blending the table with the identity table is exactly the same under trilinear interpolation. So the export writes one pre-blended `.cube` per effect into its working folder and refers to it by a plain relative name (no path escaping, as with captions). The compatible preview does not show LUTs.
+- **Editing.** The Effects section gained a **LUT** button: it uses the project's newest LUT, or asks for a file when there is none. The LUT card has a list of the project's LUTs, with "Import a .cube file…" at the end, and a strength slider. A LUT that has gone from the project shows as "Missing LUT", and exporting then says so instead of failing inside FFmpeg.
+- **Tests.**
+  - Unit tests: parsing (order, titles, comments, refusals), round trip, and blending equal to mixing results.
+  - A real-FFmpeg test: a red↔blue swap at half strength gives purple.
+  - A golden-frame case that imports a "warm look" through the UI at 70% strength: SSIM 0.996, mean colour within 4 levels.
 

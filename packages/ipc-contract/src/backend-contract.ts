@@ -19,6 +19,7 @@ import {
 import { systemStatusSchema } from './schemas/status';
 import { transcriptSchema, transcriptionStatusSchema } from './schemas/transcript';
 import { faceStatusSchema, faceTrackSchema } from './schemas/faces';
+import { lutDataSchema, lutInfoSchema } from './schemas/luts';
 
 const empty = z.object({}).strict();
 const ok = z.object({ ok: z.literal(true) });
@@ -139,6 +140,15 @@ export const backendContract = defineContract({
       output: faceTrackSchema.nullable(),
     },
 
+    // 3D LUTs imported into the project (Phase 6e, ADR-040).
+    'luts.list': { input: empty, output: z.array(lutInfoSchema) },
+    /** Reads a .cube file (a path from dialog.importLut) into the project. */
+    'luts.import': { input: z.object({ path: filePathSchema }).strict(), output: lutInfoSchema },
+    'luts.get': {
+      input: z.object({ id: z.string().min(1).max(100) }).strict(),
+      output: lutDataSchema.nullable(),
+    },
+
     // Export (ARCHITECTURE §10).
     'export.start': {
       input: z
@@ -189,6 +199,7 @@ export const backendContract = defineContract({
     'export.changed': exportStateSchema,
     'transcript.changed': transcriptionStatusSchema,
     'faces.changed': faceStatusSchema,
+    'luts.changed': z.array(lutInfoSchema),
   },
 });
 

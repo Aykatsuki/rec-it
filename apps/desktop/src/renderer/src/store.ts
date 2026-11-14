@@ -7,6 +7,7 @@ import type {
   MediaAsset,
   ProjectInfo,
   FaceStatus,
+  LutInfo,
   Transcript,
   TranscriptionStatus,
 } from '@rec-it/ipc-contract';
@@ -51,6 +52,8 @@ interface AppState {
   transcripts: Record<string, Transcript>;
   /** Face analysis engine and jobs (automatic reframing, ADR-035). */
   faces: FaceStatus | null;
+  /** 3D LUTs imported into the open project (ADR-040). */
+  luts: LutInfo[];
   /** Clips waiting for their media's face analysis, to be reframed when it finishes. */
   pendingReframe: Record<string, string[]>;
   /** The clip whose crop is being edited in the crop window (ADR-034). */
@@ -127,6 +130,7 @@ export const useApp = create<AppState>((set) => ({
   transcripts: {},
   cropItemId: null,
   faces: null,
+  luts: [],
   pendingReframe: {},
   safeZones: stored('recit.safeZones') === '1',
   setSafeZones: (safeZones) => {
@@ -187,6 +191,11 @@ export function startBackendSync(): () => void {
     useApp.setState({ project, assets, jobs, docState, exportState });
     syncTranscripts(await backend.invoke('transcript.status', {}), true);
     useApp.setState({ faces: await backend.invoke('faces.status', {}) });
+    await loadLuts();
+  };
+  const loadLuts = async () => {
+    const project = useApp.getState().project;
+    useApp.setState({ luts: project ? await backend.invoke('luts.list', {}).catch(() => []) : [] });
   };
   const offs = [
     backend.onConnectionChange((connected) => {
@@ -212,6 +221,8 @@ export function startBackendSync(): () => void {
             },
       ),
     ),
+    backend.on('project.changed', () => void loadLuts()),
+    backend.on('luts.changed', (luts) => useApp.setState({ luts })),
     backend.on('media.changed', (assets) =>
       useApp.setState((s) => ({
         assets,

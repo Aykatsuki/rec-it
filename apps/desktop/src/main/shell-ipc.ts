@@ -60,6 +60,14 @@ export function registerShellIpc(
         });
         return { paths: result.canceled ? [] : result.filePaths };
       },
+      'dialog.importLut': async () => {
+        const result = await open({
+          title: 'Import LUT',
+          properties: ['openFile'],
+          filters: [{ name: '3D LUT (.cube)', extensions: ['cube'] }],
+        });
+        return { path: result.canceled ? null : (result.filePaths[0] ?? null) };
+      },
       'dialog.openProject': async () => {
         const result = await open({
           title: 'Open project',

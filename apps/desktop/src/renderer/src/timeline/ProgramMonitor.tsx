@@ -13,6 +13,7 @@ import {
   type Transform,
 } from '@rec-it/core';
 import { AudioEngine, audibleClips } from '../engine/audio-engine';
+import { lutTable, type LutTable } from '../engine/lut-cache';
 import {
   PreviewEngine,
   describeError,
@@ -520,6 +521,23 @@ function GpuCanvas({
 }) {
   const canvas = useRef<HTMLCanvasElement>(null);
   const engine = useRef<PreviewEngine | null>(null);
+  // LUT tables of the clips on screen (ADR-040), loaded once each; a load redraws.
+  const [tables, setTables] = useState<Map<string, LutTable>>(new Map());
+  useEffect(() => {
+    const ids = new Set(
+      mounted.map((m) => pictureAt(m.item, m.item.start).lut?.lutId).filter((x) => !!x),
+    ) as Set<string>;
+    for (const id of ids)
+      if (!tables.has(id))
+        void lutTable(id).then((t) => {
+          if (t) setTables((old) => (old.has(id) ? old : new Map(old).set(id, t)));
+        });
+  }, [mounted, tables]);
+  const lutLayer = (item: TimelineItem) => {
+    const lut = pictureAt(item, item.start).lut;
+    const table = lut && tables.get(lut.lutId);
+    return lut && table ? { lut: { id: lut.lutId, ...table, strength: lut.strength } } : {};
+  };
   const failed = useRef(false);
   // Bumped when the graphics context is restored, to draw again.
   const [restored, setRestored] = useState(0);
@@ -565,6 +583,7 @@ function GpuCanvas({
             height: v.displayHeight,
             transform,
             picture: pictureAt(m.item, now),
+            ...lutLayer(m.item),
           });
       } else if (m.asset.kind === 'video' && m.asset.urls.proxy) {
         layers.push({
@@ -576,6 +595,7 @@ function GpuCanvas({
           height: v.displayHeight,
           transform,
           picture: pictureAt(m.item, now),
+          ...lutLayer(m.item),
         });
       }
     }
@@ -593,7 +613,7 @@ function GpuCanvas({
       })
       .catch(fail);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [seq, mounted, playhead, playing, draft, box, restored]);
+  }, [seq, mounted, playhead, playing, draft, box, restored, tables]);
 
   return <canvas ref={canvas} className="program__canvas" data-testid="program-canvas" />;
 }

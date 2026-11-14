@@ -150,4 +150,27 @@ describe('fades and effects', () => {
     // Colour effects ignore blurs.
     expect(pictureAt(items()[0]!, S(2)).contrast).toBe(1);
   });
+
+  it('a clip takes one LUT, blended by strength', () => {
+    const { run, items } = setup();
+    expect(() => run({ type: 'effect.add', sequenceId: 's', itemId: 'c', kind: 'lut' })).toThrow(
+      /Choose/,
+    );
+    run({ type: 'effect.add', sequenceId: 's', itemId: 'c', kind: 'lut', lutId: 'lut_a', id: 'l' });
+    expect(() =>
+      run({ type: 'effect.add', sequenceId: 's', itemId: 'c', kind: 'lut', lutId: 'lut_b' }),
+    ).toThrow(/one LUT/);
+    expect(pictureAt(items()[0]!, S(2)).lut).toEqual({ lutId: 'lut_a', strength: 1 });
+    run({
+      type: 'effect.update',
+      sequenceId: 's',
+      itemId: 'c',
+      effectId: 'l',
+      params: { strength: 2 },
+      lutId: 'lut_b',
+    });
+    expect(pictureAt(items()[0]!, S(2)).lut).toEqual({ lutId: 'lut_b', strength: 1 });
+    run({ type: 'effect.update', sequenceId: 's', itemId: 'c', effectId: 'l', enabled: false });
+    expect(pictureAt(items()[0]!, S(2)).lut).toBeUndefined();
+  });
 });
