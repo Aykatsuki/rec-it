@@ -10,6 +10,8 @@ import {
 } from '@rec-it/core';
 import { Button } from '@rec-it/ui';
 import {
+  addLut,
+  importLut,
   clipBefore,
   edit,
   freezeFrame,
@@ -97,11 +99,15 @@ export function ColourSection({
   track: Track;
 }) {
   const effects = item.effects ?? [];
+  const luts = useApp((s) => s.luts);
   const update = (
     e: Effect,
     change: {
       enabled?: boolean;
-      params?: Partial<Record<'brightness' | 'contrast' | 'saturation' | 'size', number>>;
+      params?: Partial<
+        Record<'brightness' | 'contrast' | 'saturation' | 'size' | 'strength', number>
+      >;
+      lutId?: string;
     },
   ) =>
     edit({
@@ -111,6 +117,7 @@ export function ColourSection({
       effectId: e.id,
       ...(change.enabled !== undefined ? { enabled: change.enabled } : {}),
       ...(change.params ? { params: change.params } : {}),
+      ...(change.lutId ? { lutId: change.lutId } : {}),
     });
   const count = (kind: Effect['kind']) => effects.filter((e) => e.kind === kind).length;
   const add = (kind: Effect['kind']) =>
@@ -121,13 +128,13 @@ export function ColourSection({
       {effects.map((e) => {
         const same = effects.filter((x) => x.kind === e.kind);
         const name =
-          (e.kind === 'color' ? 'Colour' : 'Blur') +
+          ({ color: 'Colour', blur: 'Blur', lut: 'LUT' } as const)[e.kind] +
           (same.length > 1 ? ` ${same.indexOf(e) + 1}` : '');
         return (
           <div
             key={e.id}
             className="effect"
-            data-testid={e.kind === 'color' ? 'colour-effect' : 'blur-effect'}
+            data-testid={`${e.kind === 'color' ? 'colour' : e.kind}-effect`}
           >
             <div className="effect__head">
               <span className="effect__name">
@@ -159,7 +166,48 @@ export function ColourSection({
                 }
               />
             </div>
-            {e.kind === 'blur' ? (
+            {e.kind === 'lut' ? (
+              <>
+                <label className="slider">
+                  <span className="slider__label">Look</span>
+                  <select
+                    className="effect__select"
+                    aria-label="LUT"
+                    value={e.lutId}
+                    disabled={track.locked}
+                    onChange={async (ev) => {
+                      let lutId = ev.target.value;
+                      if (lutId === IMPORT) {
+                        const lut = await importLut();
+                        if (!lut) return;
+                        lutId = lut.id;
+                      }
+                      void update(e, { lutId });
+                    }}
+                  >
+                    {!luts.some((l) => l.id === e.lutId) && (
+                      <option value={e.lutId}>Missing LUT</option>
+                    )}
+                    {luts.map((l) => (
+                      <option key={l.id} value={l.id}>
+                        {l.name}
+                      </option>
+                    ))}
+                    <option value={IMPORT}>Import a .cube file…</option>
+                  </select>
+                </label>
+                <Slider
+                  label="Strength"
+                  value={e.strength}
+                  min={0}
+                  max={1}
+                  step={0.01}
+                  format={pct}
+                  disabled={track.locked}
+                  onCommit={(v) => update(e, { params: { strength: v } })}
+                />
+              </>
+            ) : e.kind === 'blur' ? (
               <Slider
                 label="Blur amount"
                 value={e.size}
@@ -225,6 +273,16 @@ export function ColourSection({
           onClick={() => add('blur')}
         >
           {count('blur') ? 'Another blur' : 'Blur'}
+        </Button>
+        <Button
+          size="sm"
+          icon={<Plus size={13} />}
+          disabled={track.locked || effects.length >= 16 || count('lut') > 0}
+          data-testid="add-lut"
+          title="A colour look from a .cube file"
+          onClick={() => void addLut(seq, item.id)}
+        >
+          LUT
         </Button>
       </div>
     </section>
@@ -294,6 +352,8 @@ export function TransitionSection({
     </section>
   );
 }
+
+const IMPORT = '__import__';
 
 const speedLabel = (v: number) => `${v}×`;
 

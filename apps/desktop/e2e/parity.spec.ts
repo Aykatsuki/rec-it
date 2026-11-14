@@ -3,7 +3,7 @@
 // monitor at a time inside that case, exports, and compares the same moment with SSIM.
 import { expect, test } from '@playwright/test';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { findTestFfmpeg } from '../../../packages/ffmpeg/src/testing';
@@ -1020,6 +1020,101 @@ test.describe('preview and export match', () => {
       const score = ssim(bins!.ffmpeg, preview, exported);
       console.info(`Blur SSIM ${score}`);
       expect(score).toBeGreaterThanOrEqual(MIN_SSIM);
+    } finally {
+      await app.close();
+    }
+  });
+
+  test('golden frames: LUT at partial strength', async () => {
+    const userData = tempUserData();
+    const shots = join(userData, 'shots');
+    mkdirSync(shots);
+    const { app, page } = await launch(userData, env());
+    try {
+      await createProject(page, 'LUT parity');
+      await mockOpenDialog(app, [fx.video]);
+      await page.getByRole('button', { name: 'Import footage' }).click();
+      await page.getByLabel(/I have the right/).check();
+      await page.getByRole('button', { name: 'Import' }).last().click();
+      await expect(page.locator('[data-testid=asset-card][data-status=ready]')).toHaveCount(1, {
+        timeout: 60_000,
+      });
+      await page.locator('[data-testid=asset-card]').dblclick();
+      await page.getByTestId('timeline-item').click();
+      // A "look": warmer, crushed blues, lifted shadows (a 17-point table).
+      const cube = join(dir, 'look.cube');
+      const n = 17;
+      const rows = ['TITLE "Warm look"', `LUT_3D_SIZE ${n}`];
+      for (let b = 0; b < n; b++)
+        for (let g = 0; g < n; g++)
+          for (let r = 0; r < n; r++) {
+            const [R, G, B] = [r / (n - 1), g / (n - 1), b / (n - 1)];
+            rows.push(
+              [Math.pow(R, 0.8), 0.05 + G * 0.9, B * B * 0.85].map((v) => v.toFixed(6)).join(' '),
+            );
+          }
+      writeFileSync(cube, rows.join('\n'));
+      await mockOpenDialog(app, [cube]);
+      await page.getByTestId('add-lut').click();
+      await expect(page.getByTestId('lut-effect')).toHaveCount(1);
+      await expect(page.getByLabel('LUT', { exact: true })).toContainText('Warm look');
+      const strength = page.getByLabel('Strength', { exact: true });
+      await strength.focus();
+      for (let i = 0; i < 30; i++) await strength.press('ArrowLeft');
+      await expect(page.locator('.slider', { has: strength }).locator('.slider__value')).toHaveText(
+        '70%',
+      );
+      await page.keyboard.press('Escape');
+      const t = 1;
+      await page.getByTestId('ruler').click({ position: { x: t * ZOOM, y: 10 } });
+      await expect(page.getByTestId('program-time')).toContainText('00:01.000');
+      await page.waitForFunction((at) => {
+        const c = document.querySelector<HTMLCanvasElement>('[data-testid=program-canvas]');
+        return !c || c.dataset.time === at;
+      }, '1.000');
+      await page.waitForTimeout(300);
+      const preview = join(shots, 'preview-lut.png');
+      await page.locator('.program').screenshot({ path: preview });
+
+      const out = join(userData, 'lut.mp4');
+      await page.getByTestId('export-button').click();
+      await page.getByRole('radio', { name: 'YouTube Short', exact: true }).click();
+      await setExportTarget(app, page, out);
+      await page
+        .getByTestId('export-dialog')
+        .getByRole('button', { name: /Export$/ })
+        .click();
+      await expect(page.getByTestId('export-status')).toHaveAttribute('data-state', 'done', {
+        timeout: 120_000,
+      });
+      const [w, h] = execFileSync(
+        bins!.ffprobe,
+        ['-v', 'error', '-show_entries', 'stream=width,height', '-of', 'csv=p=0', preview],
+        { encoding: 'utf8' },
+      )
+        .trim()
+        .split(',')
+        .map(Number);
+      const exported = join(shots, 'export-lut.png');
+      execFileSync(bins!.ffmpeg, [
+        '-v',
+        'error',
+        '-y',
+        '-ss',
+        String(t),
+        '-i',
+        out,
+        '-frames:v',
+        '1',
+        '-vf',
+        `scale=${w}:${h}:flags=area`,
+        exported,
+      ]);
+      const score = ssim(bins!.ffmpeg, preview, exported);
+      const [a, b] = [meanColour(bins!.ffmpeg, preview), meanColour(bins!.ffmpeg, exported)];
+      console.info(`LUT SSIM ${score}, mean colour preview ${a} export ${b}`);
+      expect(score).toBeGreaterThanOrEqual(MIN_SSIM);
+      for (let i = 0; i < 3; i++) expect(Math.abs(a[i]! - b[i]!), `channel ${i}`).toBeLessThan(6);
     } finally {
       await app.close();
     }

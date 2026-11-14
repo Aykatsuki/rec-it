@@ -36,6 +36,7 @@ import { ExportService, type CaptionsInput, type ExportToolchain } from './servi
 import { sequenceCaptionsAss } from '@rec-it/captions';
 import { TranscriptService } from './services/transcript-service';
 import { FaceService } from './services/face-service';
+import { importLut, writeLutFiles } from './services/lut-service';
 import { ProjectService } from './services/project-service';
 import type { Command, Sequence } from '@rec-it/core';
 import { SidecarClient, checkSidecar } from './services/sidecar';
@@ -238,6 +239,21 @@ export class BackendApp {
       return { ok: true as const };
     },
     'faces.get': ({ assetId }) => this.faces.get(assetId),
+    'luts.list': () => this.projects.database().listLuts(),
+    'luts.import': async ({ path }) => {
+      const info = await importLut(this.projects.database(), path);
+      this.emit('luts.changed', this.projects.database().listLuts());
+      return info;
+    },
+    'luts.get': ({ id }) => {
+      const lut = this.projects.database().loadLut(id);
+      if (!lut) return null;
+      const { data, ...info } = lut;
+      return {
+        ...info,
+        data: Buffer.from(data.buffer, data.byteOffset, data.byteLength).toString('base64'),
+      };
+    },
     'export.target': ({ fileName, directory }) => {
       const dir = directory ?? this.exportDirectory();
       const name = cleanFileName(fileName, '.mp4');
@@ -257,6 +273,7 @@ export class BackendApp {
         () => this.exportToolchain(),
         (id) => media.exportAsset(id),
         this.captionsFor(seq),
+        (work) => writeLutFiles(this.projects.database(), seq, work),
       );
     },
     'export.frame': async ({ sequenceId, time, path }) => {
@@ -269,6 +286,7 @@ export class BackendApp {
         () => this.exportToolchain(),
         (id) => media.exportAsset(id),
         this.captionsFor(seq),
+        (work) => writeLutFiles(this.projects.database(), seq, work),
       );
       return { ok: true as const };
     },

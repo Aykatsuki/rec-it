@@ -186,14 +186,26 @@ export type Command =
       fade?: { in?: number; out?: number };
     }
   /** Adds an effect to the end of a clip's effect stack (ADR-036). */
-  | { type: 'effect.add'; sequenceId: string; itemId: string; kind: EffectKind; id?: string }
+  | {
+      type: 'effect.add';
+      sequenceId: string;
+      itemId: string;
+      kind: EffectKind;
+      id?: string;
+      /** For a LUT: which of the project's LUTs. */
+      lutId?: string;
+    }
   | {
       type: 'effect.update';
       sequenceId: string;
       itemId: string;
       effectId: string;
       enabled?: boolean;
-      params?: Partial<Record<'brightness' | 'contrast' | 'saturation' | 'size', number>>;
+      params?: Partial<
+        Record<'brightness' | 'contrast' | 'saturation' | 'size' | 'strength', number>
+      >;
+      /** For a LUT: switch to another of the project's LUTs. */
+      lutId?: string;
     }
   | { type: 'effect.remove'; sequenceId: string; itemId: string; effectId: string }
   /** Moves an effect to position `index` in the stack (order matters). */
@@ -1032,6 +1044,18 @@ export function applyCommand(doc: ProjectDocument, command: Command, assets: Ass
       if (!EFFECT_KINDS.includes(command.kind)) fail('Unknown effect.');
       if ((item.effects?.length ?? 0) >= 16) fail('A clip can have up to 16 effects.');
       const id = command.id ?? createId('fx');
+      if (command.kind === 'lut') {
+        if (!command.lutId) fail('Choose a LUT to apply.');
+        if (item.effects?.some((e) => e.kind === 'lut')) fail('A clip can have one LUT.');
+        (item.effects ??= []).push({
+          id,
+          kind: 'lut',
+          enabled: true,
+          lutId: command.lutId!,
+          strength: 1,
+        });
+        return;
+      }
       (item.effects ??= []).push(
         command.kind === 'blur'
           ? { id, kind: 'blur', enabled: true, size: DEFAULT_BLUR }
@@ -1050,6 +1074,11 @@ export function applyCommand(doc: ProjectDocument, command: Command, assets: Ass
         v === undefined || !Number.isFinite(v) ? d : Math.min(hi, Math.max(lo, v));
       if (fx.kind === 'blur') {
         fx.size = clamp(p.size, 0, MAX_BLUR, fx.size);
+        return;
+      }
+      if (fx.kind === 'lut') {
+        fx.strength = clamp(p.strength, 0, 1, fx.strength);
+        if (command.lutId) fx.lutId = command.lutId;
         return;
       }
       fx.brightness = clamp(p.brightness, -1, 1, fx.brightness);

@@ -70,6 +70,8 @@ async function runPlan(
   return stderrTail;
 }
 
+type PrepareLuts = (work: string) => Promise<Record<string, string>>;
+
 /** Burned-in captions: the ASS text and the bundled fonts folder. */
 export interface CaptionsInput {
   ass: string;
@@ -114,6 +116,8 @@ export class ExportService {
     toolchain: () => Promise<ExportToolchain>,
     assets: Assets,
     captions: CaptionsInput | null = null,
+    /** Writes the LUT files the sequence uses into the work folder (ADR-040). */
+    prepareLuts: PrepareLuts = async () => ({}),
   ): ExportState {
     if (this.current.state === 'running') throw new Error('An export is already running.');
     checkMedia(seq, assets);
@@ -122,7 +126,16 @@ export class ExportService {
       { state: 'running', progress: 0, path, sequenceName: seq.name, startedAt: Date.now() },
       true,
     );
-    void this.run(seq, path, settings, toolchain, assets, this.controller.signal, captions);
+    void this.run(
+      seq,
+      path,
+      settings,
+      toolchain,
+      assets,
+      this.controller.signal,
+      captions,
+      prepareLuts,
+    );
     return this.current;
   }
 
@@ -138,6 +151,7 @@ export class ExportService {
     toolchain: () => Promise<ExportToolchain>,
     assets: Assets,
     captions: CaptionsInput | null = null,
+    prepareLuts: PrepareLuts = async () => ({}),
   ): Promise<void> {
     checkMedia(seq, assets);
     const { bins, tonemap, ffmpeg } = await toolchain();
@@ -148,6 +162,7 @@ export class ExportService {
       const plan = planFrame(seq, assets, time, {
         tonemap,
         captions: await prepareCaptions(work, captions, ffmpeg),
+        luts: await prepareLuts(work),
       });
       await runPlan(bins.ffmpeg, plan, work, [...(jpeg ? ['-q:v', '2'] : []), part]);
       await rm(path, { force: true });
@@ -169,12 +184,14 @@ export class ExportService {
     assets: Assets,
     signal: AbortSignal,
     captions: CaptionsInput | null,
+    prepareLuts: PrepareLuts,
   ): Promise<void> {
     const work = await mkdtemp(join(tmpdir(), 'recit-export-'));
     const part = `${path}.part`;
     try {
       const { bins, ffmpeg, tonemap } = await toolchain();
       const burned = await prepareCaptions(work, captions, ffmpeg);
+      const luts = await prepareLuts(work);
       let encoder = pickExportEncoder(settings.codec, settings.encoder, ffmpeg);
       if (!encoder)
         throw new Error(
@@ -206,6 +223,7 @@ export class ExportService {
           audioBitrateK: settings.audioBitrate,
           title: seq.name,
           captions: burned,
+          luts,
           // Silence measures as nothing to normalise; leave it alone.
           loudness:
             settings.loudness === null || !measured

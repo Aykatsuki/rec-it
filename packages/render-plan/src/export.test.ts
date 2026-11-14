@@ -10,6 +10,9 @@ import {
   secondsToFlicks,
   valueAt,
   DEFAULT_CAPTIONS,
+  formatCube,
+  mixLut,
+  parseCube,
   type AssetInfo,
   type Command,
 } from '@rec-it/core';
@@ -309,15 +312,11 @@ describe.skipIf(!bins)('export renders correct frames (real FFmpeg)', () => {
     const graphFile = join(dir, `graph-${Math.random()}.txt`);
     writeFileSync(graphFile, plan.filterGraph);
     const out = join(dir, `out-${Math.random()}.mp4`);
-    await runFfmpeg(bins!.ffmpeg, [
-      ...plan.inputArgs,
-      '-/filter_complex',
-      graphFile,
-      ...plan.outputArgs,
-      '-f',
-      'mp4',
-      out,
-    ]);
+    await runFfmpeg(
+      bins!.ffmpeg,
+      [...plan.inputArgs, '-/filter_complex', graphFile, ...plan.outputArgs, '-f', 'mp4', out],
+      { cwd: dir },
+    );
     return { out, seq, plan };
   }
 
@@ -769,6 +768,37 @@ describe.skipIf(!bins)('export renders correct frames (real FFmpeg)', () => {
     expect(frameAt(held.out, 1.4)).toBe(30);
     expect(Math.abs(frameAt(held.out, 1.7) - 21)).toBeLessThanOrEqual(1);
   }, 90_000);
+
+  it('applies a LUT blended by strength, like the preview', async () => {
+    // A LUT that swaps red and blue: the red clip turns blue; at half strength, purple.
+    const n = 5;
+    const lines = [`LUT_3D_SIZE ${n}`];
+    for (let b = 0; b < n; b++)
+      for (let g = 0; g < n; g++)
+        for (let r = 0; r < n; r++) lines.push(`${b / (n - 1)} ${g / (n - 1)} ${r / (n - 1)}`);
+    const lut = mixLut(parseCube(lines.join('\n')), 0.5);
+    writeFileSync(join(dir, 'swap-half.cube'), formatCube(lut));
+    const { out, plan } = await render(
+      ({ v1 }) => [
+        { type: 'item.add', trackId: v1, assetId: 'red', start: 0, duration: s(1), id: 'r' },
+        { type: 'effect.add', itemId: 'r', kind: 'lut', lutId: 'lut_x', id: 'fx' },
+        { type: 'effect.update', itemId: 'r', effectId: 'fx', params: { strength: 0.5 } },
+      ],
+      { luts: { fx: 'swap-half.cube' } },
+    );
+    expect(plan.filterGraph).toContain('lut3d=file=swap-half.cube:interp=trilinear');
+    const [r, g, b] = pixel(out, 0.5, 176, 316);
+    expect(Math.abs(r - 128)).toBeLessThan(20);
+    expect(Math.abs(b - 128)).toBeLessThan(20);
+    expect(g).toBeLessThan(20);
+    // Without the file the plan says so instead of failing inside FFmpeg.
+    await expect(
+      render(({ v1 }) => [
+        { type: 'item.add', trackId: v1, assetId: 'red', start: 0, duration: s(1), id: 'r' },
+        { type: 'effect.add', itemId: 'r', kind: 'lut', lutId: 'lut_x', id: 'fx' },
+      ]),
+    ).rejects.toThrow(ExportPlanError);
+  }, 60_000);
 
   it('blurs a picture in proportion to its height on screen', async () => {
     const { out, plan } = await render(({ v1 }) => [

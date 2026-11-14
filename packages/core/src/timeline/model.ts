@@ -118,7 +118,7 @@ export interface Transition {
 export type TintColor = 'black' | 'white';
 
 /** Effect kinds available so far; more arrive through Phase 6. */
-export const EFFECT_KINDS = ['color', 'blur'] as const;
+export const EFFECT_KINDS = ['color', 'blur', 'lut'] as const;
 export type EffectKind = (typeof EFFECT_KINDS)[number];
 
 /**
@@ -146,7 +146,18 @@ export interface BlurEffect {
 }
 export const DEFAULT_BLUR = 0.02;
 export const MAX_BLUR = 0.2;
-export type Effect = ColorEffect | BlurEffect;
+/**
+ * A 3D colour lookup table imported into the project (ADR-040), applied after the colour
+ * effects, blended with the original by `strength` (0–1). One per clip.
+ */
+export interface LutEffect {
+  id: string;
+  kind: 'lut';
+  enabled: boolean;
+  lutId: string;
+  strength: number;
+}
+export type Effect = ColorEffect | BlurEffect | LutEffect;
 
 /** How a clip's picture looks at a moment: alpha (opacity × fades) and combined colour. */
 export interface PictureState {
@@ -156,6 +167,8 @@ export interface PictureState {
   tintColor: TintColor;
   /** Blur (standard deviation as a share of the picture's height; 0 = sharp). ADR-038. */
   blur: number;
+  /** The clip's LUT, if any (ADR-040). */
+  lut?: { lutId: string; strength: number };
   brightness: number;
   contrast: number;
   saturation: number;
@@ -189,7 +202,9 @@ export function pictureAt(item: TimelineItem, time: number): PictureState {
     saturation *= e.saturation;
   }
   const tint = item.tint ? 1 - fadeAt({ ...item, fade: item.tint }, time) : 0;
+  const lut = lutOf(item);
   return {
+    ...(lut ? { lut } : {}),
     blur: blurOf(item),
     alpha: (item.opacity ?? 1) * fadeAt(item, time),
     tint,
@@ -198,6 +213,12 @@ export function pictureAt(item: TimelineItem, time: number): PictureState {
     contrast,
     saturation,
   };
+}
+
+/** The clip's LUT and its strength, when one is switched on. */
+export function lutOf(item: TimelineItem): { lutId: string; strength: number } | undefined {
+  const e = item.effects?.find((x): x is LutEffect => x.kind === 'lut' && x.enabled);
+  return e && e.strength > 0 ? { lutId: e.lutId, strength: e.strength } : undefined;
 }
 
 /** The clip's blur: blurs in a stack add up like Gaussians (√ of the sum of squares). */

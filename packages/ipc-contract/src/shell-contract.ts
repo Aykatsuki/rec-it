@@ -28,6 +28,10 @@ export const shellContract = defineContract({
       input: z.object({}).strict(),
       output: z.object({ paths: z.array(z.string()) }),
     },
+    'dialog.importLut': {
+      input: z.object({}).strict(),
+      output: z.object({ path: z.string().nullable() }),
+    },
     'dialog.openProject': {
       input: z.object({}).strict(),
       output: z.object({ path: z.string().nullable() }),

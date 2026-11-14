@@ -75,6 +75,13 @@ export const timelineItemSchema = z.object({
           enabled: z.boolean(),
           size: z.number().min(0).max(0.2),
         }),
+        z.object({
+          id,
+          kind: z.literal('lut'),
+          enabled: z.boolean(),
+          lutId: id,
+          strength: z.number().min(0).max(1),
+        }),
       ]),
     )
     .max(16)
@@ -331,8 +338,9 @@ const singleCommandSchema = z.discriminatedUnion('type', [
     type: z.literal('effect.add'),
     ...seqId,
     itemId: id,
-    kind: z.enum(['color', 'blur']),
+    kind: z.enum(['color', 'blur', 'lut']),
     id: id.optional(),
+    lutId: id.optional(),
   }),
   z.object({
     type: z.literal('effect.update'),
@@ -346,9 +354,11 @@ const singleCommandSchema = z.discriminatedUnion('type', [
         contrast: z.number().min(0).max(3).optional(),
         saturation: z.number().min(0).max(3).optional(),
         size: z.number().min(0).max(0.2).optional(),
+        strength: z.number().min(0).max(1).optional(),
       })
       .strict()
       .optional(),
+    lutId: id.optional(),
   }),
   z.object({ type: z.literal('effect.remove'), ...seqId, itemId: id, effectId: id }),
   z.object({

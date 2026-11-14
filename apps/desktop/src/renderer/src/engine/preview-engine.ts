@@ -15,6 +15,7 @@ export interface EngineLayer {
   height: number;
   transform: Transform;
   picture?: PictureState;
+  lut?: { id: string; size: number; data: Float32Array; strength: number };
 }
 
 /** True when this system can run the GPU preview. */
