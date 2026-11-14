@@ -21,7 +21,7 @@ void main() { v_uv = uv; gl_Position = vec4(pos, 0.0, 1.0); }`;
 const FS = `#version 300 es
 precision highp float;
 in vec2 v_uv; uniform sampler2D tex; out vec4 color;
-uniform float u_alpha; uniform vec4 u_eq; uniform bool u_color;
+uniform float u_alpha; uniform vec4 u_eq; uniform bool u_color; uniform vec4 u_tint;
 void main() {
   vec4 t = texture(tex, v_uv);
   vec3 c = t.rgb;
@@ -38,6 +38,8 @@ void main() {
     float g = (Y - 0.2126 * r - 0.0722 * b) / 0.7152;
     c = clamp(vec3(r, g, b), 0.0, 1.0);
   }
+  // Dip transitions (ADR-037): FFmpeg's fade moves the codes linearly towards the colour's.
+  c = mix(c, u_tint.rgb, u_tint.a);
   color = vec4(c, t.a * u_alpha);
 }`;
 
@@ -174,12 +176,15 @@ export class Compositor {
     const alphaLoc = gl.getUniformLocation(this.program, 'u_alpha');
     const eqLoc = gl.getUniformLocation(this.program, 'u_eq');
     const colorLoc = gl.getUniformLocation(this.program, 'u_color');
+    const tintLoc = gl.getUniformLocation(this.program, 'u_tint');
     for (const layer of layers) {
       const tex = this.textures.get(layer.key);
       if (!tex) continue;
       const p = layer.picture;
       if (p && p.alpha <= 0) continue;
       gl.uniform1f(alphaLoc, p?.alpha ?? 1);
+      const white = p?.tintColor === 'white' ? 1 : 0;
+      gl.uniform4f(tintLoc, white, white, white, p?.tint ?? 0);
       const neutral = !p || (p.brightness === 0 && p.contrast === 1 && p.saturation === 1);
       gl.uniform1i(colorLoc, neutral ? 0 : 1);
       if (!neutral) {

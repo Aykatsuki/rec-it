@@ -97,4 +97,60 @@ test.describe('effects', () => {
       await app.close();
     }
   });
+
+  test('transitions from the clip menu, the Inspector and the timeline', async () => {
+    const { app, page } = await launch(tempUserData(), env());
+    try {
+      await createProject(page, 'Transitions');
+      await mockOpenDialog(app, [fx.h264]);
+      await page.getByRole('button', { name: 'Import footage' }).click();
+      await page.getByLabel(/I have the right/).check();
+      await page.getByRole('button', { name: 'Import' }).last().click();
+      await expect(page.locator('[data-testid=asset-card][data-status=ready]')).toHaveCount(1, {
+        timeout: 60_000,
+      });
+      await page.locator('[data-testid=asset-card]').dblclick();
+      // Split at 1.5 s: two clips that touch, with footage on both sides of the cut.
+      await page.getByTestId('ruler').click({ position: { x: 1.5 * ZOOM, y: 10 } });
+      await page.keyboard.press('s');
+      const second = page.locator('[data-testid=timeline-item]').nth(1);
+      await expect(page.getByTestId('timeline-item')).toHaveCount(2);
+
+      await second.click({ button: 'right', position: { x: 0.5 * ZOOM, y: 30 } });
+      await page.getByRole('menuitem', { name: 'Transition from previous clip' }).hover();
+      await page.getByRole('menuitemcheckbox', { name: 'Cross dissolve' }).click();
+      await expect(page.getByTestId('timeline-transition')).toHaveCount(1);
+      await expect(page.getByTestId('timeline-transition')).toHaveAttribute(
+        'data-kind',
+        'dissolve',
+      );
+
+      // The Inspector shows it; make it longer and switch to a dip to white.
+      await page.getByTestId('timeline-transition').click();
+      const section = page.getByTestId('transition');
+      await expect(section.getByRole('radio', { name: 'Dissolve' })).toHaveAttribute(
+        'aria-checked',
+        'true',
+      );
+      const length = page.getByLabel('Transition length', { exact: true });
+      await length.focus();
+      for (let i = 0; i < 5; i++) await length.press('ArrowRight');
+      await expect(sliderValue(page, 'Transition length')).toHaveText('1.0 s');
+      const box = (await page.getByTestId('timeline-transition').boundingBox())!;
+      expect(box.width).toBeGreaterThan(0.9 * ZOOM);
+      await section.getByRole('radio', { name: 'White' }).click();
+      await expect(page.getByTestId('timeline-transition')).toHaveAttribute(
+        'data-kind',
+        'dipWhite',
+      );
+
+      // None removes it; undo brings it back.
+      await section.getByRole('radio', { name: 'None' }).click();
+      await expect(page.getByTestId('timeline-transition')).toHaveCount(0);
+      await page.keyboard.press('Control+z');
+      await expect(page.getByTestId('timeline-transition')).toHaveCount(1);
+    } finally {
+      await app.close();
+    }
+  });
 });

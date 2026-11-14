@@ -91,7 +91,25 @@ export interface TimelineItem {
   fade?: { in: Flicks; out: Flicks };
   /** Effects applied to the picture, in order (ADR-036). */
   effects?: Effect[];
+  /**
+   * Transition from the clip that ends where this one starts on the same track (ADR-037).
+   * Ignored while there is no such clip.
+   */
+  transitionIn?: Transition;
+  /** Set only on presented items (presentSequence): sound-only fades and fades to a colour. */
+  audioFade?: { in: Flicks; out: Flicks };
+  tint?: { in: Flicks; out: Flicks; color: TintColor };
 }
+
+/** Transitions between two clips on the same track (ADR-037). */
+export const TRANSITION_KINDS = ['dissolve', 'dipBlack', 'dipWhite'] as const;
+export type TransitionKind = (typeof TRANSITION_KINDS)[number];
+export interface Transition {
+  kind: TransitionKind;
+  /** Requested length (flicks); the shown length may be shorter when there is too little media. */
+  duration: Flicks;
+}
+export type TintColor = 'black' | 'white';
 
 /** Effect kinds available so far; more arrive through Phase 6. */
 export const EFFECT_KINDS = ['color'] as const;
@@ -115,6 +133,9 @@ export type Effect = ColorEffect;
 /** How a clip's picture looks at a moment: alpha (opacity × fades) and combined colour. */
 export interface PictureState {
   alpha: number;
+  /** How far the picture is faded to `tintColor` (0 = not at all), for dip transitions. */
+  tint: number;
+  tintColor: TintColor;
   brightness: number;
   contrast: number;
   saturation: number;
@@ -147,7 +168,15 @@ export function pictureAt(item: TimelineItem, time: number): PictureState {
     contrast *= e.contrast;
     saturation *= e.saturation;
   }
-  return { alpha: (item.opacity ?? 1) * fadeAt(item, time), brightness, contrast, saturation };
+  const tint = item.tint ? 1 - fadeAt({ ...item, fade: item.tint }, time) : 0;
+  return {
+    alpha: (item.opacity ?? 1) * fadeAt(item, time),
+    tint,
+    tintColor: item.tint?.color ?? 'black',
+    brightness,
+    contrast,
+    saturation,
+  };
 }
 
 /** The colour effects the export applies, collapsed into one (null when unchanged). */
@@ -410,6 +439,15 @@ export function transformAt(item: TimelineItem, time: number): Transform {
     if (k) t[p] = valueAt(k, src);
   }
   return t;
+}
+
+/**
+ * The gain the clip's sound gets at timeline time `time`: volume (with keyframes) × fades ×
+ * transition sound fades. Preview and export (volume, afade) agree.
+ */
+export function gainAt(item: TimelineItem, time: number): number {
+  const audio = item.audioFade ? fadeAt({ ...item, fade: item.audioFade }, time) : 1;
+  return volumeAt(item, time) * fadeAt(item, time) * audio;
 }
 
 /** The item's volume at timeline time `time`, with keyframes applied. */

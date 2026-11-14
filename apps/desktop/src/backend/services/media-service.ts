@@ -332,6 +332,7 @@ export class MediaService {
       path: row.originalPath,
       kind: probe.kind,
       hasAudio: !!probe.audio,
+      durationSec: probe.durationSec,
       ...(probe.video
         ? {
             width: probe.video.displayWidth,

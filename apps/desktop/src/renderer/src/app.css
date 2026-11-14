@@ -2591,3 +2591,20 @@ button.statusbar__item:hover {
 .tl__item[data-selected='true'] .tl__fade-handle {
   opacity: 1;
 }
+/* Transitions (ADR-037): a band across the cut, above the clips. */
+.tl__transition {
+  position: absolute;
+  top: 3px;
+  height: 14px;
+  border-radius: 3px;
+  background: linear-gradient(90deg, rgb(255 255 255 / 15%), rgb(255 255 255 / 75%));
+  box-shadow: 0 0 0 1px rgb(0 0 0 / 55%);
+  z-index: 3;
+  cursor: pointer;
+}
+.tl__transition[data-kind='dipBlack'] {
+  background: linear-gradient(90deg, rgb(255 255 255 / 40%), #000, rgb(255 255 255 / 40%));
+}
+.tl__transition[data-kind='dipWhite'] {
+  background: linear-gradient(90deg, rgb(0 0 0 / 40%), #fff, rgb(0 0 0 / 40%));
+}

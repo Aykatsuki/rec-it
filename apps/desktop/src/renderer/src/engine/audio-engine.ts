@@ -4,8 +4,7 @@ import {
   FLICKS_PER_SECOND,
   flicksToSeconds,
   sourceTimeAt,
-  volumeAt,
-  fadeAt,
+  gainAt,
   type Sequence,
   type TimelineItem,
 } from '@rec-it/core';
@@ -196,16 +195,17 @@ export class AudioEngine {
     const node = ctx.createBufferSource();
     node.buffer = buffer;
     const gain = ctx.createGain();
-    const fade = clip.item.fade;
-    if (clip.item.keyframes?.volume?.length || (fade && (fade.in > 0 || fade.out > 0))) {
+    const it = clip.item;
+    const faded = (f?: { in: number; out: number }) => !!f && (f.in > 0 || f.out > 0);
+    if (it.keyframes?.volume?.length || faded(it.fade) || faded(it.audioFade)) {
       const points = Math.max(2, Math.ceil(duration * CURVE_POINTS_PER_SECOND));
       const curve = new Float32Array(points);
       const t0 = b - duration; // timeline time where this node starts
       for (let i = 0; i < points; i++) {
         const t = t0 + (duration * i) / (points - 1);
         const at = Math.round(t * FLICKS_PER_SECOND);
-        // Fades match FFmpeg's afade (linear) in the export (ADR-036).
-        curve[i] = volumeAt(clip.item, at) * fadeAt(clip.item, at);
+        // Fades match FFmpeg's afade (linear) in the export (ADR-036, ADR-037).
+        curve[i] = gainAt(clip.item, at);
       }
       gain.gain.setValueCurveAtTime(curve, when, duration);
     } else {

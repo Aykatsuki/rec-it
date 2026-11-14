@@ -37,7 +37,7 @@ import { formatDuration } from '../format';
 import { useApp } from '../store';
 import { transformFor } from './TransformOverlay';
 import { AutoReframe } from './AutoReframe';
-import { ColourSection, FadesSection } from './EffectsInspector';
+import { ColourSection, FadesSection, TransitionSection } from './EffectsInspector';
 import { Slider } from './Slider';
 
 export function ClipInspector({
@@ -228,6 +228,7 @@ export function ClipInspector({
       {(visual || hasAudio || track.kind === 'audio') && (
         <FadesSection seq={seq} item={item} track={track} />
       )}
+      <TransitionSection seq={seq} item={item} track={track} />
       {hasKeyframes(item) && <KeyframeSection seq={seq} item={item} playhead={playhead} />}
       {(hasAudio || track.kind === 'audio') && (
         <section>

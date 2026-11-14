@@ -13,6 +13,7 @@ import {
   type Sequence,
   type TimelineItem,
   type Track,
+  type TransitionKind,
   type Transform,
   type KeyframeProperty,
   type Crop,
@@ -805,4 +806,52 @@ export async function setFade(
       fade: { [side]: toFlicks(Math.max(0, seconds)) },
     })),
   });
+}
+
+/** Transitions offered in menus and the Inspector (ADR-037). */
+export const TRANSITION_LABELS: Record<TransitionKind, string> = {
+  dissolve: 'Cross dissolve',
+  dipBlack: 'Dip to black',
+  dipWhite: 'Dip to white',
+};
+/** Length of a new transition, in seconds. */
+export const DEFAULT_TRANSITION_SECONDS = 0.5;
+
+/** The clip that ends where `item` starts on the same track (the other side of its cut). */
+export function clipBefore(track: Track, item: TimelineItem): TimelineItem | undefined {
+  return track.items.find((i) => i !== item && i.start + i.duration === item.start);
+}
+
+/**
+ * Puts a transition on the cut before `itemId` (null removes it); linked partners get the same
+ * where they have a cut too.
+ */
+export async function setTransition(
+  seq: Sequence,
+  itemId: string,
+  kind: TransitionKind | null,
+  seconds?: number,
+): Promise<boolean> {
+  if (!kind) return edit({ type: 'transition.remove', sequenceId: seq.id, itemId });
+  const current = findItem(seq, itemId)?.item.transitionIn;
+  return edit({
+    type: 'transition.set',
+    sequenceId: seq.id,
+    itemId,
+    kind,
+    duration: toFlicks(
+      seconds ?? (current ? current.duration / FLICKS_PER_SECOND : DEFAULT_TRANSITION_SECONDS),
+    ),
+  });
+}
+
+/** Media lengths for transitions (ADR-037): probed duration, or unlimited for stills. */
+export function mediaLength(byId: Map<string, MediaAsset>) {
+  return (id: string): number | null | undefined => {
+    const a = byId.get(id);
+    if (!a) return undefined;
+    if (a.kind === 'image') return null;
+    const d = a.probe?.durationSec;
+    return d === undefined ? undefined : Math.round(d * FLICKS_PER_SECOND);
+  };
 }
