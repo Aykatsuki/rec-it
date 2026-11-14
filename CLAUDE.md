@@ -60,6 +60,9 @@ Phases 0 (foundations) and 1 (media pipeline) are complete. Phase 3 (export, ADR
   (biquads + `engine/compressor-worklet.ts`, a port of acompressor in `engine/compressor.ts`); ducking in core `ducking.ts`.
 - Renderer `timeline/` — Timeline, SequenceSettings, ClipInspector, ProgramMonitor, TransformOverlay, ExportDialog, CropDialog,
   `menus.tsx` (right-click menus); edits go through `edit.ts`. `ui/ContextMenu.tsx` is the generic menu.
+- ProDown link (ADR-040): main `prodown-link.ts` (named pipe + ProDown's outbox/library files), shell channels
+  `prodown.takeIncoming` / `prodown.library`, renderer `prodown.tsx` (incoming imports, Ctrl+Shift+I "Import from ProDown").
+  ProDown itself is a separate local app (Documents/Projects/ProDown); Rec-It never downloads (ADR-012).
 - `packages/db` — `node:sqlite` (ADR-020), migrations, repositories.
 - `packages/ffmpeg` — binary resolution, capability detection, ffprobe parsing, abortable runner, proxy /
   sprite / poster / waveform recipes. `@rec-it/ffmpeg/testing` generates synthetic fixtures for tests.

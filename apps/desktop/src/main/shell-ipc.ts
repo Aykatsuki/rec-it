@@ -10,6 +10,7 @@ import {
   type ShellContract,
 } from '@rec-it/ipc-contract';
 import { IPC, type BridgeResult } from '../shared/bridge';
+import type { ProDownLink } from './prodown-link';
 import { isAppUrl } from './security';
 import type { SecretStore } from './secrets';
 
@@ -20,6 +21,7 @@ import type { SecretStore } from './secrets';
 export function registerShellIpc(
   secrets: SecretStore,
   onSecretsChanged: () => Promise<void>,
+  prodown: ProDownLink,
 ): void {
   const handlersFor = (win: BrowserWindow | null): Handlers<ShellContract> => {
     const open = (options: OpenDialogOptions) =>
@@ -132,6 +134,8 @@ export function registerShellIpc(
         const result = await open({ title: `Locate "${name}"`, properties: ['openFile'] });
         return { path: result.canceled ? null : (result.filePaths[0] ?? null) };
       },
+      'prodown.takeIncoming': ({ peek }) => ({ files: prodown.take(peek) }),
+      'prodown.library': () => prodown.library(),
       'shell.showItemInFolder': ({ path }) => {
         if (isAbsolute(path) && existsSync(path)) shell.showItemInFolder(path);
         return { ok: true as const };

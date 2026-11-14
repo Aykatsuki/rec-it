@@ -30,6 +30,7 @@ import { activeSequence } from './store';
 import { TopBar } from './layout/TopBar';
 import { RightsDialogHost } from './media/RightsDialog';
 import { notify, Toasts } from './notifications';
+import { openProDownLibrary, ProDownHost } from './prodown';
 import { Welcome } from './project/Welcome';
 import { SettingsDialog, type SettingsTab } from './settings/SettingsDialog';
 import { startBackendSync, useApp } from './store';
@@ -58,6 +59,7 @@ export function App() {
       <ExportDialogHost />
       <CropDialog />
       <ContextMenuHost />
+      <ProDownHost />
       <Toasts />
       {dragging && (
         <div className="drop-overlay" aria-hidden>
@@ -134,7 +136,10 @@ function useShortcuts() {
       const { project, selectedAssetId, selectedItemIds, focus, monitor } = state;
       const seq = activeSequence(state);
 
-      if (mod && key === 'i' && project) {
+      if (mod && e.shiftKey && key === 'i' && project) {
+        e.preventDefault();
+        openProDownLibrary();
+      } else if (mod && key === 'i' && project) {
         e.preventDefault();
         void importWithDialog();
       } else if (mod && key === 'o') {

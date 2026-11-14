@@ -5,13 +5,14 @@ import { requestRights } from './media/RightsDialog';
 import { notify } from './notifications';
 import { useApp } from './store';
 
-export async function importFiles(paths: string[]): Promise<void> {
+/** `suggested` pre-fills the rights dialog (e.g. the YouTube link of a ProDown download). */
+export async function importFiles(paths: string[], suggested?: RightsInput): Promise<void> {
   if (!paths.length) return;
   if (!useApp.getState().project) {
     notify('Create or open a project first.', 'warn');
     return;
   }
-  const rights = await requestRights(paths.length);
+  const rights = await requestRights(paths.length, suggested);
   if (!rights) return;
   const result = await backend.invoke('media.import', { paths, rights });
   if (result.skipped.length) {

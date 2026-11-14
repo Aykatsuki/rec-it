@@ -23,6 +23,10 @@ export interface RecitBridge {
     /** Absolute path of a file dropped onto the window (Electron webUtils). */
     pathForFile(file: File): string;
   };
+  /** ProDown (the separate downloader, ADR-040) has sent videos; fetch them with prodown.takeIncoming. */
+  prodown: {
+    onIncoming(listener: () => void): () => void;
+  };
 }
 
 export const IPC = {
@@ -30,4 +34,5 @@ export const IPC = {
   backendPort: 'recit:backend:port',
   backendDisconnected: 'recit:backend:disconnected',
   shell: 'recit:shell',
+  prodownIncoming: 'recit:prodown:incoming',
 } as const;

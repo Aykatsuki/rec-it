@@ -19,7 +19,7 @@ test.describe('renderer security', () => {
         require: 'undefined',
         process: 'undefined',
         module: 'undefined',
-        bridgeKeys: ['backend', 'files', 'shell'],
+        bridgeKeys: ['backend', 'files', 'prodown', 'shell'],
         backendKeys: ['invoke', 'on', 'onConnectionChange'],
       });
 
