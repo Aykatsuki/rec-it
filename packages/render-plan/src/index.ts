@@ -319,7 +319,7 @@ function animatedLayer(
 
   // Source time for perspective (frame counter) and for overlay (timeline time t).
   const start = flicksToSeconds(item.start);
-  const Tp = sourceExpr(item, `in/${num(fpsValue)}`);
+  const Tp = sourceExpr(item, `(in-1)/${num(fpsValue)}`); // `in` starts at 1
   const To = sourceExpr(item, `(t-${num(start)})`);
   const k = `(${propExpr(item, 'scale', Tp)}/${num(sUse)})`;
   const r = `(${propExpr(item, 'rotation', Tp)}*PI/180)`;
@@ -496,6 +496,17 @@ function keyFilter(item: TimelineItem): string[] {
   ];
 }
 
+/**
+ * Smoothstep progress through a transition window as an FFmpeg expression of time `T`
+ * (seconds); mirrors windowProgress() in @rec-it/core.
+ */
+function progressExpr(w: { start: number; end: number }, T: string): string {
+  const st = flicksToSeconds(w.start as never);
+  const d = Math.max(1e-6, flicksToSeconds((w.end - w.start) as never));
+  const p = `clip((${T}-${num(st)})/${num(d)},0,1)`;
+  return `(${p}*${p}*(3-2*${p}))`;
+}
+
 /** Static opacity scales the layer's alpha (the layer is yuva420p by then). */
 function opacityFilter(item: TimelineItem): string[] {
   const o = item.opacity ?? 1;
@@ -630,6 +641,61 @@ function buildGraph(
   if (withVideo) {
     graph.push(`color=c=black:s=${W}x${H}:r=${fps}:d=${sec(total)},format=yuv420p[base]`);
     let last = 'base';
+    /**
+     * Puts layer [v<n>] on the picture. Clips in a slide, zoom or wipe transition (ADR-043) are
+     * first put on a transparent frame-sized canvas of their own (so they are cut to the frame,
+     * as in the preview), which is then moved, scaled or wiped as a whole.
+     */
+    const place = (item: TimelineItem, n: number, at: string) => {
+      if (!item.motion && !item.wipe) {
+        graph.push(`[${last}][v${n}]overlay=${at}:eof_action=pass:repeatlast=0[o${n}]`);
+        last = `o${n}`;
+        return;
+      }
+      const m = 4; // transparent margin: perspective repeats the canvas edge
+      const start = flicksToSeconds(item.start);
+      const dur = flicksToSeconds(item.duration);
+      const frame: string[] = [];
+      if (item.motion) {
+        const mo = item.motion;
+        // perspective's frame counter `in` starts at 1.
+        const e = progressExpr(mo, `(${num(start)}+(in-1)/${num(seq.fps.num / seq.fps.den)})`);
+        const ds = `(${num(mo.s0)}+${num(mo.s1 - mo.s0)}*${e})`;
+        const dx = `(${num(mo.x0)}+${num(mo.x1 - mo.x0)}*${e})*${W}`;
+        const cw = W + 2 * m;
+        const ch = H + 2 * m;
+        const corner = (cx: number, cy: number) => [
+          `${num(cw / 2)}+(${num(cx - cw / 2)})*${ds}+${dx}`,
+          `${num(ch / 2)}+(${num(cy - ch / 2)})*${ds}`,
+        ];
+        const [x0, y0] = corner(0, 0);
+        const [x1, y1] = corner(cw, 0);
+        const [x2, y2] = corner(0, ch);
+        const [x3, y3] = corner(cw, ch);
+        frame.push(
+          `perspective=x0='${x0}':y0='${y0}':x1='${x1}':y1='${y1}':x2='${x2}':y2='${y2}':x3='${x3}':y3='${y3}':sense=destination:eval=frame:interpolation=linear`,
+        );
+      }
+      if (item.wipe) {
+        // Clears the alpha right of the moving edge (drawbox cannot move over time; geq can, and
+        // only runs during the wipe).
+        const w = item.wipe;
+        frame.push(
+          `geq=lum='lum(X,Y)':cb='cb(X,Y)':cr='cr(X,Y)':a='if(lt(X,${m}+${W}*${progressExpr(w, 'T')}),alpha(X,Y),0)':enable='between(t,${num(flicksToSeconds(w.start))},${num(flicksToSeconds(w.end))})'`,
+        );
+      }
+      // The frame-sized canvas cuts the clip to the frame; a transparent margin around it keeps
+      // perspective (which repeats edge pixels) from smearing the picture.
+      graph.push(
+        `color=c=black@0:s=${W}x${H}:r=${fps}:d=${sec(dur)},format=yuva420p,setpts=PTS-STARTPTS+${sec(start)}/TB[c${n}]`,
+      );
+      graph.push(
+        `[c${n}][v${n}]overlay=${at}:eof_action=pass:repeatlast=0,pad=${W + 2 * m}:${H + 2 * m}:${m}:${m}:color=black@0,${frame.join(',')}[f${n}]`,
+      );
+      graph.push(`[${last}][f${n}]overlay=x=-${m}:y=-${m}:eof_action=pass:repeatlast=0[o${n}]`);
+      last = `o${n}`;
+    };
+
     visualItems(seq).forEach((item, n) => {
       const asset = need(item.assetId);
       if (asset.kind === 'audio') return;
@@ -665,10 +731,7 @@ function buildGraph(
           ...fadeFilters(item),
         ];
         graph.push(`[${k}:v]${chain.join(',')}[v${n}]`);
-        graph.push(
-          `[${last}][v${n}]overlay=x=${a.overlayX}:y=${a.overlayY}:eval=frame:eof_action=pass:repeatlast=0[o${n}]`,
-        );
-        last = `o${n}`;
+        place(item, n, `x=${a.overlayX}:y=${a.overlayY}:eval=frame`);
         return;
       }
       const { width, height, rotation, bounds, source } = computeLayout(
@@ -702,10 +765,7 @@ function buildGraph(
         ...fadeFilters(item),
       ];
       graph.push(`[${k}:v]${chain.join(',')}[v${n}]`);
-      graph.push(
-        `[${last}][v${n}]overlay=x=${bounds.left}:y=${bounds.top}:eof_action=pass:repeatlast=0[o${n}]`,
-      );
-      last = `o${n}`;
+      place(item, n, `x=${bounds.left}:y=${bounds.top}`);
     });
     graph.push(
       `[${last}]format=yuv420p,setparams=range=tv:color_primaries=bt709:color_trc=bt709:colorspace=bt709${captionsFilter(options.captions)}[vout]`,

@@ -357,7 +357,14 @@ export function ColourSection({
   );
 }
 
-const SHORT = { dissolve: 'Dissolve', dipBlack: 'Black', dipWhite: 'White' } as const;
+const SHORT = {
+  dissolve: 'Dissolve',
+  dipBlack: 'Black',
+  dipWhite: 'White',
+  wipe: 'Wipe',
+  slide: 'Slide',
+  zoom: 'Zoom',
+} as const;
 
 /** The transition on the cut before this clip (ADR-037). */
 export function TransitionSection({
@@ -383,7 +390,7 @@ export function TransitionSection({
   return (
     <section data-testid="transition">
       <h4>Transition from previous clip</h4>
-      <div className="segmented segmented--wide" role="radiogroup" aria-label="Transition">
+      <div className="speed__presets" role="radiogroup" aria-label="Transition">
         {[null, ...TRANSITION_KINDS].map((kind) => (
           <button
             key={kind ?? 'none'}
@@ -410,11 +417,11 @@ export function TransitionSection({
           onCommit={(v) => setTransition(seq, item.id, t.kind, v)}
         />
       )}
-      {t && t.kind === 'dissolve' && shown + 1e-3 < Math.min(toSeconds(t.duration), max) && (
+      {t && !t.kind.startsWith('dip') && shown + 1e-3 < Math.min(toSeconds(t.duration), max) && (
         <p className="details__hint" data-testid="transition-short">
           {shown > 0
-            ? `Only ${shown.toFixed(2)} s is shown: a dissolve uses footage from after the first clip and before this one, and there is not more of it. Trim the clips to leave more.`
-            : 'Not shown: a dissolve needs footage from after the first clip or before this one. Trim one of the clips to leave some.'}
+            ? `Only ${shown.toFixed(2)} s is shown: the transition uses footage from after the first clip and before this one, and there is not more of it. Trim the clips to leave more.`
+            : 'Not shown: this transition needs footage from after the first clip or before this one. Trim one of the clips to leave some.'}
         </p>
       )}
     </section>

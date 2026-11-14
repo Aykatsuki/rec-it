@@ -7,6 +7,8 @@ import {
   speedOf,
   gainAt,
   presentSequence,
+  motionAt,
+  wipeAt,
   type Sequence,
   type TimelineItem,
   type Track,
@@ -533,6 +535,8 @@ function GpuCanvas({
           if (t) setTables((old) => (old.has(id) ? old : new Map(old).set(id, t)));
         });
   }, [mounted, tables]);
+  const frameLayer = (item: TimelineItem, now: number) =>
+    item.motion || item.wipe ? { frame: { ...motionAt(item, now), wipe: wipeAt(item, now) } } : {};
   const lutLayer = (item: TimelineItem) => {
     const lut = pictureAt(item, item.start).lut;
     const table = lut && tables.get(lut.lutId);
@@ -584,6 +588,7 @@ function GpuCanvas({
             transform,
             picture: pictureAt(m.item, now),
             ...lutLayer(m.item),
+            ...frameLayer(m.item, now),
           });
       } else if (m.asset.kind === 'video' && m.asset.urls.proxy) {
         layers.push({
@@ -596,6 +601,7 @@ function GpuCanvas({
           transform,
           picture: pictureAt(m.item, now),
           ...lutLayer(m.item),
+          ...frameLayer(m.item, now),
         });
       }
     }

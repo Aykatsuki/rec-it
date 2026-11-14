@@ -11,6 +11,12 @@ export interface Layer {
   transform: Transform;
   /** Opacity × fade and colour effects (ADR-036). Missing means unchanged. */
   picture?: PictureState;
+  /**
+   * Slide/zoom/wipe transitions (ADR-043): the layer, cut to the frame, is scaled by `ds` about
+   * the frame's centre and moved `dx` frame widths; `wipe` (0–1) keeps only the part of the
+   * frame left of that share of its width.
+   */
+  frame?: { dx: number; ds: number; wipe: number };
   /** The clip's LUT and its table (ADR-040). */
   lut?: { id: string; size: number; data: Float32Array; strength: number };
 }
@@ -441,11 +447,29 @@ export class Compositor {
       const r = (l.rotation * Math.PI) / 180;
       const cos = Math.cos(r);
       const sin = Math.sin(r);
+      const fr = layer.frame;
+      if (fr) {
+        // Cut to the (moved, scaled) frame, and to the wipe's edge.
+        const left = (0 - frameW / 2) * fr.ds + frameW / 2 + fr.dx * frameW;
+        const right = Math.min(left + frameW * fr.ds, frameW * fr.wipe);
+        const top = frameH / 2 - (frameH / 2) * fr.ds;
+        const x0 = Math.max(0, Math.round(left * sx));
+        const x1 = Math.min(this.canvas.width, Math.round(right * sx));
+        const y0 = Math.max(0, Math.round(top * sy));
+        const y1 = Math.min(this.canvas.height, Math.round((top + frameH * fr.ds) * sy));
+        if (x1 <= x0 || y1 <= y0) continue;
+        gl.enable(gl.SCISSOR_TEST);
+        gl.scissor(x0, this.canvas.height - y1, x1 - x0, y1 - y0);
+      }
       const corner = (u: number, v: number) => {
         const dx = (u - 0.5) * l.width;
         const dy = (v - 0.5) * l.height;
-        const px = cx + dx * cos - dy * sin;
-        const py = cy + dx * sin + dy * cos;
+        let px = cx + dx * cos - dy * sin;
+        let py = cy + dx * sin + dy * cos;
+        if (fr) {
+          px = (px - frameW / 2) * fr.ds + frameW / 2 + fr.dx * frameW;
+          py = (py - frameH / 2) * fr.ds + frameH / 2;
+        }
         return [(px / frameW) * 2 - 1, 1 - (py / frameH) * 2, u0 + u * du, v0 + v * dv];
       };
       // Two triangles: (0,0) (1,0) (0,1) and (1,0) (1,1) (0,1).
@@ -460,6 +484,7 @@ export class Compositor {
       gl.bufferData(gl.ARRAY_BUFFER, data, gl.STREAM_DRAW);
       gl.bindTexture(gl.TEXTURE_2D, tex);
       gl.drawArrays(gl.TRIANGLES, 0, 6);
+      gl.disable(gl.SCISSOR_TEST);
     }
   }
 

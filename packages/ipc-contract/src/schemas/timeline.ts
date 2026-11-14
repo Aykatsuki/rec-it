@@ -58,7 +58,10 @@ export const timelineItemSchema = z.object({
   reverse: z.boolean().optional(),
   freeze: z.boolean().optional(),
   transitionIn: z
-    .object({ kind: z.enum(['dissolve', 'dipBlack', 'dipWhite']), duration: flicks })
+    .object({
+      kind: z.enum(['dissolve', 'dipBlack', 'dipWhite', 'wipe', 'slide', 'zoom']),
+      duration: flicks,
+    })
     .optional(),
   effects: z
     .array(
@@ -408,7 +411,7 @@ const singleCommandSchema = z.discriminatedUnion('type', [
     type: z.literal('transition.set'),
     ...seqId,
     itemId: id,
-    kind: z.enum(['dissolve', 'dipBlack', 'dipWhite']),
+    kind: z.enum(['dissolve', 'dipBlack', 'dipWhite', 'wipe', 'slide', 'zoom']),
     duration: flicks,
   }),
   z.object({ type: z.literal('transition.remove'), ...seqId, itemId: id }),

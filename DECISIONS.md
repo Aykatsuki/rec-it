@@ -46,6 +46,7 @@ Each record states the decision, why it was made and what else was considered. R
 | 040 | 3D LUTs (.cube) | Accepted |
 | 041 | Green screen (chroma key) | Accepted |
 | 042 | Sound effects: EQ, compressor, ducking | Accepted |
+| 043 | Wipe, slide and zoom transitions | Accepted |
 
 ---
 
@@ -641,4 +642,29 @@ Each record states the decision, why it was made and what else was considered. R
   - A render-plan filter test.
   - The audio parity test now has an EQ'd clip and a compressed clip (r = 0.997, 0.15 dB).
   - An end-to-end test: voice preset, ducking, undo.
+
+---
+
+## ADR-043 · Wipe, slide and zoom transitions
+
+**Status.** Accepted (14 Nov 2026, Phase 6 eighth slice). Extends ADR-037. Directions other than left-to-right, and more shapes (iris, clock), can come later.
+
+**Decisions.**
+- **Three more kinds.** Each overlaps the clips like a cross dissolve, using the footage around the cut, with the same one-sided fallback and the same sound crossfade:
+  - **Wipe**: the next clip is revealed from the left.
+  - **Slide (push)**: the next clip comes in from the right while the first one leaves to the left.
+  - **Zoom**: the first clip grows to 1.6× while the next one fades in over it.
+  
+  Movement and the wipe edge follow a smoothstep curve, the same in both renderers (`windowProgress`).
+- **They act on whole frames, like other editors.** A clip in a slide or zoom is cut to the frame first, then moved or scaled as a whole. A fill-cropped clip therefore does not show its cropped-off parts while sliding. Presented clips carry `motion` (x offset in frame widths, scale about the frame centre) or `wipe` (a time window).
+  - **Preview**: the compositor transforms the layer's corners and clips it with a scissor rectangle to the moved frame, and to the wipe edge.
+  - **Export**: such a clip is put on its own transparent frame-sized canvas, which cuts it to the frame. The canvas gets a transparent margin, because `perspective` repeats edge pixels into uncovered areas. Then `perspective` moves and scales it, using a frame-counter expression.
+  - **Wipe in the export**: `geq` clears alpha right of the edge, enabled only during the wipe. `drawbox` cannot be used because its position is not re-evaluated per frame.
+- **Fix found on the way.** `perspective`'s frame counter `in` starts at 1, not 0, so keyframed animation in the export ran one frame early. Both perspective expressions now use `in-1`. The keyframed parity case went from 0.988 to 0.998.
+- **Editing.** The clip menu and the Inspector offer all six transitions (the Inspector as a grid of buttons). The note about missing footage applies to every overlapping kind.
+- **Tests.**
+  - Unit tests: overlap, motion and wipe progress, alpha and gain.
+  - A real-FFmpeg test: half red/half blue at the cut for slide and for wipe, in opposite order; purple mid-zoom.
+  - A golden-frame case with all three at frame-exact times (SSIM 0.992–0.997).
+  - The end-to-end transitions test switches to Slide.
 

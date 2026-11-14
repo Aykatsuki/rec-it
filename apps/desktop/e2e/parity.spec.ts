@@ -730,6 +730,182 @@ test.describe('preview and export match', () => {
     }
   });
 
+  test('golden frames: zoom, slide and wipe transitions', async () => {
+    const userData = tempUserData();
+    const shots = join(userData, 'shots');
+    mkdirSync(shots);
+    const { app, page } = await launch(userData, env());
+    try {
+      await createProject(page, 'Moving transitions parity');
+      await mockOpenDialog(app, [fx.video, fx.still]);
+      await page.getByRole('button', { name: 'Import footage' }).click();
+      await page.getByLabel(/I have the right/).check();
+      await page.getByRole('button', { name: 'Import 2 files' }).click();
+      await expect(page.locator('[data-testid=asset-card][data-status=ready]')).toHaveCount(2, {
+        timeout: 60_000,
+      });
+      await page.locator('[data-testid=asset-card][data-name="bars.png"]').dblclick();
+      await expect(page.getByTestId('timeline-item')).toHaveCount(1);
+      await page.evaluate(async (S) => {
+        type Track = { id: string; items: { id: string }[] };
+        const call = async <T>(channel: string, input: unknown): Promise<T> => {
+          const r = (await window.recit.backend.invoke(channel as never, input as never)) as {
+            ok: boolean;
+            result?: unknown;
+            error?: { message: string };
+          };
+          if (!r.ok) throw new Error(r.error?.message);
+          return r.result as T;
+        };
+        const state = await call<{ doc: { sequences: { id: string; tracks: Track[] }[] } }>(
+          'doc.get',
+          {},
+        );
+        const seq = state.doc.sequences[0]!;
+        const v1 = seq.tracks[1];
+        const assets = await call<{ id: string; name: string }[]>('media.list', {});
+        const clip = assets.find((a) => a.name === 'moving box.mp4')!.id;
+        const still = v1!.items[0]!.id;
+        const at = (n: number) => n * S;
+        await call('doc.execute', {
+          command: {
+            type: 'batch',
+            commands: [
+              // A 0–2 s, B 2–4 s (video), C 4–6 s (the still), D 6–8 s (video from its start).
+              {
+                type: 'item.move',
+                sequenceId: seq.id,
+                itemId: still,
+                trackId: v1!.id,
+                start: at(4),
+              },
+              { type: 'item.trim', sequenceId: seq.id, itemId: still, edge: 'end', time: at(6) },
+              {
+                type: 'item.add',
+                sequenceId: seq.id,
+                trackId: v1!.id,
+                assetId: clip,
+                id: 'item_a',
+                start: 0,
+                sourceIn: 0,
+                duration: at(2),
+                transform: { fit: 'fit' },
+              },
+              {
+                type: 'item.add',
+                sequenceId: seq.id,
+                trackId: v1!.id,
+                assetId: clip,
+                id: 'item_b',
+                start: at(2),
+                sourceIn: at(0.5),
+                duration: at(2),
+              },
+              {
+                type: 'item.add',
+                sequenceId: seq.id,
+                trackId: v1!.id,
+                assetId: clip,
+                id: 'item_d',
+                start: at(6),
+                sourceIn: 0,
+                duration: at(2),
+                transform: { fit: 'fit', scale: 0.8 },
+              },
+              {
+                type: 'transition.set',
+                sequenceId: seq.id,
+                itemId: 'item_b',
+                kind: 'zoom',
+                duration: at(1),
+              },
+              {
+                type: 'transition.set',
+                sequenceId: seq.id,
+                itemId: still,
+                kind: 'slide',
+                duration: at(1),
+              },
+              {
+                type: 'transition.set',
+                sequenceId: seq.id,
+                itemId: 'item_d',
+                kind: 'wipe',
+                duration: at(1),
+              },
+            ],
+          },
+        });
+      }, 705_600_000);
+      await expect(page.getByTestId('program-monitor')).toHaveAttribute('data-engine', 'gpu');
+      // On frame boundaries (30 fps), so preview and export show the same frame.
+      const times = [2, 4, 6.5];
+      for (const t of times) {
+        const at = t.toFixed(3);
+        await page.getByTestId('ruler').click({ position: { x: t * ZOOM, y: 10 } });
+        await expect(page.getByTestId('program-time')).toContainText(`00:0${at}`);
+        await page.waitForFunction(
+          (want) =>
+            document.querySelector<HTMLCanvasElement>('[data-testid=program-canvas]')?.dataset
+              .time === want,
+          at,
+        );
+        await page.waitForTimeout(300);
+        await page.locator('.program').screenshot({ path: join(shots, `preview-mv-${t}.png`) });
+      }
+
+      const out = join(userData, 'moving.mp4');
+      await page.getByTestId('export-button').click();
+      await page.getByRole('radio', { name: 'YouTube Short', exact: true }).click();
+      await setExportTarget(app, page, out);
+      await page
+        .getByTestId('export-dialog')
+        .getByRole('button', { name: /Export$/ })
+        .click();
+      await expect(page.getByTestId('export-status')).toHaveAttribute('data-state', 'done', {
+        timeout: 120_000,
+      });
+      for (const t of times) {
+        const preview = join(shots, `preview-mv-${t}.png`);
+        const [w, h] = execFileSync(
+          bins!.ffprobe,
+          ['-v', 'error', '-show_entries', 'stream=width,height', '-of', 'csv=p=0', preview],
+          { encoding: 'utf8' },
+        )
+          .trim()
+          .split(',')
+          .map(Number);
+        const exported = join(shots, `export-mv-${t}.png`);
+        execFileSync(bins!.ffmpeg, [
+          '-v',
+          'error',
+          '-y',
+          '-ss',
+          String(t),
+          '-i',
+          out,
+          '-frames:v',
+          '1',
+          '-vf',
+          `scale=${w}:${h}:flags=area`,
+          exported,
+        ]);
+        const score = ssim(bins!.ffmpeg, preview, exported);
+        const [a, b] = [meanColour(bins!.ffmpeg, preview), meanColour(bins!.ffmpeg, exported)];
+        console.info(
+          `Moving transitions at ${t}s: SSIM ${score}, mean colour preview ${a} export ${b}`,
+        );
+        expect(score, `SSIM at ${t}s`).toBeGreaterThanOrEqual(MIN_SSIM);
+        // Brightness, contrast, saturation, opacity and the fade all move the average colour by
+        // tens of levels; preview and export agree within a few (rounding in YUV ↔ RGB, as without effects).
+        for (let c = 0; c < 3; c++)
+          expect(Math.abs(a[c]! - b[c]!), `channel ${c} at ${t}s`).toBeLessThan(6);
+      }
+    } finally {
+      await app.close();
+    }
+  });
+
   test('golden frames: speed, reverse and freeze frame', async () => {
     const userData = tempUserData();
     const shots = join(userData, 'shots');
