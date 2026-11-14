@@ -15,6 +15,8 @@ import {
   type TimelineItem,
   type Track,
   type TransitionKind,
+  isRetimed,
+  timelineTimeAt,
   type Transform,
   type KeyframeProperty,
   type Crop,
@@ -184,6 +186,7 @@ export function copySelected(): boolean {
     transform: { ...item.transform },
     ...(item.keyframes ? { keyframes: structuredClone(item.keyframes) } : {}),
     ...(item.linkId ? { linkKey: item.linkId } : {}),
+    ...(isRetimed(item) ? { retime: retimeOf(item) } : {}),
     ...(item.caption
       ? {
           caption: item.caption.words
@@ -256,6 +259,7 @@ export async function paste(at?: number, trackId?: string): Promise<void> {
       volume: clip.volume,
       muted: clip.muted,
       transform: clip.transform,
+      ...clip.retime,
     });
     for (const [property, keys] of Object.entries(clip.keyframes ?? {}))
       for (const k of keys ?? [])
@@ -363,6 +367,7 @@ export async function detachAudio(itemId: string): Promise<void> {
       sourceIn: item.sourceIn,
       duration: item.duration,
       volume: item.volume,
+      ...retimeOf(item),
     },
     { type: 'item.update', sequenceId: seq.id, itemId: item.id, muted: true },
     // Linked, so the picture and its sound stay in sync when edited.
@@ -554,7 +559,10 @@ export function keyframeTimes(item: TimelineItem, property?: KeyframeProperty): 
     : Object.values(item.keyframes ?? {}).map((k) => k ?? []);
   const times = new Set<number>();
   for (const keys of lists)
-    for (const k of keys) times.add(toSeconds(item.start + (k.t - item.sourceIn)));
+    for (const k of keys) {
+      const t = timelineTimeAt(item, k.t);
+      if (Number.isFinite(t)) times.add(toSeconds(Math.round(t)));
+    }
   return [...times].sort((a, b) => a - b);
 }
 
@@ -664,6 +672,7 @@ export async function facecamLayout(itemId: string): Promise<void> {
         duration: item.duration,
         muted: true,
         volume: item.volume,
+        ...retimeOf(item),
         transform: {
           fit: 'fit',
           scale: 1,
@@ -904,6 +913,7 @@ export async function blurredBackground(itemId: string): Promise<void> {
         duration: item.duration,
         muted: true,
         volume: item.volume,
+        ...retimeOf(item),
         transform: {
           ...DEFAULT_TRANSFORM,
           ...(item.transform.crop ? { crop: item.transform.crop } : {}),
@@ -940,4 +950,61 @@ export async function blurredBackground(itemId: string): Promise<void> {
     ],
   });
   if (ok) notify('Added a blurred copy behind the clip. Select it to change the blur.', 'info');
+}
+
+/** A clip's speed, reverse and freeze settings, for copies of it (ADR-039). */
+export function retimeOf(item: TimelineItem): Pick<TimelineItem, 'speed' | 'reverse' | 'freeze'> {
+  return {
+    ...(item.speed !== undefined && item.speed !== 1 ? { speed: item.speed } : {}),
+    ...(item.reverse ? { reverse: true } : {}),
+    ...(item.freeze ? { freeze: true } : {}),
+  };
+}
+
+/** Speeds offered in menus and the Inspector (ADR-039). */
+export const SPEED_PRESETS = [0.25, 0.5, 0.75, 1, 1.5, 2, 3, 4] as const;
+/** Length of a new freeze frame, in seconds. */
+export const FREEZE_SECONDS = 2;
+
+/** Changes a clip's speed and/or direction (linked partners follow). */
+export async function setSpeed(
+  seq: Sequence,
+  itemId: string,
+  change: { speed?: number; reverse?: boolean },
+): Promise<boolean> {
+  return edit({ type: 'item.speed', sequenceId: seq.id, itemId, ...change });
+}
+
+/** Inserts a freeze frame of the frame under the playhead into a video clip (ADR-039). */
+export async function freezeFrame(itemId: string, seconds = FREEZE_SECONDS): Promise<void> {
+  const state = useApp.getState();
+  const seq = activeSequence(state);
+  const found = findItem(seq, itemId);
+  if (!seq || !found) return;
+  const { item } = found;
+  const asset = state.assets.find((a) => a.id === item.assetId);
+  const fps = asset?.probe?.video?.fps;
+  const time = toFlicks(state.playhead);
+  if (asset?.kind !== 'video' || !fps || time < item.start || time > item.start + item.duration) {
+    notify('Put the playhead over a video clip to freeze its frame.', 'warn');
+    return;
+  }
+  // The start of the source frame on screen, so preview and export show the same frame.
+  const src =
+    sourceTimeAt(item, Math.min(time, item.start + item.duration - 1)) / FLICKS_PER_SECOND;
+  const rate = fps.num / fps.den;
+  const frameStart = Math.floor(src * rate + 1e-6) / rate;
+  const id = `item_${crypto.randomUUID()}`;
+  if (
+    await edit({
+      type: 'item.freeze',
+      sequenceId: seq.id,
+      itemId,
+      time,
+      sourceTime: Math.round(frameStart * FLICKS_PER_SECOND),
+      duration: toFlicks(seconds),
+      id,
+    })
+  )
+    useApp.getState().selectItems([id]);
 }

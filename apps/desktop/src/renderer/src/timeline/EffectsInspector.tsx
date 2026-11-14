@@ -1,5 +1,5 @@
 // Fades, opacity and colour effects for one clip (ADR-036).
-import { Eye, EyeOff, Plus, Trash2 } from 'lucide-react';
+import { Eye, EyeOff, Pause, Plus, Repeat, Trash2 } from 'lucide-react';
 import {
   TRANSITION_KINDS,
   transitionSpans,
@@ -12,6 +12,9 @@ import { Button } from '@rec-it/ui';
 import {
   clipBefore,
   edit,
+  freezeFrame,
+  setSpeed,
+  SPEED_PRESETS,
   mediaLength,
   setFade,
   setTransition,
@@ -288,6 +291,92 @@ export function TransitionSection({
             : 'Not shown: a dissolve needs footage from after the first clip or before this one. Trim one of the clips to leave some.'}
         </p>
       )}
+    </section>
+  );
+}
+
+const speedLabel = (v: number) => `${v}×`;
+
+/** Speed, reverse and freeze frames (ADR-039). */
+export function SpeedSection({
+  seq,
+  item,
+  track,
+  isVideo,
+}: {
+  seq: Sequence;
+  item: TimelineItem;
+  track: Track;
+  /** The clip shows moving video (freeze frames can be made from it). */
+  isVideo: boolean;
+}) {
+  if (item.caption) return null;
+  if (item.freeze)
+    return (
+      <section data-testid="speed">
+        <h4>Freeze frame</h4>
+        <p className="details__hint">
+          This clip holds one frame. Trim it to change how long it holds; it has no sound.
+        </p>
+      </section>
+    );
+  const speed = item.speed ?? 1;
+  return (
+    <section data-testid="speed">
+      <h4>Speed</h4>
+      <div className="speed__presets" role="radiogroup" aria-label="Speed">
+        {SPEED_PRESETS.map((v) => (
+          <button
+            key={v}
+            type="button"
+            role="radio"
+            aria-checked={speed === v}
+            disabled={track.locked}
+            onClick={() => void setSpeed(seq, item.id, { speed: v })}
+          >
+            {speedLabel(v)}
+          </button>
+        ))}
+      </div>
+      <Slider
+        label="Speed"
+        value={speed}
+        min={0.25}
+        max={4}
+        step={0.05}
+        format={(v) => `${Math.round(v * 100) / 100}×`}
+        disabled={track.locked}
+        onCommit={(v) => setSpeed(seq, item.id, { speed: Math.round(v * 100) / 100 })}
+      />
+      <div className="details__actions">
+        <Button
+          size="sm"
+          variant={item.reverse ? 'primary' : 'secondary'}
+          icon={<Repeat size={13} />}
+          aria-pressed={!!item.reverse}
+          disabled={track.locked}
+          data-testid="reverse"
+          onClick={() => void setSpeed(seq, item.id, { reverse: !item.reverse })}
+        >
+          {item.reverse ? 'Reversed' : 'Reverse'}
+        </Button>
+        {isVideo && (
+          <Button
+            size="sm"
+            icon={<Pause size={13} />}
+            disabled={track.locked}
+            data-testid="freeze-frame"
+            title="Holds the frame under the playhead for 2 seconds; later clips move along"
+            onClick={() => void freezeFrame(item.id)}
+          >
+            Freeze frame
+          </Button>
+        )}
+      </div>
+      <p className="details__hint">
+        Changing the speed changes the clip's length; clips after it on its track move along. Sound
+        keeps its pitch.
+      </p>
     </section>
   );
 }

@@ -2,7 +2,14 @@
 // the clip after the cut (`transitionIn`); presentSequence() turns it into what preview and
 // export draw: overlapping, faded clips. Everything else keeps using the plain timeline.
 import type { Flicks } from '../time';
-import { itemEnd, type Sequence, type TimelineItem, type Track } from './model';
+import {
+  itemEnd,
+  itemHandles,
+  sliceItem,
+  type Sequence,
+  type TimelineItem,
+  type Track,
+} from './model';
 
 /**
  * Length of an asset's media in flicks; null for still images (any length); undefined when
@@ -23,12 +30,7 @@ export interface TransitionSpan {
 
 /** Extra media after a clip's end and before its start (Infinity for stills). */
 function handles(item: TimelineItem, length: MediaLength): { before: number; after: number } {
-  const len = length(item.assetId);
-  if (len === null) return { before: Infinity, after: Infinity };
-  return {
-    before: Math.max(0, item.sourceIn),
-    after: len === undefined ? 0 : Math.max(0, len - (item.sourceIn + item.duration)),
-  };
+  return itemHandles(item, length(item.assetId));
 }
 
 /** The transitions a track shows, with their real extent. */
@@ -91,11 +93,9 @@ export function presentTrack(track: Track, length: MediaLength): TimelineItem[] 
     const fadeA = { in: a.fade?.in ?? zero, out: zero };
     const fadeB = { in: zero, out: b.fade?.out ?? zero };
     if (s.kind === 'dissolve') {
-      a.duration = (a.duration + post) as Flicks;
+      Object.assign(a, sliceItem(a, a.start, itemEnd(a) + post));
       a.audioFade = { in: a.audioFade?.in ?? zero, out: (pre + post) as Flicks };
-      b.start = s.start;
-      b.sourceIn = (b.sourceIn - pre) as Flicks;
-      b.duration = (b.duration + pre) as Flicks;
+      Object.assign(b, sliceItem(b, s.start, itemEnd(b)));
       fadeB.in = (pre + post) as Flicks;
     } else {
       const color = s.kind === 'dipWhite' ? 'white' : 'black';

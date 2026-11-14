@@ -1,6 +1,6 @@
 // Audio parity (ADR-030): the preview's Web Audio mix, rendered offline, must match the
 // exported file's sound in timing (within 20 ms) and level (within 1 dB), including volume
-// keyframes, fades, a clip's own sound and a separate audio clip.
+// keyframes, fades, speed, a clip's own sound and a separate audio clip.
 import { expect, test } from '@playwright/test';
 import { execFileSync } from 'node:child_process';
 import { rmSync } from 'node:fs';
@@ -132,6 +132,8 @@ test.describe('preview audio', () => {
                 t: S,
                 value: 1,
               },
+              // Faster, keeping its pitch (ADR-039): WSOLA in the preview, atempo in the export.
+              { type: 'item.speed', sequenceId: seq.id, itemId: 'item_tone', speed: 1.5 },
             ],
           },
         });

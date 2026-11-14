@@ -223,6 +223,26 @@ describe.skipIf(!bins)('export renders correct frames (real FFmpeg)', () => {
       files.blue,
     );
     run('-f', 'lavfi', '-i', 'color=0x00ff00:s=200x200', '-frames:v', '1', files.green);
+    // Frame n has brightness 2n (luma code), so a pixel tells which frame is shown.
+    files.ramp = join(dir, 'ramp.mp4');
+    run(
+      '-f',
+      'lavfi',
+      '-i',
+      'nullsrc=s=320x180:r=30:d=4,geq=lum=16+2*N:cb=128:cr=128,format=yuv420p',
+      '-f',
+      'lavfi',
+      '-i',
+      'sine=f=440:d=4',
+      '-c:v',
+      'libx264',
+      '-qp',
+      '0',
+      '-c:a',
+      'aac',
+      '-shortest',
+      files.ramp,
+    );
     files.half = join(dir, 'half.png');
     run(
       '-f',
@@ -242,6 +262,7 @@ describe.skipIf(!bins)('export renders correct frames (real FFmpeg)', () => {
     blue: { kind: 'video', duration: s(3), hasAudio: false, width: 640, height: 360 },
     green: { kind: 'image', duration: null, hasAudio: false, width: 200, height: 200 },
     half: { kind: 'image', duration: null, hasAudio: false, width: 200, height: 200 },
+    ramp: { kind: 'video', duration: s(4), hasAudio: true, width: 320, height: 180 },
     tone: { kind: 'audio', duration: s(5), hasAudio: true },
   };
   const exportAssets = (id: string): ExportAsset | undefined => {
@@ -720,6 +741,34 @@ describe.skipIf(!bins)('export renders correct frames (real FFmpeg)', () => {
       ])
         expect(colour(pixel(out, t, x!, y!)), `${t}s at ${x},${y}`).toBe('green');
   }, 60_000);
+
+  it('changes speed, reverses and freezes frames', async () => {
+    // Which source frame is on screen at time t (from the ramp's brightness).
+    const frameAt = (file: string, t: number) => {
+      const g = pixel(file, t, 176, 316)[1];
+      return Math.round((g * 219) / 255 / 2);
+    };
+    const fast = await render(({ v1 }) => [
+      { type: 'item.add', trackId: v1, assetId: 'ramp', start: 0, duration: s(2), id: 'r' },
+      { type: 'item.speed', itemId: 'r', speed: 2 },
+    ]);
+    // Exactly the frames sourceTimeAt() names.
+    expect([0.5, 0.6, 0.7, 0.8].map((t) => frameAt(fast.out, t))).toEqual([30, 36, 42, 48]);
+    expect(fast.plan.filterGraph).toContain('atempo=2');
+    const back = await render(({ v1 }) => [
+      { type: 'item.add', trackId: v1, assetId: 'ramp', start: 0, duration: s(2), id: 'r' },
+      { type: 'item.speed', itemId: 'r', reverse: true },
+    ]);
+    expect(Math.abs(frameAt(back.out, 0.5) - 44)).toBeLessThanOrEqual(1);
+    expect(Math.abs(frameAt(back.out, 1.5) - 14)).toBeLessThanOrEqual(1);
+    const held = await render(({ v1 }) => [
+      { type: 'item.add', trackId: v1, assetId: 'ramp', start: 0, duration: s(2), id: 'r' },
+      { type: 'item.freeze', itemId: 'r', time: s(0.5), sourceTime: s(1), duration: s(1) },
+    ]);
+    expect(frameAt(held.out, 0.75)).toBe(30);
+    expect(frameAt(held.out, 1.4)).toBe(30);
+    expect(Math.abs(frameAt(held.out, 1.7) - 21)).toBeLessThanOrEqual(1);
+  }, 90_000);
 
   it('blurs a picture in proportion to its height on screen', async () => {
     const { out, plan } = await render(({ v1 }) => [

@@ -4,6 +4,7 @@ import {
   computeLayout,
   sourceTimeAt,
   pictureAt,
+  speedOf,
   gainAt,
   presentSequence,
   type Sequence,
@@ -214,7 +215,11 @@ export function ProgramMonitor({ seq }: { seq: Sequence }) {
       if (!el) continue;
       const start = toSeconds(m.item.start);
       const active = playhead >= start && playhead < itemEndSec(m.item);
-      const local = toSeconds(m.item.sourceIn) + Math.max(0, playhead - start);
+      const local = toSeconds(
+        sourceTimeAt(m.item, toFlicks(Math.max(start, Math.min(playhead, itemEndSec(m.item))))),
+      );
+      // Media elements cannot play backwards or hold a frame: those clips follow by seeking.
+      const seekOnly = !!m.item.reverse || !!m.item.freeze;
       // Paused seeks aim a quarter-frame into the frame: a frame's timestamp often rounds to just
       // under its nominal time, and seeking exactly onto it shows the previous frame.
       const fps = m.asset.probe?.video?.fps;
@@ -222,7 +227,10 @@ export function ProgramMonitor({ seq }: { seq: Sequence }) {
       const at = toFlicks(playhead);
       el.volume = Math.min(1, Math.max(0, gainAt(m.item, at)));
       el.muted =
-        m.item.muted || m.track.muted || (m.asset.kind === 'video' && !m.asset.probe?.audio);
+        seekOnly ||
+        m.item.muted ||
+        m.track.muted ||
+        (m.asset.kind === 'video' && !m.asset.probe?.audio);
       if (!active) {
         shown.current.delete(m.item.id);
         if (!el.paused) el.pause();
@@ -231,8 +239,10 @@ export function ProgramMonitor({ seq }: { seq: Sequence }) {
       }
       const appeared = !shown.current.has(m.item.id);
       shown.current.add(m.item.id);
-      if (playing && rate > 0) {
-        if (el.playbackRate !== rate) el.playbackRate = rate;
+      if (playing && rate > 0 && !seekOnly) {
+        // Speed (ADR-039): the element keeps the pitch (preservesPitch is on by default).
+        const r = rate * speedOf(m.item);
+        if (el.playbackRate !== r) el.playbackRate = r;
         if (el.paused) {
           el.currentTime = local;
           void el.play().catch(() => {});

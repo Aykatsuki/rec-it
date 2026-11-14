@@ -28,6 +28,7 @@ import {
   LayoutPanelTop,
   ScanFace,
   Blend,
+  Gauge,
   Layers,
 } from 'lucide-react';
 import { DEFAULT_TRANSFORM, TRANSITION_KINDS, type Sequence, type Track } from '@rec-it/core';
@@ -59,6 +60,9 @@ import {
   clipBefore,
   findItem,
   setTransition,
+  setSpeed,
+  freezeFrame,
+  SPEED_PRESETS,
   TRANSITION_LABELS,
 } from '../edit';
 import { notify } from '../notifications';
@@ -194,6 +198,7 @@ export function clipMenu(seq: Sequence, ids: string[]): MenuEntry[] {
       ],
     },
     transitionMenu(seq, ids[0]!),
+    speedMenu(seq, ids[0]!),
     !anyCaption && {
       label: allMuted ? 'Unmute clip' : 'Mute clip',
       icon: allMuted ? <Volume2 size={I} /> : <VolumeX size={I} />,
@@ -449,6 +454,36 @@ function transitionMenu(seq: Sequence, id: string): MenuEntry {
       })),
       sep,
       { label: 'None', checked: !current, onSelect: () => void setTransition(seq, id, null) },
+    ],
+  };
+}
+
+/** Speed, reverse and freeze frame for the clicked clip (ADR-039). */
+function speedMenu(seq: Sequence, id: string): MenuEntry {
+  const found = findItem(seq, id);
+  const asset = found && useApp.getState().assets.find((a) => a.id === found.item.assetId);
+  if (!found || found.item.caption || found.item.freeze || !asset || asset.kind === 'image')
+    return null;
+  const { item } = found;
+  return {
+    label: 'Speed',
+    icon: <Gauge size={I} />,
+    submenu: [
+      ...SPEED_PRESETS.map((v) => ({
+        label: `${v}×`,
+        checked: (item.speed ?? 1) === v,
+        onSelect: () => void setSpeed(seq, id, { speed: v }),
+      })),
+      sep,
+      {
+        label: 'Reverse',
+        checked: !!item.reverse,
+        onSelect: () => void setSpeed(seq, id, { reverse: !item.reverse }),
+      },
+      asset.kind === 'video' && {
+        label: 'Freeze frame at playhead',
+        onSelect: () => void freezeFrame(id),
+      },
     ],
   };
 }

@@ -85,6 +85,8 @@ export interface ClipboardClip {
   keyframes?: TimelineItem['keyframes'];
   /** Original link id, so pasted linked clips are linked to each other. */
   linkKey?: string;
+  /** Speed, reverse and freeze (ADR-039). */
+  retime?: Pick<TimelineItem, 'speed' | 'reverse' | 'freeze'>;
 }
 
 const stored = (key: string) => {

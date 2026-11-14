@@ -117,9 +117,12 @@ export function sequenceWords(
 
 /** Words of one clip, in timeline seconds. */
 export function wordsInItem(item: TimelineItem, words: readonly EditedWord[]): SequenceWord[] {
+  // Reversed and frozen clips do not play their words (ADR-039).
+  if (item.freeze || item.reverse) return [];
+  const k = item.speed ?? 1;
   const from = sec(item.sourceIn);
-  const to = sec(item.sourceIn + item.duration);
-  const offset = sec(item.start) - from;
+  const to = sec(item.sourceIn) + sec(item.duration) * k;
+  const at = (src: number) => sec(item.start) + (src - from) / k;
   const out: SequenceWord[] = [];
   for (const w of words) {
     const mid = (w.start + w.end) / 2;
@@ -133,8 +136,8 @@ export function wordsInItem(item: TimelineItem, words: readonly EditedWord[]): S
       index: w.index,
       part: w.part,
       text: w.text,
-      start: srcStart + offset,
-      end: srcEnd + offset,
+      start: at(srcStart),
+      end: at(srcEnd),
       srcStart,
       srcEnd,
       ...(w.p !== undefined ? { p: w.p } : {}),

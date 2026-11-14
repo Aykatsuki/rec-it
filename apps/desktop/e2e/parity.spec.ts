@@ -730,6 +730,142 @@ test.describe('preview and export match', () => {
     }
   });
 
+  test('golden frames: speed, reverse and freeze frame', async () => {
+    const userData = tempUserData();
+    const shots = join(userData, 'shots');
+    mkdirSync(shots);
+    const { app, page } = await launch(userData, env());
+    try {
+      await createProject(page, 'Speed parity');
+      await mockOpenDialog(app, [fx.video, fx.still]);
+      await page.getByRole('button', { name: 'Import footage' }).click();
+      await page.getByLabel(/I have the right/).check();
+      await page.getByRole('button', { name: 'Import 2 files' }).click();
+      await expect(page.locator('[data-testid=asset-card][data-status=ready]')).toHaveCount(2, {
+        timeout: 60_000,
+      });
+      await page.locator('[data-testid=asset-card][data-name="bars.png"]').dblclick();
+      await expect(page.getByTestId('timeline-item')).toHaveCount(1);
+      await page.evaluate(async (S) => {
+        type Track = { id: string; items: { id: string }[] };
+        const call = async <T>(channel: string, input: unknown): Promise<T> => {
+          const r = (await window.recit.backend.invoke(channel as never, input as never)) as {
+            ok: boolean;
+            result?: unknown;
+            error?: { message: string };
+          };
+          if (!r.ok) throw new Error(r.error?.message);
+          return r.result as T;
+        };
+        const state = await call<{ doc: { sequences: { id: string; tracks: Track[] }[] } }>(
+          'doc.get',
+          {},
+        );
+        const seq = state.doc.sequences[0]!;
+        const v1 = seq.tracks[1];
+        const assets = await call<{ id: string; name: string }[]>('media.list', {});
+        const clip = assets.find((a) => a.name === 'moving box.mp4')!.id;
+        const still = v1!.items[0]!.id;
+        const at = (n: number) => Math.round(n * S);
+        const run = (command: unknown) => call('doc.execute', { command });
+        await run({ type: 'item.remove', sequenceId: seq.id, itemIds: [still] });
+        // A: source 0–2 s at double speed (0–1 s); B: source 0.5–2.5 s reversed (1–3 s).
+        await run({
+          type: 'item.add',
+          sequenceId: seq.id,
+          trackId: v1!.id,
+          assetId: clip,
+          id: 'item_a',
+          start: 0,
+          sourceIn: 0,
+          duration: at(2),
+        });
+        await run({ type: 'item.speed', sequenceId: seq.id, itemId: 'item_a', speed: 2 });
+        await run({
+          type: 'item.add',
+          sequenceId: seq.id,
+          trackId: v1!.id,
+          assetId: clip,
+          id: 'item_b',
+          start: at(1),
+          sourceIn: at(0.5),
+          duration: at(2),
+        });
+        await run({ type: 'item.speed', sequenceId: seq.id, itemId: 'item_b', reverse: true });
+        // Freeze the frame at source 1.0 s (A at 0.5 s) for a second: A 0–0.5, freeze 0.5–1.5,
+        // the rest of A 1.5–2, B 2–4.
+        await run({
+          type: 'item.freeze',
+          sequenceId: seq.id,
+          itemId: 'item_a',
+          time: at(0.5),
+          sourceTime: at(1),
+          duration: at(1),
+        });
+      }, 705_600_000);
+      await expect(page.getByTestId('program-monitor')).toHaveAttribute('data-engine', 'gpu');
+      // On frame boundaries (30 fps), so preview and export show the same frame.
+      const times = [0.3, 1, 1.8, 3];
+      for (const t of times) {
+        const at = t.toFixed(3);
+        await page.getByTestId('ruler').click({ position: { x: t * ZOOM, y: 10 } });
+        await expect(page.getByTestId('program-time')).toContainText(`00:0${at}`);
+        await page.waitForFunction(
+          (want) =>
+            document.querySelector<HTMLCanvasElement>('[data-testid=program-canvas]')?.dataset
+              .time === want,
+          at,
+        );
+        await page.waitForTimeout(300);
+        await page.locator('.program').screenshot({ path: join(shots, `preview-sp-${t}.png`) });
+      }
+
+      const out = join(userData, 'speed.mp4');
+      await page.getByTestId('export-button').click();
+      await page.getByRole('radio', { name: 'YouTube Short', exact: true }).click();
+      await setExportTarget(app, page, out);
+      await page
+        .getByTestId('export-dialog')
+        .getByRole('button', { name: /Export$/ })
+        .click();
+      await expect(page.getByTestId('export-status')).toHaveAttribute('data-state', 'done', {
+        timeout: 120_000,
+      });
+      for (const t of times) {
+        const preview = join(shots, `preview-sp-${t}.png`);
+        const [w, h] = execFileSync(
+          bins!.ffprobe,
+          ['-v', 'error', '-show_entries', 'stream=width,height', '-of', 'csv=p=0', preview],
+          { encoding: 'utf8' },
+        )
+          .trim()
+          .split(',')
+          .map(Number);
+        const exported = join(shots, `export-sp-${t}.png`);
+        execFileSync(bins!.ffmpeg, [
+          '-v',
+          'error',
+          '-y',
+          '-ss',
+          String(t),
+          '-i',
+          out,
+          '-frames:v',
+          '1',
+          '-vf',
+          `scale=${w}:${h}:flags=area`,
+          exported,
+        ]);
+        const score = ssim(bins!.ffmpeg, preview, exported);
+        console.info(`Speed at ${t}s: SSIM ${score}`);
+        expect(score, `SSIM at ${t}s`).toBeGreaterThanOrEqual(MIN_SSIM);
+        // Timing is what matters here: SSIM drops well below the bar a frame off.
+      }
+    } finally {
+      await app.close();
+    }
+  });
+
   test('golden frames: cropped clips (facecam + gameplay layout)', async () => {
     const userData = tempUserData();
     const shots = join(userData, 'shots');
