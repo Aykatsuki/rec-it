@@ -26,8 +26,30 @@ precision highp sampler3D;
 in vec2 v_uv; uniform sampler2D tex; out vec4 color;
 uniform float u_alpha; uniform vec4 u_eq; uniform bool u_color; uniform vec4 u_tint;
 uniform sampler3D u_lut; uniform float u_lutMix; uniform float u_lutSize;
+uniform bool u_keyOn; uniform vec4 u_key; uniform vec2 u_keyStep; uniform vec4 u_keyBounds;
+// Chroma key (ADR-041), as FFmpeg's chromakey: the mean distance of the 3×3 neighbouring chroma
+// samples (4:2:0, so 2 pixels apart) from the key's chroma, in BT.709 TV-range codes; samples
+// beyond the picture's edge count as the key colour.
+float keyAlpha(vec2 uv) {
+  vec2 cell = floor((uv - u_keyBounds.xy) / u_keyStep);
+  float diff = 0.0;
+  for (int j = -1; j <= 1; j++)
+    for (int i = -1; i <= 1; i++) {
+      vec2 p = u_keyBounds.xy + (cell + vec2(float(i), float(j)) + 0.5) * u_keyStep;
+      if (any(lessThan(p, u_keyBounds.xy)) || any(greaterThan(p, u_keyBounds.zw))) continue;
+      vec3 c = texture(tex, p).rgb;
+      float Y = dot(c, vec3(0.2126, 0.7152, 0.0722));
+      float du = floor(128.0 + 224.0 * (c.b - Y) / 1.8556 + 0.5) - u_key.x;
+      float dv = floor(128.0 + 224.0 * (c.r - Y) / 1.5748 + 0.5) - u_key.y;
+      diff += sqrt((du * du + dv * dv) / (255.0 * 255.0 * 2.0));
+    }
+  diff /= 9.0;
+  if (u_key.w > 0.0001) return floor(clamp((diff - u_key.z) / u_key.w, 0.0, 1.0) * 255.0) / 255.0;
+  return diff > u_key.z ? 1.0 : 0.0;
+}
 void main() {
   vec4 t = texture(tex, v_uv);
+  if (u_keyOn) t.a *= keyAlpha(v_uv);
   vec3 c = t.rgb;
   if (u_color) {
     float Y = dot(c, vec3(0.2126, 0.7152, 0.0722));
@@ -362,6 +384,10 @@ export class Compositor {
     const eqLoc = gl.getUniformLocation(this.program, 'u_eq');
     const colorLoc = gl.getUniformLocation(this.program, 'u_color');
     const tintLoc = gl.getUniformLocation(this.program, 'u_tint');
+    const keyOnLoc = gl.getUniformLocation(this.program, 'u_keyOn');
+    const keyLoc = gl.getUniformLocation(this.program, 'u_key');
+    const keyStepLoc = gl.getUniformLocation(this.program, 'u_keyStep');
+    const keyBoundsLoc = gl.getUniformLocation(this.program, 'u_keyBounds');
     const lutLoc = gl.getUniformLocation(this.program, 'u_lut');
     const lutMixLoc = gl.getUniformLocation(this.program, 'u_lutMix');
     const lutSizeLoc = gl.getUniformLocation(this.program, 'u_lutSize');
@@ -386,6 +412,14 @@ export class Compositor {
         [u0, v0, du, dv] = [0, 0, 1, 1];
       }
       gl.uniform1f(alphaLoc, p?.alpha ?? 1);
+      const key = p?.key;
+      gl.uniform1i(keyOnLoc, key ? 1 : 0);
+      if (key) {
+        gl.uniform4f(keyLoc, key.u, key.v, key.similarity, key.blend);
+        // One chroma sample per 2×2 pixels of the picture at its exported size.
+        gl.uniform2f(keyStepLoc, (2 / Math.max(2, l.width)) * du, (2 / Math.max(2, l.height)) * dv);
+        gl.uniform4f(keyBoundsLoc, u0, v0, u0 + du, v0 + dv);
+      }
       if (layer.lut && layer.lut.strength > 0) {
         const lutTex = this.lutTexture(layer.lut);
         gl.activeTexture(gl.TEXTURE1);

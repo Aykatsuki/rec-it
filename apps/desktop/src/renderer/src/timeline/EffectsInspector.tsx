@@ -1,5 +1,5 @@
 // Fades, opacity and colour effects for one clip (ADR-036).
-import { Eye, EyeOff, Pause, Plus, Repeat, Trash2 } from 'lucide-react';
+import { Eye, EyeOff, Pause, Pipette, Plus, Repeat, Trash2 } from 'lucide-react';
 import {
   TRANSITION_KINDS,
   transitionSpans,
@@ -105,9 +105,13 @@ export function ColourSection({
     change: {
       enabled?: boolean;
       params?: Partial<
-        Record<'brightness' | 'contrast' | 'saturation' | 'size' | 'strength', number>
+        Record<
+          'brightness' | 'contrast' | 'saturation' | 'size' | 'strength' | 'similarity' | 'blend',
+          number
+        >
       >;
       lutId?: string;
+      color?: string;
     },
   ) =>
     edit({
@@ -118,6 +122,7 @@ export function ColourSection({
       ...(change.enabled !== undefined ? { enabled: change.enabled } : {}),
       ...(change.params ? { params: change.params } : {}),
       ...(change.lutId ? { lutId: change.lutId } : {}),
+      ...(change.color ? { color: change.color } : {}),
     });
   const count = (kind: Effect['kind']) => effects.filter((e) => e.kind === kind).length;
   const add = (kind: Effect['kind']) =>
@@ -128,13 +133,14 @@ export function ColourSection({
       {effects.map((e) => {
         const same = effects.filter((x) => x.kind === e.kind);
         const name =
-          ({ color: 'Colour', blur: 'Blur', lut: 'LUT' } as const)[e.kind] +
-          (same.length > 1 ? ` ${same.indexOf(e) + 1}` : '');
+          ({ color: 'Colour', blur: 'Blur', lut: 'LUT', chromaKey: 'Green screen' } as const)[
+            e.kind
+          ] + (same.length > 1 ? ` ${same.indexOf(e) + 1}` : '');
         return (
           <div
             key={e.id}
             className="effect"
-            data-testid={`${e.kind === 'color' ? 'colour' : e.kind}-effect`}
+            data-testid={`${e.kind === 'color' ? 'colour' : e.kind === 'chromaKey' ? 'key' : e.kind}-effect`}
           >
             <div className="effect__head">
               <span className="effect__name">
@@ -166,7 +172,75 @@ export function ColourSection({
                 }
               />
             </div>
-            {e.kind === 'lut' ? (
+            {e.kind === 'chromaKey' ? (
+              <>
+                <div className="slider">
+                  <span className="slider__label">Key colour</span>
+                  <input
+                    type="color"
+                    aria-label="Key colour"
+                    value={e.color.toLowerCase()}
+                    disabled={track.locked}
+                    onChange={(ev) => void update(e, { color: ev.target.value.toUpperCase() })}
+                  />
+                  {KEY_PRESETS.map(([label, color]) => (
+                    <Button
+                      key={color}
+                      size="sm"
+                      variant="ghost"
+                      disabled={track.locked}
+                      onClick={() => void update(e, { color })}
+                    >
+                      {label}
+                    </Button>
+                  ))}
+                  {'EyeDropper' in window && (
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      icon={<Pipette size={13} />}
+                      aria-label="Pick the key colour from the screen"
+                      title="Pick the key colour from the preview"
+                      disabled={track.locked}
+                      onClick={async () => {
+                        try {
+                          const Picker = (
+                            window as unknown as {
+                              EyeDropper: new () => { open(): Promise<{ sRGBHex: string }> };
+                            }
+                          ).EyeDropper;
+                          const { sRGBHex } = await new Picker().open();
+                          if (/^#[0-9a-f]{6}$/i.test(sRGBHex))
+                            void update(e, { color: sRGBHex.toUpperCase() });
+                        } catch {
+                          // Picking was cancelled.
+                        }
+                      }}
+                    />
+                  )}
+                </div>
+                <Slider
+                  label="Similarity"
+                  value={e.similarity}
+                  min={0.01}
+                  max={0.5}
+                  step={0.005}
+                  format={pct}
+                  disabled={track.locked}
+                  onCommit={(v) => update(e, { params: { similarity: v } })}
+                />
+                <Slider
+                  label="Edge softness"
+                  value={e.blend}
+                  min={0}
+                  max={0.3}
+                  step={0.005}
+                  format={pct}
+                  disabled={track.locked}
+                  onCommit={(v) => update(e, { params: { blend: v } })}
+                />
+              </>
+            ) : e.kind === 'lut' ? (
               <>
                 <label className="slider">
                   <span className="slider__label">Look</span>
@@ -277,6 +351,16 @@ export function ColourSection({
         <Button
           size="sm"
           icon={<Plus size={13} />}
+          disabled={track.locked || effects.length >= 16 || count('chromaKey') > 0}
+          data-testid="add-key"
+          title="Make a green or blue background transparent"
+          onClick={() => add('chromaKey')}
+        >
+          Green screen
+        </Button>
+        <Button
+          size="sm"
+          icon={<Plus size={13} />}
           disabled={track.locked || effects.length >= 16 || count('lut') > 0}
           data-testid="add-lut"
           title="A colour look from a .cube file"
@@ -354,6 +438,10 @@ export function TransitionSection({
 }
 
 const IMPORT = '__import__';
+const KEY_PRESETS = [
+  ['Green', '#00B140'],
+  ['Blue', '#0047BB'],
+] as const;
 
 const speedLabel = (v: number) => `${v}×`;
 

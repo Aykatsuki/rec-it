@@ -2,6 +2,7 @@ import { z } from 'zod';
 
 const flicks = z.number().int().nonnegative();
 const id = z.string().min(1).max(100);
+const hexColor = z.string().regex(/^#[0-9a-fA-F]{6}$/);
 const rational = z.object({ num: z.number().int().positive(), den: z.number().int().positive() });
 
 const transformShape = {
@@ -81,6 +82,14 @@ export const timelineItemSchema = z.object({
           enabled: z.boolean(),
           lutId: id,
           strength: z.number().min(0).max(1),
+        }),
+        z.object({
+          id,
+          kind: z.literal('chromaKey'),
+          enabled: z.boolean(),
+          color: hexColor,
+          similarity: z.number().min(0.01).max(1),
+          blend: z.number().min(0).max(1),
         }),
       ]),
     )
@@ -338,7 +347,7 @@ const singleCommandSchema = z.discriminatedUnion('type', [
     type: z.literal('effect.add'),
     ...seqId,
     itemId: id,
-    kind: z.enum(['color', 'blur', 'lut']),
+    kind: z.enum(['color', 'blur', 'lut', 'chromaKey']),
     id: id.optional(),
     lutId: id.optional(),
   }),
@@ -355,10 +364,13 @@ const singleCommandSchema = z.discriminatedUnion('type', [
         saturation: z.number().min(0).max(3).optional(),
         size: z.number().min(0).max(0.2).optional(),
         strength: z.number().min(0).max(1).optional(),
+        similarity: z.number().min(0).max(1).optional(),
+        blend: z.number().min(0).max(1).optional(),
       })
       .strict()
       .optional(),
     lutId: id.optional(),
+    color: hexColor.optional(),
   }),
   z.object({ type: z.literal('effect.remove'), ...seqId, itemId: id, effectId: id }),
   z.object({

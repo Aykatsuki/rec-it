@@ -3,6 +3,7 @@ import { frameDuration, snapToFrame, secondsToFlicks, type Flicks, type Rational
 import {
   EFFECT_KINDS,
   DEFAULT_BLUR,
+  DEFAULT_KEY,
   MAX_BLUR,
   TRANSITION_KINDS,
   type TransitionKind,
@@ -202,8 +203,13 @@ export type Command =
       effectId: string;
       enabled?: boolean;
       params?: Partial<
-        Record<'brightness' | 'contrast' | 'saturation' | 'size' | 'strength', number>
+        Record<
+          'brightness' | 'contrast' | 'saturation' | 'size' | 'strength' | 'similarity' | 'blend',
+          number
+        >
       >;
+      /** For a chroma key: the key colour, "#RRGGBB". */
+      color?: string;
       /** For a LUT: switch to another of the project's LUTs. */
       lutId?: string;
     }
@@ -1044,6 +1050,12 @@ export function applyCommand(doc: ProjectDocument, command: Command, assets: Ass
       if (!EFFECT_KINDS.includes(command.kind)) fail('Unknown effect.');
       if ((item.effects?.length ?? 0) >= 16) fail('A clip can have up to 16 effects.');
       const id = command.id ?? createId('fx');
+      if (command.kind === 'chromaKey') {
+        if (item.effects?.some((e) => e.kind === 'chromaKey')) fail('A clip can have one key.');
+        // The key works on the original picture, so it goes first.
+        (item.effects ??= []).unshift({ id, kind: 'chromaKey', enabled: true, ...DEFAULT_KEY });
+        return;
+      }
       if (command.kind === 'lut') {
         if (!command.lutId) fail('Choose a LUT to apply.');
         if (item.effects?.some((e) => e.kind === 'lut')) fail('A clip can have one LUT.');
@@ -1074,6 +1086,15 @@ export function applyCommand(doc: ProjectDocument, command: Command, assets: Ass
         v === undefined || !Number.isFinite(v) ? d : Math.min(hi, Math.max(lo, v));
       if (fx.kind === 'blur') {
         fx.size = clamp(p.size, 0, MAX_BLUR, fx.size);
+        return;
+      }
+      if (fx.kind === 'chromaKey') {
+        fx.similarity = clamp(p.similarity, 0.01, 1, fx.similarity);
+        fx.blend = clamp(p.blend, 0, 1, fx.blend);
+        if (command.color !== undefined) {
+          if (!/^#[0-9a-fA-F]{6}$/.test(command.color)) fail('The key colour should be #RRGGBB.');
+          fx.color = command.color.toUpperCase();
+        }
         return;
       }
       if (fx.kind === 'lut') {

@@ -800,6 +800,27 @@ describe.skipIf(!bins)('export renders correct frames (real FFmpeg)', () => {
     ).rejects.toThrow(ExportPlanError);
   }, 60_000);
 
+  it('keys out a green screen to show the layer below', async () => {
+    const { out, plan } = await render(({ v1, v2 }) => [
+      { type: 'item.add', trackId: v1, assetId: 'red', start: 0, duration: s(1), id: 'r' },
+      {
+        type: 'item.add',
+        trackId: v2,
+        assetId: 'green',
+        start: 0,
+        duration: s(1),
+        id: 'g',
+        transform: { fit: 'fit' },
+      },
+      { type: 'effect.add', itemId: 'g', kind: 'chromaKey', id: 'k' },
+      { type: 'effect.update', itemId: 'g', effectId: 'k', color: '#00FF00' },
+    ]);
+    expect(plan.filterGraph).toContain('chromakey=color=0x7e2a1a:similarity=0.12:blend=0.08:yuv=1');
+    const [r, g] = pixel(out, 0.5, 176, 316);
+    expect(r).toBeGreaterThan(200);
+    expect(g).toBeLessThan(40);
+  }, 60_000);
+
   it('blurs a picture in proportion to its height on screen', async () => {
     const { out, plan } = await render(({ v1 }) => [
       {
