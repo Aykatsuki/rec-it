@@ -4,3 +4,4 @@ export * from './history';
 export * from './transcript';
 export * from './reframe';
 export * from './transitions';
+export * from './ducking';

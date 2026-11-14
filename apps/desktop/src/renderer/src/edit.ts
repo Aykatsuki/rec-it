@@ -15,6 +15,8 @@ import {
   type TimelineItem,
   type Track,
   type TransitionKind,
+  duckingKeyframes,
+  loudRegions,
   isRetimed,
   timelineTimeAt,
   type Transform,
@@ -1027,4 +1029,122 @@ export async function addLut(seq: Sequence, itemId: string): Promise<void> {
   const lut = luts.at(-1) ?? (await importLut());
   if (!lut) return;
   await edit({ type: 'effect.add', sequenceId: seq.id, itemId, kind: 'lut', lutId: lut.id });
+}
+
+/** Low cut, a little presence and gentle compression for speech (ADR-042). */
+export async function voicePreset(seq: Sequence, item: TimelineItem): Promise<void> {
+  const eq = `fx_${crypto.randomUUID()}`;
+  const comp = `fx_${crypto.randomUUID()}`;
+  await edit({
+    type: 'batch',
+    commands: [
+      { type: 'effect.add', sequenceId: seq.id, itemId: item.id, kind: 'eq', id: eq },
+      {
+        type: 'effect.update',
+        sequenceId: seq.id,
+        itemId: item.id,
+        effectId: eq,
+        lowCut: true,
+        params: { mid: 3, midFreq: 3000, high: 1.5 },
+      },
+      { type: 'effect.add', sequenceId: seq.id, itemId: item.id, kind: 'compressor', id: comp },
+      {
+        type: 'effect.update',
+        sequenceId: seq.id,
+        itemId: item.id,
+        effectId: comp,
+        params: { threshold: -20, ratio: 3, attack: 10, release: 200, makeup: 4 },
+      },
+    ],
+  });
+}
+
+const waveforms = new Map<string, Promise<Uint8Array>>();
+/** A media file's loudness, one byte (0–255) per 10 ms of source. */
+function waveform(url: string): Promise<Uint8Array> {
+  let w = waveforms.get(url);
+  if (!w) {
+    w = fetch(url)
+      .then((r) => r.arrayBuffer())
+      .then((b) => new Uint8Array(b));
+    w.catch(() => waveforms.delete(url));
+    waveforms.set(url, w);
+  }
+  return w;
+}
+
+/**
+ * Turns a clip (usually music) down while the other audible clips are loud — speech — with
+ * volume keyframes (ADR-042), replacing its volume animation. One undo step.
+ */
+export async function duckUnderVoices(itemId: string): Promise<void> {
+  const state = useApp.getState();
+  const seq = activeSequence(state);
+  const found = findItem(seq, itemId);
+  if (!seq || !found) return;
+  const { item } = found;
+  const self = new Set([item.id, ...linkedPartners(seq, [item.id])]);
+  const byId = new Map(state.assets.map((a) => [a.id, a]));
+  const others = seq.tracks
+    .filter((t) => !t.muted && t.kind !== 'caption')
+    .flatMap((t) => t.items)
+    .filter((i) => !self.has(i.id) && !i.muted && !i.freeze)
+    .map((i) => ({ item: i, asset: byId.get(i.assetId) }))
+    .filter((o) => o.asset?.urls.waveform && (o.asset.kind === 'audio' || o.asset.probe?.audio));
+  if (!others.length) {
+    notify('There is no other sound on the timeline to duck under.', 'warn');
+    return;
+  }
+  const peaks = await Promise.all(others.map((o) => waveform(o.asset!.urls.waveform!)));
+  // Loudness of everything else, every 10 ms across this clip.
+  const step = 0.01;
+  const from = toSeconds(item.start);
+  const n = Math.max(1, Math.round(toSeconds(item.duration) / step));
+  const loud = new Float32Array(n);
+  others.forEach((o, k) => {
+    const p = peaks[k]!;
+    for (let i = 0; i < n; i++) {
+      const t = toFlicks(from + i * step);
+      if (t < o.item.start || t >= o.item.start + o.item.duration) continue;
+      const src = sourceTimeAt(o.item, t) / FLICKS_PER_SECOND;
+      const v = ((p[Math.floor(src * 100)] ?? 0) / 255) * volumeAt(o.item, t);
+      if (v > loud[i]!) loud[i] = v;
+    }
+  });
+  const regions = loudRegions(loud, step).map(([a, b]) => [a + from, b + from] as [number, number]);
+  if (!regions.length) {
+    notify('No speech found under this clip.', 'info');
+    return;
+  }
+  const keys = duckingKeyframes(item, regions);
+  const t0 = item.sourceIn;
+  await edit({
+    type: 'batch',
+    commands: [
+      ...(item.keyframes?.volume?.length
+        ? [
+            {
+              type: 'keyframe.clear' as const,
+              sequenceId: seq.id,
+              itemId,
+              property: 'volume' as const,
+              t: t0,
+            },
+          ]
+        : []),
+      ...keys.map((k) => ({
+        type: 'keyframe.set' as const,
+        sequenceId: seq.id,
+        itemId,
+        property: 'volume' as const,
+        t: k.t,
+        value: k.v,
+        easing: 'linear' as const,
+      })),
+    ],
+  });
+  notify(
+    `Ducked under ${regions.length} stretch${regions.length === 1 ? '' : 'es'} of speech.`,
+    'info',
+  );
 }

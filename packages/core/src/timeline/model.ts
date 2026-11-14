@@ -118,7 +118,9 @@ export interface Transition {
 export type TintColor = 'black' | 'white';
 
 /** Effect kinds available so far; more arrive through Phase 6. */
-export const EFFECT_KINDS = ['color', 'blur', 'lut', 'chromaKey'] as const;
+export const EFFECT_KINDS = ['color', 'blur', 'lut', 'chromaKey', 'eq', 'compressor'] as const;
+/** Effects on a clip's sound rather than its picture (ADR-042). */
+export const AUDIO_EFFECT_KINDS = ['eq', 'compressor'] as const;
 export type EffectKind = (typeof EFFECT_KINDS)[number];
 
 /**
@@ -176,7 +178,61 @@ export const DEFAULT_KEY: Omit<ChromaKeyEffect, 'id' | 'kind' | 'enabled'> = {
   similarity: 0.12,
   blend: 0.08,
 };
-export type Effect = ColorEffect | BlurEffect | LutEffect | ChromaKeyEffect;
+/**
+ * Equaliser for a clip's sound (ADR-042): a low cut (80 Hz high-pass), a low shelf at 120 Hz,
+ * a bell around `midFreq` and a high shelf at 8 kHz; gains in dB (−24…24). The same
+ * Audio-EQ-Cookbook biquads in Web Audio and FFmpeg.
+ */
+export interface EqEffect {
+  id: string;
+  kind: 'eq';
+  enabled: boolean;
+  lowCut: boolean;
+  low: number;
+  mid: number;
+  midFreq: number;
+  high: number;
+}
+/**
+ * Compressor (ADR-042) with FFmpeg acompressor's meaning: threshold in dB, ratio, attack and
+ * release in ms, make-up gain in dB. The preview runs a port of the same algorithm.
+ */
+export interface CompressorEffect {
+  id: string;
+  kind: 'compressor';
+  enabled: boolean;
+  threshold: number;
+  ratio: number;
+  attack: number;
+  release: number;
+  makeup: number;
+}
+export const EQ_LOW_HZ = 120;
+export const EQ_HIGH_HZ = 8000;
+export const EQ_LOW_CUT_HZ = 80;
+export const DEFAULT_EQ: Omit<EqEffect, 'id' | 'kind' | 'enabled'> = {
+  lowCut: false,
+  low: 0,
+  mid: 0,
+  midFreq: 2500,
+  high: 0,
+};
+export const DEFAULT_COMPRESSOR: Omit<CompressorEffect, 'id' | 'kind' | 'enabled'> = {
+  threshold: -18,
+  ratio: 3,
+  attack: 20,
+  release: 250,
+  makeup: 0,
+};
+export type AudioEffect = EqEffect | CompressorEffect;
+export type Effect = ColorEffect | BlurEffect | LutEffect | ChromaKeyEffect | AudioEffect;
+
+/** The clip's switched-on sound effects, in order. */
+export function audioEffectsOf(item: TimelineItem): AudioEffect[] {
+  return (item.effects ?? []).filter(
+    (e): e is AudioEffect => e.enabled && (e.kind === 'eq' || e.kind === 'compressor'),
+  );
+}
 
 /** How a clip's picture looks at a moment: alpha (opacity × fades) and combined colour. */
 export interface PictureState {

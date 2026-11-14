@@ -5,7 +5,7 @@ ARCHITECTURE.md, ROADMAP.md and DECISIONS.md before making design changes.
 
 ## Current phase
 
-Phases 0 (foundations) and 1 (media pipeline) are complete. Phase 3 (export, ADR-027) is built; manual checks on the reference PC remain. Phase 2 has five slices done (timeline, mouse transforms, context menus, linked clips, keyframes, GPU preview, Web Audio; ADR-025, 026, 028, 029, 030); what remains is measuring the exit criteria on the reference PC. Phase 4 slices A (transcription, text-based editing; ADR-031), B (word corrections, captions; ADR-032) and C (captions as clips on caption tracks; ADR-033) are done. Phase 5 slices A (crop, facecam + gameplay layout, safe zones; ADR-034) and B (automatic reframing; ADR-035) are done. Phase 6 slices A (fades, opacity, colour effects; ADR-036), B (transitions; ADR-037) C (blur, blurred background; ADR-038) D (speed, reverse, freeze frames; ADR-039) E (LUTs; ADR-040) and F (green screen; ADR-041) are done. Priority: a fully working editor
+Phases 0 (foundations) and 1 (media pipeline) are complete. Phase 3 (export, ADR-027) is built; manual checks on the reference PC remain. Phase 2 has five slices done (timeline, mouse transforms, context menus, linked clips, keyframes, GPU preview, Web Audio; ADR-025, 026, 028, 029, 030); what remains is measuring the exit criteria on the reference PC. Phase 4 slices A (transcription, text-based editing; ADR-031), B (word corrections, captions; ADR-032) and C (captions as clips on caption tracks; ADR-033) are done. Phase 5 slices A (crop, facecam + gameplay layout, safe zones; ADR-034) and B (automatic reframing; ADR-035) are done. Phase 6 slices A (fades, opacity, colour effects; ADR-036), B (transitions; ADR-037) C (blur, blurred background; ADR-038) D (speed, reverse, freeze frames; ADR-039) E (LUTs; ADR-040) F (green screen; ADR-041) and G (sound effects; ADR-042) are done. Priority: a fully working editor
 (Phases 0–6, Phase 6 = effects) before any Claude features (ADR-019). Reference machine: Windows 11 + RTX 3070 8 GB.
 
 ## Commands
@@ -56,8 +56,13 @@ Phases 0 (foundations) and 1 (media pipeline) are complete. Phase 3 (export, ADR
   (import, pre-blended .cube files for export), renderer `engine/lut-cache.ts` + compositor 3D texture.
 - Chroma key (ADR-041): effect `chromaKey`, core `keyChroma`/`keyOf` (BT.709 key chroma), export `chromakey…:yuv=1`,
   compositor `keyAlpha` (same 3×3 chroma maths).
+- Sound effects (ADR-042): effects `eq`/`compressor` after volume+fades; preview per-clip chains in `audio-engine.ts`
+  (biquads + `engine/compressor-worklet.ts`, a port of acompressor in `engine/compressor.ts`); ducking in core `ducking.ts`.
 - Renderer `timeline/` — Timeline, SequenceSettings, ClipInspector, ProgramMonitor, TransformOverlay, ExportDialog, CropDialog,
   `menus.tsx` (right-click menus); edits go through `edit.ts`. `ui/ContextMenu.tsx` is the generic menu.
+- ProDown link (ADR-040): main `prodown-link.ts` (named pipe + ProDown's outbox/library files), shell channels
+  `prodown.takeIncoming` / `prodown.library`, renderer `prodown.tsx` (incoming imports, Ctrl+Shift+I "Import from ProDown").
+  ProDown itself is a separate local app (Documents/Projects/ProDown); Rec-It never downloads (ADR-012).
 - `packages/db` — `node:sqlite` (ADR-020), migrations, repositories.
 - `packages/ffmpeg` — binary resolution, capability detection, ffprobe parsing, abortable runner, proxy /
   sprite / poster / waveform recipes. `@rec-it/ffmpeg/testing` generates synthetic fixtures for tests.

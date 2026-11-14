@@ -4,6 +4,7 @@ import { IPC } from '../shared/bridge';
 import { BackendHost } from './backend-host';
 import { handleMediaProtocol, registerMediaScheme } from './media-protocol';
 import { bundledFfmpegDir, bundledFontsDir, sidecarCommand } from './paths';
+import { ProDownLink } from './prodown-link';
 import { SecretStore } from './secrets';
 import { applyGlobalSecurity, isAppUrl, setAllowedOrigin } from './security';
 import { registerShellIpc } from './shell-ipc';
@@ -27,6 +28,7 @@ if (!app.requestSingleInstanceLock()) {
 }
 
 let backend: BackendHost | null = null;
+let prodown: ProDownLink | null = null;
 
 function createWindow(): BrowserWindow {
   nativeTheme.themeSource = 'dark';
@@ -102,9 +104,19 @@ void app.whenReady().then(() => {
   host.start();
   handleMediaProtocol(() => host.cacheRoot);
 
-  registerShellIpc(secrets, async () => {
-    await host.pushSecrets();
-  });
+  // Videos sent from ProDown (ADR-040). End-to-end tests leave it off unless they ask for it,
+  // so parallel test instances do not compete for the pipe.
+  const link = new ProDownLink(() => BrowserWindow.getAllWindows()[0]);
+  prodown = link;
+  if (process.env.RECIT_E2E !== '1' || process.env.RECIT_PRODOWN_LINK === '1') link.start();
+
+  registerShellIpc(
+    secrets,
+    async () => {
+      await host.pushSecrets();
+    },
+    link,
+  );
   ipcMain.on(IPC.requestBackendPort, (event) => {
     if (event.senderFrame && isAppUrl(event.senderFrame.url)) host.connect(event.sender);
   });
@@ -130,6 +142,7 @@ app.on('window-all-closed', () => {
 
 let quitting = false;
 app.on('before-quit', (event) => {
+  prodown?.stop();
   if (quitting || !backend) return;
   // Let the backend stop FFmpeg jobs and close the project cleanly before exiting.
   event.preventDefault();

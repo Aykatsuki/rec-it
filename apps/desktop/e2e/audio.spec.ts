@@ -1,6 +1,6 @@
 // Audio parity (ADR-030): the preview's Web Audio mix, rendered offline, must match the
 // exported file's sound in timing (within 20 ms) and level (within 1 dB), including volume
-// keyframes, fades, speed, a clip's own sound and a separate audio clip.
+// keyframes, fades, speed, EQ, a compressor, a clip's own sound and a separate audio clip.
 import { expect, test } from '@playwright/test';
 import { execFileSync } from 'node:child_process';
 import { rmSync } from 'node:fs';
@@ -134,6 +134,31 @@ test.describe('preview audio', () => {
               },
               // Faster, keeping its pitch (ADR-039): WSOLA in the preview, atempo in the export.
               { type: 'item.speed', sequenceId: seq.id, itemId: 'item_tone', speed: 1.5 },
+              // Sound effects (ADR-042): an EQ cut on the video's 440 Hz tone and a compressor on
+              // the second clip (biquads and the acompressor port in the preview).
+              { type: 'effect.add', sequenceId: seq.id, itemId: video, kind: 'eq', id: 'fx_eq' },
+              {
+                type: 'effect.update',
+                sequenceId: seq.id,
+                itemId: video,
+                effectId: 'fx_eq',
+                lowCut: true,
+                params: { mid: -6, midFreq: 440, low: 3, high: -3 },
+              },
+              {
+                type: 'effect.add',
+                sequenceId: seq.id,
+                itemId: 'item_tone',
+                kind: 'compressor',
+                id: 'fx_c',
+              },
+              {
+                type: 'effect.update',
+                sequenceId: seq.id,
+                itemId: 'item_tone',
+                effectId: 'fx_c',
+                params: { threshold: -24, ratio: 4, attack: 5, release: 100, makeup: 6 },
+              },
             ],
           },
         });

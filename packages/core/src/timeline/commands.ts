@@ -3,6 +3,9 @@ import { frameDuration, snapToFrame, secondsToFlicks, type Flicks, type Rational
 import {
   EFFECT_KINDS,
   DEFAULT_BLUR,
+  AUDIO_EFFECT_KINDS,
+  DEFAULT_COMPRESSOR,
+  DEFAULT_EQ,
   DEFAULT_KEY,
   MAX_BLUR,
   TRANSITION_KINDS,
@@ -204,12 +207,29 @@ export type Command =
       enabled?: boolean;
       params?: Partial<
         Record<
-          'brightness' | 'contrast' | 'saturation' | 'size' | 'strength' | 'similarity' | 'blend',
+          | 'brightness'
+          | 'contrast'
+          | 'saturation'
+          | 'size'
+          | 'strength'
+          | 'similarity'
+          | 'blend'
+          | 'low'
+          | 'mid'
+          | 'midFreq'
+          | 'high'
+          | 'threshold'
+          | 'ratio'
+          | 'attack'
+          | 'release'
+          | 'makeup',
           number
         >
       >;
       /** For a chroma key: the key colour, "#RRGGBB". */
       color?: string;
+      /** For an EQ: the 80 Hz low cut. */
+      lowCut?: boolean;
       /** For a LUT: switch to another of the project's LUTs. */
       lutId?: string;
     }
@@ -1046,10 +1066,26 @@ export function applyCommand(doc: ProjectDocument, command: Command, assets: Ass
       const seq = sequenceOf(doc, command.sequenceId);
       const { track, item } = findItem(seq, command.itemId);
       unlocked(track);
-      if (item.caption || track.kind !== 'video') fail('Effects go on video clips and images.');
       if (!EFFECT_KINDS.includes(command.kind)) fail('Unknown effect.');
+      const sound = (AUDIO_EFFECT_KINDS as readonly string[]).includes(command.kind);
+      if (item.caption) fail('Captions have no effects yet.');
+      if (sound && !assets(item.assetId)?.hasAudio) fail('This clip has no sound.');
+      if (!sound && track.kind !== 'video') fail('Picture effects go on video clips and images.');
       if ((item.effects?.length ?? 0) >= 16) fail('A clip can have up to 16 effects.');
       const id = command.id ?? createId('fx');
+      if (command.kind === 'eq') {
+        (item.effects ??= []).push({ id, kind: 'eq', enabled: true, ...DEFAULT_EQ });
+        return;
+      }
+      if (command.kind === 'compressor') {
+        (item.effects ??= []).push({
+          id,
+          kind: 'compressor',
+          enabled: true,
+          ...DEFAULT_COMPRESSOR,
+        });
+        return;
+      }
       if (command.kind === 'chromaKey') {
         if (item.effects?.some((e) => e.kind === 'chromaKey')) fail('A clip can have one key.');
         // The key works on the original picture, so it goes first.
@@ -1086,6 +1122,22 @@ export function applyCommand(doc: ProjectDocument, command: Command, assets: Ass
         v === undefined || !Number.isFinite(v) ? d : Math.min(hi, Math.max(lo, v));
       if (fx.kind === 'blur') {
         fx.size = clamp(p.size, 0, MAX_BLUR, fx.size);
+        return;
+      }
+      if (fx.kind === 'eq') {
+        fx.low = clamp(p.low, -24, 24, fx.low);
+        fx.mid = clamp(p.mid, -24, 24, fx.mid);
+        fx.midFreq = Math.round(clamp(p.midFreq, 200, 10000, fx.midFreq));
+        fx.high = clamp(p.high, -24, 24, fx.high);
+        if (command.lowCut !== undefined) fx.lowCut = command.lowCut;
+        return;
+      }
+      if (fx.kind === 'compressor') {
+        fx.threshold = clamp(p.threshold, -60, 0, fx.threshold);
+        fx.ratio = clamp(p.ratio, 1, 20, fx.ratio);
+        fx.attack = clamp(p.attack, 0.1, 2000, fx.attack);
+        fx.release = clamp(p.release, 1, 9000, fx.release);
+        fx.makeup = clamp(p.makeup, 0, 24, fx.makeup);
         return;
       }
       if (fx.kind === 'chromaKey') {

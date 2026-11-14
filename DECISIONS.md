@@ -42,9 +42,7 @@ Each record states the decision, why it was made and what else was considered. R
 | 036 | Fades, opacity and colour effects | Accepted |
 | 037 | Transitions: cross dissolve and dips | Accepted |
 | 038 | Blur and the blurred-background fit | Accepted |
-| 039 | Speed, reverse and freeze frames | Accepted |
-| 040 | 3D LUTs (.cube) | Accepted |
-| 041 | Green screen (chroma key) | Accepted |
+| 040 | Link with ProDown, a separate personal downloader | Accepted |
 
 ---
 
@@ -554,69 +552,19 @@ Each record states the decision, why it was made and what else was considered. R
 
 ---
 
-## ADR-039 · Speed, reverse and freeze frames
+## ADR-040 · Link with ProDown, a separate personal downloader
 
-**Status.** Accepted (14 Nov 2026, Phase 6 fourth slice). Speed ramps (keyframed speed) come later.
+**Status.** Accepted (14 Nov 2026). Leaves ADR-012 in force for Rec-It itself.
 
-**Decisions.**
-- **Model.** A clip gains `speed` (0.25–4, absent = 1), `reverse` and `freeze`. All mapping between timeline and source goes through a few core helpers, so every feature stays consistent:
-  - `sourceTimeAt` and its inverse `timelineTimeAt`.
-  - `sourceSpan`, the media a clip plays (length × speed).
-  - `sliceItem`, which cuts any part out of a clip; splits, overwrites, word cuts, trims and transitions all use it, and it knows that the start of a reversed clip is the end of its media.
-  - `itemHandles`, the media available beyond a clip's ends; trims and dissolves use it.
-  
-  Keyframes stay in source time, so animation follows the picture at any speed. Reversed and frozen clips have no words in the transcript, and words cannot be cut from them. Speed changes on captions and stills are refused or ignored.
-- **Commands.**
-  - `item.speed` changes speed and/or direction for a clip and its linked partners. A clip keeps the same media, so its length changes, and later clips on the same tracks move by the difference (closing up or making room).
-  - `item.freeze` splits the clip at the playhead, moves everything after it later on the clip's and partners' tracks, and inserts a muted clip holding one frame. The renderer passes the start time of the frame on screen (from the media's frame rate), so preview and export pick the same frame.
-  - `item.add` accepts the three fields, so copy/paste, detach audio, the facecam layout and the blurred background keep them.
-- **Export.**
-  - Video: before the `fps` filter, `reverse` (it buffers the clip's frames, fine for Shorts-length clips) and `setpts=(PTS-STARTPTS)/speed`. `fps` then picks exactly the frames `sourceTimeAt` names (tested frame by frame).
-  - Freeze frames: one frame is decoded from just before its time (`trim=end_frame=1`), held with `tpad`, then cut to length.
-  - Sound: `areverse`, and `atempo` in 0.5–2× steps, so the pitch is kept. Volume keyframes are applied before them, so they stay in source time.
-- **Preview.**
-  - GPU engine: needs nothing new, because it shows `sourceTimeAt`'s frame. A reversed clip shows the frame 1 ms before the mapped time, which is the export's frame order. Reverse playback has to restart decoding from a keyframe for most frames, so it can stutter on slow machines.
-  - Web Audio: for retimed clips, each one-second block decodes its source range, reverses it if needed, and time-stretches it with WSOLA (30 ms windows, ±12 ms search), so the sound keeps its pitch like atempo.
-  - Compatible engine: `playbackRate` with the browser's pitch preservation; reversed and frozen clips are shown by seeking, silently.
-- **Editing.**
-  - The Inspector has a Speed section: presets from 0.25× to 4×, a slider, Reverse, and Freeze frame (2 s at the playhead).
-  - The clip menu has a Speed submenu with the same choices.
-  - Clips show a badge on the timeline (`2×`, `◀`, `Freeze`). Filmstrips and waveforms follow the speed and direction.
-- **Tests.**
-  - Unit tests: length and ripple, source mapping, reversed splits, trims limited by the media at speed, freeze insertion.
-  - A real-FFmpeg test reading frame numbers from a brightness ramp: double speed shows frames 30/36/42/48 at 0.5–0.8 s; reverse and freeze frames show the expected frames.
-  - The audio parity test now includes a clip at 1.5× (r = 0.998, 0.1 dB).
-  - A golden-frame case with speed, reverse and a freeze frame (SSIM 0.996–0.997).
-  - An end-to-end test of the Inspector, the menu, badges, the freeze frame and undo.
-
----
-
-## ADR-040 · 3D LUTs (.cube)
-
-**Status.** Accepted (14 Nov 2026, Phase 6 fifth slice).
+**Context.** The user wanted to bring YouTube videos into Rec-It without downloading them by hand. ADR-012 keeps a downloader out of Rec-It, which is open source and meant for others. The user built ProDown instead: a separate desktop app, kept locally and not published, that downloads with yt-dlp, has its own preview player and can be driven by Claude.
 
 **Decisions.**
-- **Stored in the project.** Importing a `.cube` file parses and checks it in `packages/core` (`parseCube`): 3D tables of 2–65 points, 0–1 domain; 1D LUTs and other domains are refused with a clear message. The table is stored in the project file (`luts` table, migration 5, float32 blob). Projects keep working when the original file moves, and the document only holds a small LUT id. IPC: `dialog.importLut` (main) picks the file; `luts.import`, `luts.list`, `luts.get` (base64 table) and the `luts.changed` event go through the backend.
-- **Effect.** A `lut` effect refers to one of the project's LUTs and has a strength (0–1). A clip takes one LUT. It applies after the colour effects and before transition dips.
-- **One interpolation, one colour path.** The preview uploads the table as a half-float 3D texture and looks it up with hardware trilinear filtering at the texel centres. The export uses `lut3d` with `interp=trilinear` on full-range RGB, converted explicitly from and back to the BT.709 TV-range picture: the same colour the preview's texture holds. Strength is a blend with "no change", and blending the table with the identity table is exactly the same under trilinear interpolation. So the export writes one pre-blended `.cube` per effect into its working folder and refers to it by a plain relative name (no path escaping, as with captions). The compatible preview does not show LUTs.
-- **Editing.** The Effects section gained a **LUT** button: it uses the project's newest LUT, or asks for a file when there is none. The LUT card has a list of the project's LUTs, with "Import a .cube file…" at the end, and a strength slider. A LUT that has gone from the project shows as "Missing LUT", and exporting then says so instead of failing inside FFmpeg.
-- **Tests.**
-  - Unit tests: parsing (order, titles, comments, refusals), round trip, and blending equal to mixing results.
-  - A real-FFmpeg test: a red↔blue swap at half strength gives purple.
-  - A golden-frame case that imports a "warm look" through the UI at 70% strength: SSIM 0.996, mean colour within 4 levels.
+- **Rec-It still contains no downloader.** It only accepts finished files from ProDown, the same way it accepts files dragged in from Explorer.
+- **Sending.** ProDown sends `{ type: 'import', files: [{ path, title, url, channel, qualityLabel }] }` over a local named pipe `\\.\pipe\recit-prodown-<user>` (a Unix socket in the app-data folder on macOS); `{ type: 'ping' }` lets ProDown show whether Rec-It is open. No TCP port. Main (`main/prodown-link.ts`) keeps only absolute paths to existing files with importable extensions (at most 50 per message), queues them, focuses the window and tells the renderer (`recit:prodown:incoming`, exposed as `window.recit.prodown.onIncoming`).
+- **Rec-It closed.** ProDown writes the files to `%APPDATA%\ProDown\recit-outbox.json`. Rec-It renames that file aside before reading it (so ProDown never writes into a file being read), adds its entries to the queue and deletes it.
+- **Nothing imports without a click.** The renderer (`renderer/src/prodown.tsx`) fetches the queue with the new shell channel `prodown.takeIncoming` (`peek` leaves it queued while no project is open) and imports through the normal rights dialog, pre-filled with the YouTube link, the channel as author and a "Downloaded with ProDown" note, with the source left as "unknown" for the user to choose. Cancelling drops the files from the queue; they stay in ProDown.
+- **Import from ProDown** (Ctrl+Shift+I): a window listing ProDown's `library.json` (read-only, via `prodown.library`), with search and multi-select, importing through the same path.
+- **Tests.** End-to-end tests start the link only with `RECIT_PRODOWN_LINK=1`, so parallel instances do not compete for the pipe. The renderer bridge gains one key, `prodown` (security test updated).
 
----
-
-## ADR-041 · Green screen (chroma key)
-
-**Status.** Accepted (14 Nov 2026, Phase 6 sixth slice). Spill suppression (removing the green tint at edges) and keyframed keys come later.
-
-**Decisions.**
-- **Effect.** A `chromaKey` effect has a key colour (`#RRGGBB`, default studio green #00B140), a similarity (how close a colour must be, 1–100%) and a blend (edge softness), with the same meaning as FFmpeg's `chromakey`. It is always first in the clip's stack, because it works on the original picture. One per clip.
-- **Exactly FFmpeg's maths in both places.** Alpha is computed as `chromakey` does it: the mean distance of the 3×3 neighbouring chroma samples from the key's chroma (4:2:0, so samples are 2 pixels apart; samples beyond the picture count as the key colour), then a step (no blend) or a ramp over the blend width, quantised to 8 bits. `chromakey` converts an RGB key colour with BT.601, which does not match the picture's BT.709 chroma. So the key is passed as YUV (`yuv=1`), with U and V computed in `packages/core` (`keyChroma`) by the same BT.709 TV-range formula the preview applies to each pixel. The export keys the picture right after scaling (`format=yuva420p,chromakey=…`); the GPU preview computes the same alpha in the layer shader. Opacity, fades and transitions multiply the keyed alpha as usual. On a clip that is also blurred, the preview keys the blurred picture; the export keys first. The compatible preview does not key.
-- **Editing.** **Green screen** in the Effects section adds a key. The card has a colour well, Green and Blue presets, a picker that takes a colour from anywhere on screen (the browser's EyeDropper, so it works on the preview), and Similarity and Edge softness sliders.
-- **Tests.**
-  - Unit tests: order, one per clip, colour validation, key chroma for pure green and blue.
-  - A real-FFmpeg test: a green still over a red clip shows red.
-  - A golden-frame case: a green-screen clip keyed from the Inspector over colour bars (SSIM 0.994, mean colour within 3 levels).
+**Consequences.** Another program running as the same user could send file paths to the pipe; the worst it can do is make Rec-It offer to import an existing media file, which the user must confirm.
 

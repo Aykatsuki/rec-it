@@ -18,6 +18,11 @@ let client: IpcClient<BackendContract> | null = null;
 let waiters: ((c: IpcClient<BackendContract>) => void)[] = [];
 const eventListeners = new Map<string, Set<(payload: unknown) => void>>();
 const connectionListeners = new Set<(connected: boolean) => void>();
+const prodownListeners = new Set<() => void>();
+
+ipcRenderer.on(IPC.prodownIncoming, () => {
+  for (const l of prodownListeners) l();
+});
 
 function setConnected(connected: boolean) {
   for (const l of connectionListeners) l(connected);
@@ -88,6 +93,12 @@ const bridge: RecitBridge = {
   },
   files: {
     pathForFile: (file) => webUtils.getPathForFile(file),
+  },
+  prodown: {
+    onIncoming(listener) {
+      prodownListeners.add(listener);
+      return () => prodownListeners.delete(listener);
+    },
   },
   shell: {
     async invoke(channel, input) {
