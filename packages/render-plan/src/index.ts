@@ -2,6 +2,7 @@
 // and the integration tests render real files from it.
 import {
   blurOf,
+  sourceSpan,
   combinedColor,
   presentSequence,
   secondsToFlicks,
@@ -236,7 +237,11 @@ function audibleItems(
     .filter((t) => !t.muted)
     .flatMap((t) => t.items)
     .filter(
-      (i) => !i.muted && (i.volume > 0 || hasKeyframes(i, 'volume')) && assets(i.assetId)?.hasAudio,
+      (i) =>
+        !i.muted &&
+        !i.freeze &&
+        (i.volume > 0 || hasKeyframes(i, 'volume')) &&
+        assets(i.assetId)?.hasAudio,
     );
 }
 
@@ -303,10 +308,9 @@ function animatedLayer(
   const Dh = Math.min(MAX_CANVAS, even((rotates ? Math.hypot(wMax, hMax) : hMax) + 6));
 
   // Source time for perspective (frame counter) and for overlay (timeline time t).
-  const srcIn = flicksToSeconds(item.sourceIn);
   const start = flicksToSeconds(item.start);
-  const Tp = `(${num(srcIn)}+in/${num(fpsValue)})`;
-  const To = `(t-${num(start)}+${num(srcIn)})`;
+  const Tp = sourceExpr(item, `in/${num(fpsValue)}`);
+  const To = sourceExpr(item, `(t-${num(start)})`);
   const k = `(${propExpr(item, 'scale', Tp)}/${num(sUse)})`;
   const r = `(${propExpr(item, 'rotation', Tp)}*PI/180)`;
   const corner = (px: number, py: number) => [
@@ -332,6 +336,58 @@ function animatedLayer(
 }
 
 /** Static volume, or a per-frame expression of source time when volume is keyframed. */
+/**
+ * Source time (seconds) as an expression of `into`, the seconds since the clip's start on the
+ * timeline; mirrors sourceTimeAt() in @rec-it/core (speed, reverse, freeze; ADR-039).
+ */
+function sourceExpr(item: TimelineItem, into: string): string {
+  const srcIn = num(flicksToSeconds(item.sourceIn));
+  if (item.freeze) return `(${srcIn})`;
+  const k = num(item.speed ?? 1);
+  if (item.reverse) return `(${srcIn}+(${num(flicksToSeconds(item.duration))}-${into})*${k}-0.001)`;
+  return `(${srcIn}+${into}*${k})`;
+}
+
+/**
+ * Filters at the very start of a video clip's chain that retime it (ADR-039): a freeze frame
+ * repeats its one frame, reverse buffers the clip's frames and plays them backwards, and speed
+ * rescales the timestamps (the fps filter after it then picks frames at the sequence rate).
+ */
+function retimeFilters(item: TimelineItem): string[] {
+  if (item.freeze)
+    return [
+      'trim=end_frame=1',
+      'setpts=PTS-STARTPTS',
+      `tpad=stop_mode=clone:stop_duration=${num(flicksToSeconds(item.duration))}`,
+    ];
+  const out: string[] = [];
+  if (item.reverse) out.push('reverse');
+  const k = item.speed ?? 1;
+  if (k !== 1) out.push(`setpts=(PTS-STARTPTS)/${num(k)}`);
+  return out;
+}
+
+/** After the fps filter: a freeze frame is cut to its length. */
+function retimeTrim(item: TimelineItem): string[] {
+  return item.freeze ? [`trim=duration=${num(flicksToSeconds(item.duration))}`] : [];
+}
+
+/** Sound at another speed keeps its pitch (atempo works in steps of 0.5–2×). */
+function tempoFilters(item: TimelineItem): string {
+  let out = item.reverse ? 'areverse,' : '';
+  let k = item.speed ?? 1;
+  while (k > 2 + 1e-9) {
+    out += 'atempo=2,';
+    k /= 2;
+  }
+  while (k < 0.5 - 1e-9) {
+    out += 'atempo=0.5,';
+    k /= 0.5;
+  }
+  if (Math.abs(k - 1) > 1e-9) out += `atempo=${num(k)},`;
+  return out;
+}
+
 function volumeFilter(item: TimelineItem): string {
   const keys = item.keyframes?.volume;
   if (!keys?.length) return `volume=${item.volume.toFixed(3)}`;
@@ -482,7 +538,25 @@ function buildGraph(
     const dur = sec(flicksToSeconds(item.duration));
     if (asset.kind === 'image')
       inputArgs.push('-loop', '1', '-framerate', fps, '-t', dur, '-i', asset.path);
-    else inputArgs.push('-ss', sec(flicksToSeconds(item.sourceIn)), '-t', dur, '-i', asset.path);
+    else if (item.freeze)
+      // Just before the frame's time, so the first frame decoded is that frame.
+      inputArgs.push(
+        '-ss',
+        sec(Math.max(0, flicksToSeconds(item.sourceIn) - 0.001)),
+        '-t',
+        '0.5',
+        '-i',
+        asset.path,
+      );
+    else
+      inputArgs.push(
+        '-ss',
+        sec(flicksToSeconds(item.sourceIn)),
+        '-t',
+        sec(flicksToSeconds(sourceSpan(item))),
+        '-i',
+        asset.path,
+      );
     return inputIndex++;
   };
 
@@ -511,8 +585,10 @@ function buildGraph(
           seq.fps.num / seq.fps.den,
         );
         const chain = [
+          ...retimeFilters(item),
           ...(asset.hdr && options.tonemap ? [TONEMAP] : []),
           `fps=${fps}`,
+          ...retimeTrim(item),
           ...cropFilter(asset, kept),
           ...colorFilter(item),
           ...a.filters,
@@ -535,8 +611,10 @@ function buildGraph(
         item.transform,
       );
       const chain = [
+        ...retimeFilters(item),
         ...(asset.hdr && options.tonemap ? [TONEMAP] : []),
         `fps=${fps}`,
+        ...retimeTrim(item),
         ...cropFilter(asset, source),
         // Converting to BT.709 here keeps colours the same as the preview for every source.
         `scale=${width}:${height}:flags=bicubic:out_color_matrix=bt709:out_range=tv`,
@@ -574,7 +652,7 @@ function buildGraph(
     const delayMs = Math.round(flicksToSeconds(item.start) * 1000);
     graph.push(
       `[${k}:a]aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo,` +
-        `${volumeFilter(item)},${audioFades(item)}adelay=${delayMs}:all=1[a${n}]`,
+        `${volumeFilter(item)},${tempoFilters(item)}${audioFades(item)}adelay=${delayMs}:all=1[a${n}]`,
     );
     audioLabels.push(`[a${n}]`);
   });

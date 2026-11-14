@@ -40,7 +40,13 @@ const DEFAULTS: Required<ReframeOptions> = {
  * jumps far away. The main face is the largest one at first, then the one nearest to where it was.
  */
 export function autoReframe(
-  item: { sourceIn: number; duration: number; transform: Transform },
+  item: {
+    sourceIn: number;
+    duration: number;
+    transform: Transform;
+    speed?: number;
+    freeze?: boolean;
+  },
   src: { width: number; height: number },
   frame: { width: number; height: number },
   track: FaceTrack,
@@ -59,7 +65,8 @@ export function autoReframe(
 
   // Samples inside the clip (plus one either side so the path covers its edges).
   const from = item.sourceIn / secondsToFlicks(1);
-  const to = (item.sourceIn + item.duration) / secondsToFlicks(1);
+  const span = item.freeze ? 0 : item.duration * (item.speed ?? 1);
+  const to = (item.sourceIn + span) / secondsToFlicks(1);
   const first = Math.max(0, Math.floor(from * track.fps) - 1);
   const last = Math.min(track.frames.length - 1, Math.ceil(to * track.fps) + 1);
   if (last < first) return { ok: false, reason: 'no-faces' };

@@ -1846,6 +1846,9 @@ button.statusbar__item:hover {
   position: fixed;
   min-width: 200px;
   max-width: 320px;
+  /* Long menus (a clip under the preview) scroll instead of running off small windows. */
+  max-height: calc(100vh - 8px);
+  overflow-y: auto;
   padding: 4px;
   border: 1px solid var(--border);
   border-radius: var(--radius-md, 8px);
@@ -2607,4 +2610,39 @@ button.statusbar__item:hover {
 }
 .tl__transition[data-kind='dipWhite'] {
   background: linear-gradient(90deg, rgb(0 0 0 / 40%), #fff, rgb(0 0 0 / 40%));
+}
+/* Speed presets (ADR-039) */
+.speed__presets {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 4px;
+  margin-bottom: var(--space-2);
+}
+.speed__presets button {
+  padding: 4px 0;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+.speed__presets button[aria-checked='true'] {
+  background: var(--accent, #ef4444);
+  border-color: transparent;
+  color: #fff;
+}
+.speed__presets button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.tl__badge {
+  padding: 0 4px;
+  margin: 0 2px;
+  border-radius: 3px;
+  background: rgb(0 0 0 / 55%);
+  color: #fff;
+  font-size: 10px;
+  font-weight: 600;
 }

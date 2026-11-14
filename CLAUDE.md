@@ -5,7 +5,7 @@ ARCHITECTURE.md, ROADMAP.md and DECISIONS.md before making design changes.
 
 ## Current phase
 
-Phases 0 (foundations) and 1 (media pipeline) are complete. Phase 3 (export, ADR-027) is built; manual checks on the reference PC remain. Phase 2 has five slices done (timeline, mouse transforms, context menus, linked clips, keyframes, GPU preview, Web Audio; ADR-025, 026, 028, 029, 030); what remains is measuring the exit criteria on the reference PC. Phase 4 slices A (transcription, text-based editing; ADR-031), B (word corrections, captions; ADR-032) and C (captions as clips on caption tracks; ADR-033) are done. Phase 5 slices A (crop, facecam + gameplay layout, safe zones; ADR-034) and B (automatic reframing; ADR-035) are done. Phase 6 slices A (fades, opacity, colour effects; ADR-036), B (transitions; ADR-037) and C (blur, blurred background; ADR-038) are done. Priority: a fully working editor
+Phases 0 (foundations) and 1 (media pipeline) are complete. Phase 3 (export, ADR-027) is built; manual checks on the reference PC remain. Phase 2 has five slices done (timeline, mouse transforms, context menus, linked clips, keyframes, GPU preview, Web Audio; ADR-025, 026, 028, 029, 030); what remains is measuring the exit criteria on the reference PC. Phase 4 slices A (transcription, text-based editing; ADR-031), B (word corrections, captions; ADR-032) and C (captions as clips on caption tracks; ADR-033) are done. Phase 5 slices A (crop, facecam + gameplay layout, safe zones; ADR-034) and B (automatic reframing; ADR-035) are done. Phase 6 slices A (fades, opacity, colour effects; ADR-036), B (transitions; ADR-037) C (blur, blurred background; ADR-038) and D (speed, reverse, freeze frames; ADR-039) are done. Priority: a fully working editor
 (Phases 0–6, Phase 6 = effects) before any Claude features (ADR-019). Reference machine: Windows 11 + RTX 3070 8 GB.
 
 ## Commands
@@ -50,6 +50,8 @@ Phases 0 (foundations) and 1 (media pipeline) are complete. Phase 3 (export, ADR
   into overlapping, faded clips — preview (ProgramMonitor) and export (buildGraph) both render the presented sequence.
 - Blur (ADR-038): effect kind `blur` (`size` = sigma / picture height); compositor two-pass blur in offscreen textures,
   export `gblur` per plane. `blurredBackground` in renderer `edit.ts`.
+- Speed (ADR-039): `item.speed/reverse/freeze`; always map times with core `sourceTimeAt`/`timelineTimeAt`/`sliceItem`/
+  `itemHandles`/`sourceSpan` (never `sourceIn + offset`). Preview audio time-stretch: `engine/time-stretch.ts` (WSOLA).
 - Renderer `timeline/` — Timeline, SequenceSettings, ClipInspector, ProgramMonitor, TransformOverlay, ExportDialog, CropDialog,
   `menus.tsx` (right-click menus); edits go through `edit.ts`. `ui/ContextMenu.tsx` is the generic menu.
 - `packages/db` — `node:sqlite` (ADR-020), migrations, repositories.

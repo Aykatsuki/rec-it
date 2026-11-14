@@ -52,6 +52,9 @@ export const timelineItemSchema = z.object({
   linkId: id.optional(),
   opacity: z.number().min(0).max(1).optional(),
   fade: z.object({ in: flicks, out: flicks }).optional(),
+  speed: z.number().min(0.25).max(4).optional(),
+  reverse: z.boolean().optional(),
+  freeze: z.boolean().optional(),
   transitionIn: z
     .object({ kind: z.enum(['dissolve', 'dipBlack', 'dipWhite']), duration: flicks })
     .optional(),
@@ -178,6 +181,25 @@ const singleCommandSchema = z.discriminatedUnion('type', [
     volume: z.number().min(0).max(2).optional(),
     muted: z.boolean().optional(),
     transform: transformPatchSchema.optional(),
+    speed: z.number().min(0.25).max(4).optional(),
+    reverse: z.boolean().optional(),
+    freeze: z.boolean().optional(),
+  }),
+  z.object({
+    type: z.literal('item.speed'),
+    ...seqId,
+    itemId: id,
+    speed: z.number().min(0.25).max(4).optional(),
+    reverse: z.boolean().optional(),
+  }),
+  z.object({
+    type: z.literal('item.freeze'),
+    ...seqId,
+    itemId: id,
+    time: flicks,
+    sourceTime: flicks,
+    duration: flicks,
+    id: id.optional(),
   }),
   z.object({ type: z.literal('item.move'), ...seqId, itemId: id, trackId: id, start: flicks }),
   z.object({

@@ -96,6 +96,12 @@ export interface TimelineItem {
    * Ignored while there is no such clip.
    */
   transitionIn?: Transition;
+  /** Playback speed, 0.25–4 (absent = 1); sound keeps its pitch. ADR-039. */
+  speed?: number;
+  /** Plays the source backwards. */
+  reverse?: boolean;
+  /** Holds the frame at `sourceIn` for the whole clip (silent). */
+  freeze?: boolean;
   /** Set only on presented items (presentSequence): sound-only fades and fades to a colour. */
   audioFade?: { in: Flicks; out: Flicks };
   tint?: { in: Flicks; out: Flicks; color: TintColor };
@@ -439,8 +445,81 @@ export function valueAt(keys: readonly Keyframe[], t: number): number {
 }
 
 /** Source-media time shown at timeline time `time` by this item. */
-export const sourceTimeAt = (item: TimelineItem, time: number) =>
-  item.sourceIn + (time - item.start);
+/** Source seconds per timeline second (0 for a freeze frame). ADR-039. */
+export function speedOf(item: Pick<TimelineItem, 'speed' | 'freeze'>): number {
+  return item.freeze ? 0 : (item.speed ?? 1);
+}
+
+/** True when the clip does not play its source 1:1 forwards. */
+export function isRetimed(item: Pick<TimelineItem, 'speed' | 'freeze' | 'reverse'>): boolean {
+  return !!item.freeze || !!item.reverse || (item.speed ?? 1) !== 1;
+}
+
+/** Length of source media the clip plays (flicks). */
+export function sourceSpan(item: TimelineItem): Flicks {
+  return Math.round(item.duration * speedOf(item)) as Flicks;
+}
+
+/** End of the source range the clip plays. */
+export function sourceEndOf(item: TimelineItem): Flicks {
+  return (item.sourceIn + sourceSpan(item)) as Flicks;
+}
+
+/**
+ * 1 ms. A reversed clip shows, at each moment, the frame just before the matching source time
+ * (the export's `reverse` plays frame N−1 first): this tiny step back picks that frame. A freeze
+ * frame's time is its frame's start: this tiny step forward lands safely inside the frame.
+ */
+export const FRAME_EPSILON = 705_600; // 1 ms
+
+/** Source time shown at timeline time `time` (speed, reverse and freeze frames included). */
+export const sourceTimeAt = (item: TimelineItem, time: number): number => {
+  if (item.freeze) return item.sourceIn + FRAME_EPSILON;
+  const k = item.speed ?? 1;
+  const into = time - item.start;
+  if (item.reverse)
+    return Math.max(item.sourceIn, item.sourceIn + (item.duration - into) * k - FRAME_EPSILON);
+  return item.sourceIn + into * k;
+};
+
+/** Timeline time at which source time `src` plays (NaN for freeze frames). */
+export function timelineTimeAt(item: TimelineItem, src: number): number {
+  if (item.freeze) return NaN;
+  const k = item.speed ?? 1;
+  const off = (src - item.sourceIn) / k;
+  return item.reverse ? item.start + item.duration - off : item.start + off;
+}
+
+/** The part of a clip between timeline times t0 and t1 (which may reach past its ends). */
+export function sliceItem(item: TimelineItem, t0: number, t1: number): TimelineItem {
+  const k = speedOf(item);
+  const sourceIn = item.freeze
+    ? item.sourceIn
+    : item.reverse
+      ? item.sourceIn + Math.round((itemEnd(item) - t1) * k)
+      : item.sourceIn + Math.round((t0 - item.start) * k);
+  return {
+    ...item,
+    start: t0 as Flicks,
+    duration: (t1 - t0) as Flicks,
+    sourceIn: sourceIn as Flicks,
+  };
+}
+
+/**
+ * How far (timeline flicks) a clip could be extended before its start and after its end with
+ * the media it has. `length` is the media length; null means a still (unlimited).
+ */
+export function itemHandles(
+  item: TimelineItem,
+  length: number | null | undefined,
+): { before: number; after: number } {
+  if (length === null || item.freeze) return { before: Infinity, after: Infinity };
+  const k = speedOf(item);
+  const low = Math.max(0, item.sourceIn) / k;
+  const high = length === undefined ? 0 : Math.max(0, length - sourceEndOf(item)) / k;
+  return item.reverse ? { before: high, after: low } : { before: low, after: high };
+}
 
 const animated = (item: TimelineItem, p: KeyframeProperty) => {
   const k = item.keyframes?.[p];

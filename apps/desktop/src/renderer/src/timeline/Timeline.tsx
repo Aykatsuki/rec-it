@@ -33,7 +33,9 @@ import {
   FLICKS_PER_SECOND,
   flicks,
   secondsToFlicks,
+  sourceEndOf,
   sourceTimeAt,
+  speedOf,
   transitionSpans,
   type KeyframeProperty,
   type Sequence,
@@ -907,10 +909,22 @@ function ItemViewInner({
       ) : (
         poster && <div className="tl__film" style={{ backgroundImage: `url("${poster}")` }} />
       )}
-      {detailed && showWave && (
+      {detailed && showWave && !item.freeze && (
         <div
           className={`tl__wave${track.kind === 'video' ? ' tl__wave--under' : ''}`}
-          style={{ left: -toSeconds(item.sourceIn) * zoom, width: assetSeconds * zoom }}
+          // The whole media's waveform, stretched by the speed and mirrored when reversed.
+          style={
+            item.reverse
+              ? {
+                  left: -(assetSeconds - toSeconds(sourceEndOf(item))) * (zoom / speedOf(item)),
+                  width: assetSeconds * (zoom / speedOf(item)),
+                  transform: 'scaleX(-1)',
+                }
+              : {
+                  left: -toSeconds(item.sourceIn) * (zoom / speedOf(item)),
+                  width: assetSeconds * (zoom / speedOf(item)),
+                }
+          }
         >
           <WaveformStrip url={asset!.urls.waveform!} className="tl__wave-svg" />
         </div>
@@ -920,7 +934,13 @@ function ItemViewInner({
       ) : (
         <span className="tl__item-label">
           {linked && <Link2 size={11} aria-label="Linked" />}
-          {item.muted && <VolumeX size={11} />} {asset?.name ?? 'Missing media'}
+          {item.muted && <VolumeX size={11} />}
+          {retimeBadge(item) && (
+            <span className="tl__badge" data-testid="speed-badge">
+              {retimeBadge(item)}
+            </span>
+          )}{' '}
+          {asset?.name ?? 'Missing media'}
         </span>
       )}
       {item.keyframes &&
@@ -993,6 +1013,13 @@ function FadeHandles({
   );
 }
 
+/** "2×", "◀ 0.5×", "Freeze": how a clip plays, when it is not 1:1 forwards (ADR-039). */
+function retimeBadge(item: TimelineItem): string {
+  if (item.freeze) return 'Freeze';
+  const k = item.speed ?? 1;
+  return [item.reverse ? '◀' : '', k !== 1 ? `${k}×` : ''].filter(Boolean).join(' ');
+}
+
 /** The words a caption clip shows. */
 function captionText(item: TimelineItem): string {
   return captionClipWords(item)
@@ -1024,7 +1051,10 @@ function Filmstrip({
   const tiles = [];
   for (let i = first; i < last && tiles.length < 400; i++) {
     const x = i * tileW;
-    const t = toSeconds(item.sourceIn) + (x + tileW / 2) / zoom;
+    // Source time under the middle of the tile (speed, reverse and freeze included).
+    const t = toSeconds(
+      Math.round(sourceTimeAt(item, item.start + toFlicks((x + tileW / 2) / zoom))),
+    );
     const frame = Math.min(sprite.count - 1, Math.max(0, Math.floor(t / sprite.interval)));
     const col = frame % sprite.columns;
     const row = Math.floor(frame / sprite.columns);

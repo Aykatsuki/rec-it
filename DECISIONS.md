@@ -42,6 +42,7 @@ Each record states the decision, why it was made and what else was considered. R
 | 036 | Fades, opacity and colour effects | Accepted |
 | 037 | Transitions: cross dissolve and dips | Accepted |
 | 038 | Blur and the blurred-background fit | Accepted |
+| 039 | Speed, reverse and freeze frames | Accepted |
 
 ---
 
@@ -548,4 +549,41 @@ Each record states the decision, why it was made and what else was considered. R
   - Unit tests for blur stacking, limits and on/off.
   - A real-FFmpeg test: sigma in proportion to the picture height, and the ramp across an edge at 0, ±1 sigma and further out.
   - A golden-frame case of the blurred-background layout, created through the UI (SSIM 0.997).
+
+---
+
+## ADR-039 · Speed, reverse and freeze frames
+
+**Status.** Accepted (14 Nov 2026, Phase 6 fourth slice). Speed ramps (keyframed speed) come later.
+
+**Decisions.**
+- **Model.** A clip gains `speed` (0.25–4, absent = 1), `reverse` and `freeze`. All mapping between timeline and source goes through a few core helpers, so every feature stays consistent:
+  - `sourceTimeAt` and its inverse `timelineTimeAt`.
+  - `sourceSpan`, the media a clip plays (length × speed).
+  - `sliceItem`, which cuts any part out of a clip; splits, overwrites, word cuts, trims and transitions all use it, and it knows that the start of a reversed clip is the end of its media.
+  - `itemHandles`, the media available beyond a clip's ends; trims and dissolves use it.
+  
+  Keyframes stay in source time, so animation follows the picture at any speed. Reversed and frozen clips have no words in the transcript, and words cannot be cut from them. Speed changes on captions and stills are refused or ignored.
+- **Commands.**
+  - `item.speed` changes speed and/or direction for a clip and its linked partners. A clip keeps the same media, so its length changes, and later clips on the same tracks move by the difference (closing up or making room).
+  - `item.freeze` splits the clip at the playhead, moves everything after it later on the clip's and partners' tracks, and inserts a muted clip holding one frame. The renderer passes the start time of the frame on screen (from the media's frame rate), so preview and export pick the same frame.
+  - `item.add` accepts the three fields, so copy/paste, detach audio, the facecam layout and the blurred background keep them.
+- **Export.**
+  - Video: before the `fps` filter, `reverse` (it buffers the clip's frames, fine for Shorts-length clips) and `setpts=(PTS-STARTPTS)/speed`. `fps` then picks exactly the frames `sourceTimeAt` names (tested frame by frame).
+  - Freeze frames: one frame is decoded from just before its time (`trim=end_frame=1`), held with `tpad`, then cut to length.
+  - Sound: `areverse`, and `atempo` in 0.5–2× steps, so the pitch is kept. Volume keyframes are applied before them, so they stay in source time.
+- **Preview.**
+  - GPU engine: needs nothing new, because it shows `sourceTimeAt`'s frame. A reversed clip shows the frame 1 ms before the mapped time, which is the export's frame order. Reverse playback has to restart decoding from a keyframe for most frames, so it can stutter on slow machines.
+  - Web Audio: for retimed clips, each one-second block decodes its source range, reverses it if needed, and time-stretches it with WSOLA (30 ms windows, ±12 ms search), so the sound keeps its pitch like atempo.
+  - Compatible engine: `playbackRate` with the browser's pitch preservation; reversed and frozen clips are shown by seeking, silently.
+- **Editing.**
+  - The Inspector has a Speed section: presets from 0.25× to 4×, a slider, Reverse, and Freeze frame (2 s at the playhead).
+  - The clip menu has a Speed submenu with the same choices.
+  - Clips show a badge on the timeline (`2×`, `◀`, `Freeze`). Filmstrips and waveforms follow the speed and direction.
+- **Tests.**
+  - Unit tests: length and ripple, source mapping, reversed splits, trims limited by the media at speed, freeze insertion.
+  - A real-FFmpeg test reading frame numbers from a brightness ramp: double speed shows frames 30/36/42/48 at 0.5–0.8 s; reverse and freeze frames show the expected frames.
+  - The audio parity test now includes a clip at 1.5× (r = 0.998, 0.1 dB).
+  - A golden-frame case with speed, reverse and a freeze frame (SSIM 0.996–0.997).
+  - An end-to-end test of the Inspector, the menu, badges, the freeze frame and undo.
 

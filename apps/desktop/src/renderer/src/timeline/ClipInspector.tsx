@@ -18,6 +18,7 @@ import {
   KEYFRAME_PROPERTIES,
   hasKeyframes,
   normalizeAngle,
+  sourceEndOf,
   volumeAt,
   type Easing,
   type KeyframeProperty,
@@ -39,7 +40,7 @@ import { formatDuration } from '../format';
 import { useApp } from '../store';
 import { transformFor } from './TransformOverlay';
 import { AutoReframe } from './AutoReframe';
-import { ColourSection, FadesSection, TransitionSection } from './EffectsInspector';
+import { ColourSection, FadesSection, SpeedSection, TransitionSection } from './EffectsInspector';
 import { Slider } from './Slider';
 
 export function ClipInspector({
@@ -95,8 +96,7 @@ export function ClipInspector({
           <div className="details__row">
             <dt>From source</dt>
             <dd>
-              {toSeconds(item.sourceIn).toFixed(2)} s –{' '}
-              {(toSeconds(item.sourceIn) + toSeconds(item.duration)).toFixed(2)} s
+              {toSeconds(item.sourceIn).toFixed(2)} s – {toSeconds(sourceEndOf(item)).toFixed(2)} s
             </dd>
           </div>
         </dl>
@@ -241,6 +241,9 @@ export function ClipInspector({
         <FadesSection seq={seq} item={item} track={track} />
       )}
       <TransitionSection seq={seq} item={item} track={track} />
+      {asset && asset.kind !== 'image' && (
+        <SpeedSection seq={seq} item={item} track={track} isVideo={asset.kind === 'video'} />
+      )}
       {hasKeyframes(item) && <KeyframeSection seq={seq} item={item} playhead={playhead} />}
       {(hasAudio || track.kind === 'audio') && (
         <section>

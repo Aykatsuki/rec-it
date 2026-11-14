@@ -15,6 +15,13 @@ import {
   type CaptionSettings,
   itemEnd,
   normalizeAngle,
+  FRAME_EPSILON,
+  sliceItem,
+  sourceSpan,
+  sourceTimeAt,
+  speedOf,
+  itemHandles,
+  timelineTimeAt,
   type AssetLookup,
   type ProjectDocument,
   type Sequence,
@@ -80,6 +87,30 @@ export type Command =
       volume?: number;
       muted?: boolean;
       transform?: Partial<Transform>;
+      /** Speed, reverse and freeze (ADR-039), e.g. when pasting a retimed clip. */
+      speed?: number;
+      reverse?: boolean;
+      freeze?: boolean;
+    }
+  /**
+   * Changes a clip's speed (0.25–4) and direction, with its linked partners. The clip keeps the
+   * same source media, so its length changes; later clips on those tracks move to make room or
+   * close up. ADR-039.
+   */
+  | { type: 'item.speed'; sequenceId: string; itemId: string; speed?: number; reverse?: boolean }
+  /**
+   * Inserts a freeze frame of `duration` at timeline time `time` in a video clip, showing the
+   * source frame starting at `sourceTime`. The clip is split there and everything after the
+   * playhead on its track and its partners' tracks moves later. ADR-039.
+   */
+  | {
+      type: 'item.freeze';
+      sequenceId: string;
+      itemId: string;
+      time: number;
+      sourceTime: number;
+      duration: number;
+      id?: string;
     }
   | { type: 'item.move'; sequenceId: string; itemId: string; trackId: string; start: number }
   | {
@@ -266,16 +297,13 @@ function clearRange(track: Track, start: number, end: number, exceptId?: string)
       next.push(item);
       continue;
     }
-    if (a < start) next.push({ ...item, duration: (start - a) as Flicks });
+    if (a < start) next.push(sliceItem(item, a, start));
     if (b > end) {
       next.push({
-        ...item,
+        ...sliceItem(item, end, b),
         id: a < start ? createId('item') : item.id,
         // An overwrite that cuts a linked clip in two keeps only the first part linked.
         ...(a < start ? { linkId: undefined } : {}),
-        start: end as Flicks,
-        duration: (b - end) as Flicks,
-        sourceIn: (item.sourceIn + (end - a)) as Flicks,
       });
     }
   }
@@ -446,8 +474,17 @@ export function applyCommand(doc: ProjectDocument, command: Command, assets: Ass
       unlocked(track);
       const asset = assets(command.assetId) ?? fail('That media is not ready yet.');
       checkPlacement(track, asset.kind, asset.hasAudio);
-      const sourceIn = snap(seq, command.sourceIn ?? 0);
-      const available = asset.duration === null ? Infinity : asset.duration - sourceIn;
+      const freeze = !!command.freeze && asset.kind === 'video';
+      const speed = freeze ? 1 : clampSpeed(command.speed ?? 1);
+      // Freeze frames keep the exact frame time they were given.
+      const sourceIn = freeze
+        ? (Math.max(0, Math.round(command.sourceIn ?? 0)) as Flicks)
+        : snap(seq, command.sourceIn ?? 0);
+      const available = freeze
+        ? Infinity
+        : asset.duration === null
+          ? Infinity
+          : (asset.duration - sourceIn) / speed;
       if (available <= 0) fail('The clip starts after the end of the media.');
       const wanted = command.duration ?? (asset.duration === null ? STILL_DURATION : available);
       const start = snap(seq, command.start);
@@ -461,10 +498,100 @@ export function applyCommand(doc: ProjectDocument, command: Command, assets: Ass
         duration: (end - start) as Flicks,
         sourceIn,
         volume: clampVolume(command.volume ?? 1),
-        muted: command.muted ?? false,
+        muted: freeze || (command.muted ?? false),
         transform: cleanTransform({ ...DEFAULT_TRANSFORM, ...command.transform }),
+        ...(speed !== 1 ? { speed } : {}),
+        ...(command.reverse && !freeze && asset.kind !== 'image' ? { reverse: true } : {}),
+        ...(freeze ? { freeze: true } : {}),
       });
       sortItems(track);
+      return;
+    }
+    case 'item.speed': {
+      const seq = sequenceOf(doc, command.sequenceId);
+      const found = findItem(seq, command.itemId);
+      if (found.item.caption) fail('Captions have no speed.');
+      if (found.item.freeze) fail('A freeze frame has no speed; trim it to change its length.');
+      const targets = [found, ...partnersOf(seq, found.item)].filter((t) => !t.item.freeze);
+      for (const t of targets) unlocked(t.track);
+      for (const { track, item } of targets) {
+        const asset = assets(item.assetId);
+        const span = sourceSpan(item);
+        const speed = command.speed === undefined ? speedOf(item) : clampSpeed(command.speed);
+        const reverse = command.reverse ?? !!item.reverse;
+        if (asset?.kind === 'image') continue; // a still looks the same at any speed
+        const oldEnd = itemEnd(item);
+        const duration = Math.max(frameOf(seq), snap(seq, span / speed)) as Flicks;
+        const delta = duration - item.duration;
+        // Later clips on the track move by the change (closing up or making room).
+        for (const other of track.items)
+          if (other !== item && other.start >= oldEnd)
+            other.start = (other.start + delta) as Flicks;
+        item.duration = duration;
+        if (speed === 1) delete item.speed;
+        else item.speed = speed;
+        if (reverse) item.reverse = true;
+        else delete item.reverse;
+        fitFades(seq, item);
+      }
+      return;
+    }
+    case 'item.freeze': {
+      const seq = sequenceOf(doc, command.sequenceId);
+      const found = findItem(seq, command.itemId);
+      const asset = assets(found.item.assetId);
+      if (found.track.kind !== 'video' || asset?.kind !== 'video' || found.item.freeze)
+        fail('Freeze frames are made from video clips.');
+      const time = snap(seq, command.time);
+      const duration = Math.max(frameOf(seq), snap(seq, command.duration));
+      if (time < found.item.start || time > itemEnd(found.item))
+        fail('Put the playhead over the clip to freeze a frame.');
+      const targets = [found, ...partnersOf(seq, found.item)];
+      for (const t of targets) unlocked(t.track);
+      // Make room: split the clip (and partners) at the playhead and move what follows.
+      const tracks = [...new Set(targets.map((t) => t.track))];
+      const ids = new Set(targets.map((t) => t.item.id));
+      for (const track of tracks) {
+        const next: TimelineItem[] = [];
+        for (const item of track.items) {
+          if (ids.has(item.id) && time > item.start && time < itemEnd(item)) {
+            next.push(withoutFade(sliceItem(item, item.start, time), 'out'));
+            next.push(
+              withoutFade({ ...sliceItem(item, time, itemEnd(item)), id: createId('item') }, 'in'),
+            );
+          } else next.push(item);
+        }
+        for (const item of next)
+          if (item.start >= time) item.start = (item.start + duration) as Flicks;
+        track.items = next;
+      }
+      // The right-hand pieces are linked to each other with a new id, as after a split.
+      const rights = tracks.flatMap((t) =>
+        t.items.filter(
+          (i) => i.start === time + duration && i.linkId === found.item.linkId && found.item.linkId,
+        ),
+      );
+      if (rights.length > 1) {
+        const linkId = createId('link');
+        for (const r of rights) r.linkId = linkId;
+      }
+      const frozen: TimelineItem = {
+        id: command.id ?? createId('item'),
+        assetId: found.item.assetId,
+        start: time as Flicks,
+        duration: duration as Flicks,
+        sourceIn: Math.max(0, Math.round(command.sourceTime)) as Flicks,
+        volume: found.item.volume,
+        muted: true,
+        transform: { ...found.item.transform },
+        freeze: true,
+        ...(found.item.effects
+          ? { effects: found.item.effects.map((e) => ({ ...e, id: createId('fx') })) }
+          : {}),
+        ...(found.item.opacity !== undefined ? { opacity: found.item.opacity } : {}),
+      };
+      found.track.items.push(frozen);
+      sortItems(found.track);
       return;
     }
     case 'item.move': {
@@ -564,8 +691,7 @@ export function applyCommand(doc: ProjectDocument, command: Command, assets: Ass
             next.push(item);
             continue;
           }
-          const first = time - item.start;
-          next.push(withoutFade({ ...item, duration: first as Flicks }, 'out'));
+          next.push(withoutFade(sliceItem(item, item.start, time), 'out'));
           let linkId = item.linkId;
           if (linkId) {
             if (!newLinks.has(linkId)) newLinks.set(linkId, createId('link'));
@@ -574,11 +700,8 @@ export function applyCommand(doc: ProjectDocument, command: Command, assets: Ass
           next.push(
             withoutFade(
               {
-                ...item,
+                ...sliceItem(item, time, itemEnd(item)),
                 id: createId('item'),
-                start: time,
-                duration: (item.duration - first) as Flicks,
-                sourceIn: (item.sourceIn + first) as Flicks,
                 ...(linkId ? { linkId } : {}),
               },
               'in',
@@ -617,8 +740,9 @@ export function applyCommand(doc: ProjectDocument, command: Command, assets: Ass
     case 'item.cutRange': {
       const seq = sequenceOf(doc, command.sequenceId);
       const { item, track } = findItem(seq, command.itemId);
-      const a = Math.max(item.start, snap(seq, item.start + (command.from - item.sourceIn)));
-      const b = Math.min(itemEnd(item), snap(seq, item.start + (command.to - item.sourceIn)));
+      if (item.freeze || item.reverse) fail('Words cannot be cut from a reversed or frozen clip.');
+      const a = Math.max(item.start, snap(seq, timelineTimeAt(item, command.from)));
+      const b = Math.min(itemEnd(item), snap(seq, timelineTimeAt(item, command.to)));
       if (b - a < frameOf(seq)) fail('That part of the clip is shorter than a frame.');
       const targets = [{ track, item }, ...partnersOf(seq, item)];
       for (const t of targets) unlocked(t.track);
@@ -629,12 +753,7 @@ export function applyCommand(doc: ProjectDocument, command: Command, assets: Ass
         const right = b < end;
         const pieces: TimelineItem[] = [];
         if (left)
-          pieces.push(
-            withoutFade(
-              { ...it, duration: (Math.min(a, end) - it.start) as Flicks },
-              right ? 'out' : null,
-            ),
-          );
+          pieces.push(withoutFade(sliceItem(it, it.start, Math.min(a, end)), right ? 'out' : null));
         if (right) {
           const cut = Math.max(b, it.start);
           let linkId = it.linkId;
@@ -645,11 +764,8 @@ export function applyCommand(doc: ProjectDocument, command: Command, assets: Ass
           pieces.push(
             withoutFade(
               {
-                ...it,
+                ...sliceItem(it, cut, end),
                 id: left ? createId('item') : it.id,
-                start: cut as Flicks,
-                duration: (end - cut) as Flicks,
-                sourceIn: (it.sourceIn + (cut - it.start)) as Flicks,
                 ...(linkId ? { linkId } : {}),
               },
               left ? 'in' : null,
@@ -804,8 +920,12 @@ export function applyCommand(doc: ProjectDocument, command: Command, assets: Ass
       if (item.caption) fail('Captions cannot be animated yet.');
       const half = Math.floor(frameOf(seq) / 2);
       // Snap to the sequence's frame grid as seen on the timeline.
-      const local = snap(seq, item.start + (command.t - item.sourceIn)) - item.start;
-      const t = (item.sourceIn + local) as Flicks;
+      if (item.freeze) fail('A freeze frame cannot be animated.');
+      // Snap to the frame grid as seen on the timeline, then back to source time.
+      const t = Math.round(
+        sourceTimeAt(item, snap(seq, timelineTimeAt(item, command.t))) +
+          (item.reverse ? FRAME_EPSILON : 0),
+      ) as Flicks;
       const [lo, hi] = KEY_LIMITS[command.property];
       const v = Math.min(hi, Math.max(lo, command.value));
       if (!Number.isFinite(v)) fail('That value is not a number.');
@@ -959,6 +1079,11 @@ export function applyCommand(doc: ProjectDocument, command: Command, assets: Ass
   }
 }
 
+const clampSpeed = (v: number) => {
+  if (!Number.isFinite(v)) fail('That speed is not a number.');
+  return Math.round(Math.min(4, Math.max(0.25, v)) * 1000) / 1000;
+};
+
 /** Trims one clip (no linked partners). */
 function trimOne(
   doc: ProjectDocument,
@@ -969,23 +1094,20 @@ function trimOne(
   const { track, item, index } = findItem(seq, command.itemId);
   unlocked(track);
   const asset = assets(item.assetId);
-  const sourceEnd = asset?.duration ?? Infinity;
+  const room = itemHandles(item, asset ? asset.duration : null);
   const minLen = Math.max(snap(seq, MIN_DURATION), 1);
   const prevEnd = index > 0 ? itemEnd(track.items[index - 1]!) : 0;
   const nextStart = track.items[index + 1]?.start ?? Infinity;
   const time = snap(seq, command.time);
   if (command.edge === 'start') {
     // The earliest possible start is limited by the source's first frame and the previous clip.
-    const earliest = Math.max(prevEnd, item.start - item.sourceIn);
+    const earliest = Math.max(prevEnd, Math.ceil(item.start - room.before));
     const newStart = Math.min(Math.max(time, earliest), itemEnd(item) - minLen);
-    const delta = newStart - item.start;
-    item.sourceIn = (item.sourceIn + delta) as Flicks;
-    item.duration = (item.duration - delta) as Flicks;
-    item.start = newStart as Flicks;
+    Object.assign(item, sliceItem(item, newStart, itemEnd(item)));
   } else {
-    const latest = Math.min(nextStart, item.start + (sourceEnd - item.sourceIn));
+    const latest = Math.min(nextStart, Math.floor(itemEnd(item) + room.after));
     const newEnd = Math.max(Math.min(time, latest), item.start + minLen);
-    item.duration = (newEnd - item.start) as Flicks;
+    Object.assign(item, sliceItem(item, item.start, newEnd));
   }
   fitFades(seq, item);
 }

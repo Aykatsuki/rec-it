@@ -5,10 +5,13 @@ import {
   flicksToSeconds,
   sourceTimeAt,
   gainAt,
+  isRetimed,
+  speedOf,
   type Sequence,
   type TimelineItem,
 } from '@rec-it/core';
 import { AudioSource } from './audio-source';
+import { timeStretch } from './time-stretch';
 
 /** One audible clip: where its sound comes from. */
 export interface AudioClip {
@@ -32,11 +35,73 @@ export function audibleClips(
   return seq.tracks
     .filter((t) => !t.muted)
     .flatMap((t) => t.items)
-    .filter((i) => !i.muted)
+    .filter((i) => !i.muted && !i.freeze)
     .flatMap((item) => {
       const url = urlFor(item);
       return url ? [{ item, url }] : [];
     });
+}
+
+interface Block {
+  channels: Float32Array[];
+  rate: number;
+  /** Where in `channels` (seconds) timeline time `a` is. */
+  offset: number;
+}
+
+async function plainBlock(
+  source: AudioSource,
+  item: TimelineItem,
+  a: number,
+  b: number,
+): Promise<Block | null> {
+  const srcA = sec(sourceTimeAt(item, Math.round(a * FLICKS_PER_SECOND)));
+  const decoded = await source.decode(srcA, srcA + (b - a));
+  if (!decoded) return null;
+  return { channels: decoded.channels, rate: decoded.sampleRate, offset: srcA - decoded.start };
+}
+
+/** Margin decoded around a retimed block for the time stretch's windows (seconds). */
+const STRETCH_MARGIN = 0.06;
+
+/**
+ * Sound of a clip at another speed or reversed (ADR-039): the source range the block plays,
+ * reversed if needed, stretched to the block's length with its pitch kept.
+ */
+async function retimedBlock(
+  source: AudioSource,
+  item: TimelineItem,
+  a: number,
+  b: number,
+): Promise<Block | null> {
+  const k = speedOf(item);
+  if (k <= 0) return null; // freeze frames are silent
+  const at = (t: number) => sec(sourceTimeAt(item, Math.round(t * FLICKS_PER_SECOND)));
+  const span = (b - a) * k;
+  const lo = item.reverse ? at(b) : at(a);
+  const from = Math.max(0, lo - STRETCH_MARGIN);
+  const decoded = await source.decode(from, lo + span + STRETCH_MARGIN);
+  if (!decoded) return null;
+  const rate = decoded.sampleRate;
+  const i0 = Math.max(0, Math.round((lo - decoded.start) * rate));
+  const n = Math.round(span * rate);
+  const before = Math.min(i0, Math.round(STRETCH_MARGIN * rate));
+  const input = decoded.channels.map((ch) => {
+    if (!item.reverse) return ch.subarray(i0);
+    // Backwards from the block's last sample, with the margin before it at the end.
+    const part = ch.slice(i0 - before, Math.min(ch.length, i0 + n));
+    return part.reverse();
+  });
+  const outLength = Math.max(1, Math.round((b - a) * rate));
+  const channels =
+    Math.abs(k - 1) < 1e-9
+      ? input.map((ch) => {
+          const out = new Float32Array(outLength);
+          out.set(ch.subarray(0, outLength));
+          return out;
+        })
+      : timeStretch(input, rate, k, outLength);
+  return { channels, rate, offset: 0 };
 }
 
 export class AudioEngine {
@@ -168,20 +233,15 @@ export class AudioEngine {
   ): Promise<void> {
     const source = await this.source(clip.url);
     if (!source) return;
-    const srcA = sec(sourceTimeAt(clip.item, Math.round(a * FLICKS_PER_SECOND)));
-    const srcB = srcA + (b - a);
-    const decoded = await source.decode(srcA, srcB);
-    if (!decoded || generation !== this.generation) return;
-    const buffer = ctx.createBuffer(
-      decoded.channels.length,
-      decoded.channels[0]!.length,
-      decoded.sampleRate,
-    );
-    decoded.channels.forEach((data, c) =>
-      buffer.copyToChannel(data as Float32Array<ArrayBuffer>, c),
-    );
+    const item = clip.item;
+    const block = isRetimed(item)
+      ? await retimedBlock(source, item, a, b)
+      : await plainBlock(source, item, a, b);
+    if (!block || generation !== this.generation) return;
+    const buffer = ctx.createBuffer(block.channels.length, block.channels[0]!.length, block.rate);
+    block.channels.forEach((data, c) => buffer.copyToChannel(data as Float32Array<ArrayBuffer>, c));
     let when = this.ctxStart + (a - this.seqStart);
-    let offset = srcA - decoded.start;
+    let offset = block.offset;
     let duration = b - a;
     // A block that should already have started (playback began inside it) starts part-way.
     const late = ctx.currentTime - when;

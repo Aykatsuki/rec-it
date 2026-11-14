@@ -153,4 +153,52 @@ test.describe('effects', () => {
       await app.close();
     }
   });
+
+  test('speed, reverse and freeze frames from the Inspector and the clip menu', async () => {
+    const { app, page } = await launch(tempUserData(), env());
+    try {
+      await createProject(page, 'Speed');
+      await mockOpenDialog(app, [fx.h264]);
+      await page.getByRole('button', { name: 'Import footage' }).click();
+      await page.getByLabel(/I have the right/).check();
+      await page.getByRole('button', { name: 'Import' }).last().click();
+      await expect(page.locator('[data-testid=asset-card][data-status=ready]')).toHaveCount(1, {
+        timeout: 60_000,
+      });
+      await page.locator('[data-testid=asset-card]').dblclick();
+      const item = page.getByTestId('timeline-item').first();
+      const width = async () => (await item.boundingBox())!.width;
+      const before = await width();
+      await item.click({ position: { x: 20, y: 30 } });
+
+      // Double speed: half as long, with a badge.
+      const speed = page.getByTestId('speed');
+      await speed.getByRole('radio', { name: '2×' }).click();
+      await expect(page.getByTestId('speed-badge').first()).toHaveText('2×');
+      await expect.poll(width).toBeLessThan(before * 0.6);
+      // Reverse from the clip menu.
+      await item.click({ button: 'right', position: { x: 20, y: 30 } });
+      await page.getByRole('menuitem', { name: 'Speed' }).hover();
+      await page.getByRole('menuitemcheckbox', { name: 'Reverse' }).click();
+      await expect(page.getByTestId('speed-badge').first()).toHaveText('◀ 2×');
+      await expect(speed.getByTestId('reverse')).toHaveAttribute('aria-pressed', 'true');
+
+      // A freeze frame at 0.5 s: a new clip of 2 s, and the rest moves later.
+      await page.getByTestId('ruler').click({ position: { x: 0.5 * ZOOM, y: 10 } });
+      await item.click({ position: { x: 20, y: 30 } });
+      await speed.getByTestId('freeze-frame').click();
+      await expect(page.locator('[data-testid=speed-badge]', { hasText: 'Freeze' })).toHaveCount(1);
+      const clips = page.locator('[data-kind=video] [data-testid=timeline-item]');
+      await expect(clips).toHaveCount(3);
+      await expect(page.getByTestId('speed')).toContainText('Freeze frame');
+
+      // Undo removes the freeze frame; undo again un-reverses.
+      await page.keyboard.press('Control+z');
+      await expect(clips).toHaveCount(1);
+      await page.keyboard.press('Control+z');
+      await expect(page.getByTestId('speed-badge').first()).toHaveText('2×');
+    } finally {
+      await app.close();
+    }
+  });
 });
