@@ -167,6 +167,12 @@ export type Command =
   | { type: 'item.split'; sequenceId: string; time: number; itemIds?: string[] }
   | { type: 'item.remove'; sequenceId: string; itemIds: string[]; ripple?: boolean }
   /**
+   * Cuts time ranges (timeline flicks) out of every track and closes the gaps, so everything
+   * stays in sync (silence removal). Ranges are measured on the timeline before any removal.
+   * ADR-044.
+   */
+  | { type: 'sequence.removeRanges'; sequenceId: string; ranges: { start: number; end: number }[] }
+  /**
    * Cuts a stretch out of a clip and its linked partners, given in *source* time (as transcript
    * words are). With ripple, later clips on those tracks move left to close the gap.
    */
@@ -750,6 +756,63 @@ export function applyCommand(doc: ProjectDocument, command: Command, assets: Ass
         track.items = next;
       }
       if (!split) fail('There is no clip under the playhead to split.');
+      return;
+    }
+    case 'sequence.removeRanges': {
+      const seq = sequenceOf(doc, command.sequenceId);
+      // Frame-snapped, merged, latest first (so earlier ranges are unaffected by later ones).
+      const ranges = command.ranges
+        .map((r) => [snap(seq, Math.min(r.start, r.end)), snap(seq, Math.max(r.start, r.end))])
+        .filter(([a, b]) => b! - a! >= frameOf(seq))
+        .sort((x, y) => x[0]! - y[0]!)
+        .reduce<number[][]>((out, r) => {
+          const last = out.at(-1);
+          if (last && r[0]! <= last[1]!) last[1] = Math.max(last[1]!, r[1]!);
+          else out.push([...r]);
+          return out;
+        }, [])
+        .reverse();
+      if (!ranges.length) fail('Nothing to remove: the ranges are shorter than a frame.');
+      for (const track of seq.tracks)
+        if (track.locked && track.items.some((i) => itemEnd(i) > ranges.at(-1)![0]!))
+          fail(`Track ${track.name} is locked; unlock it so everything can stay in sync.`);
+      for (const [a, b] of ranges as [number, number][]) {
+        const d = b - a;
+        const newLinks = new Map<string, string>();
+        for (const track of seq.tracks) {
+          const next: TimelineItem[] = [];
+          for (const item of track.items) {
+            const end = itemEnd(item);
+            if (end <= a) {
+              next.push(item);
+              continue;
+            }
+            if (item.start >= b) {
+              item.start = (item.start - d) as Flicks;
+              next.push(item);
+              continue;
+            }
+            const left = item.start < a;
+            const right = end > b;
+            if (left) next.push(withoutFade(sliceItem(item, item.start, a), right ? 'out' : null));
+            if (right) {
+              let linkId = item.linkId;
+              if (left && linkId) {
+                if (!newLinks.has(linkId)) newLinks.set(linkId, createId('link'));
+                linkId = newLinks.get(linkId);
+              }
+              const piece = withoutFade(sliceItem(item, b, end), left ? 'in' : null);
+              next.push({
+                ...piece,
+                id: left ? createId('item') : item.id,
+                start: a as Flicks,
+                ...(linkId ? { linkId } : {}),
+              });
+            }
+          }
+          track.items = next;
+        }
+      }
       return;
     }
     case 'item.remove': {

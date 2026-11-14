@@ -140,6 +140,172 @@ code {
 .claude-pill[data-enabled='false'] {
   text-decoration: line-through;
 }
+.claude-pill[data-state='ok'] {
+  color: var(--text-1);
+  border-color: color-mix(in srgb, var(--ok) 50%, var(--border-strong));
+}
+.claude-pill[data-state='ok'] svg {
+  color: var(--ok);
+}
+.claude-pill[data-state='warn'] {
+  color: var(--warn);
+  border-color: var(--warn);
+}
+
+/* Four tabs share the narrow right panel. */
+[data-region='right-panel'] .ui-tab {
+  display: inline-flex;
+  align-items: center;
+  padding: 0 8px;
+}
+
+/* Claude tab (ADR-044) */
+.claude {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-3);
+  font-size: var(--text-sm);
+  color: var(--text-2);
+}
+.claude__status {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  color: var(--text-1);
+}
+.claude__note {
+  margin: 0;
+  color: var(--text-3);
+  line-height: 1.5;
+}
+.claude__note--error {
+  color: var(--error);
+}
+.claude__card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  background: var(--surface-2);
+  color: var(--text-1);
+}
+.claude__card--confirm {
+  border-color: var(--warn);
+}
+.claude__card p,
+.claude__card ul {
+  margin: 0;
+  color: var(--text-2);
+}
+.claude__card ul {
+  padding-left: 18px;
+  line-height: 1.6;
+}
+.claude__actions {
+  display: flex;
+  gap: var(--space-2);
+  justify-content: flex-end;
+}
+.claude__section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+.claude__section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.claude__section h3,
+.claude__section h4 {
+  margin: var(--space-2) 0 0;
+  font-size: var(--text-sm);
+  color: var(--text-1);
+}
+.claude__section p {
+  margin: 0;
+  line-height: 1.5;
+}
+.claude__setup summary {
+  cursor: pointer;
+  color: var(--text-1);
+}
+.claude__feed {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.claude__row {
+  display: grid;
+  grid-template-columns: 16px 1fr auto;
+  gap: var(--space-2);
+  padding: 6px 0;
+  border-bottom: 1px solid var(--border);
+}
+.claude__row-icon {
+  padding-top: 1px;
+  color: var(--ok);
+}
+.claude__row[data-status='error'] .claude__row-icon {
+  color: var(--error);
+}
+.claude__row[data-status='denied'] .claude__row-icon,
+.claude__row[data-status='pending'] .claude__row-icon {
+  color: var(--text-3);
+}
+.claude__row-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.claude__row-title {
+  color: var(--text-1);
+}
+.claude__row-detail {
+  overflow-wrap: anywhere;
+}
+.claude__row-time {
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+}
+.claude__copy {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+}
+.claude__copy pre {
+  flex: 1;
+  margin: 0;
+  padding: var(--space-2);
+  overflow-x: auto;
+  border-radius: 6px;
+  background: var(--surface-0);
+  font: var(--text-xs) / 1.5 var(--font-mono);
+  color: var(--text-1);
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+.claude-confirm {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  min-width: 360px;
+}
+.claude-confirm p {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.claude-confirm__title {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  color: var(--text-1);
+  font-weight: 600;
+}
 
 /* Left rail */
 .left-rail {

@@ -5,6 +5,7 @@ import { redo, sequenceSeconds, undo } from '../edit';
 import { useApp, useSequence } from '../store';
 import { openExportDialog } from '../timeline/ExportDialog';
 import { ProjectMenu } from '../project/ProjectMenu';
+import { claudeStatus } from '../claude/ClaudePanel';
 
 export function TopBar({ onOpenSettings }: { onOpenSettings: () => void }) {
   const { settings } = useSettings();
@@ -12,6 +13,7 @@ export function TopBar({ onOpenSettings }: { onOpenSettings: () => void }) {
   const docState = useApp((s) => s.docState);
   const exportState = useApp((s) => s.exportState);
   const seq = useSequence();
+  const claude = claudeStatus(useApp((s) => s.claude));
   const canExport = !!project && sequenceSeconds(seq) > 0;
   return (
     <header className="topbar" data-region="topbar">
@@ -36,10 +38,12 @@ export function TopBar({ onOpenSettings }: { onOpenSettings: () => void }) {
         <span
           className="claude-pill"
           data-enabled={settings?.aiEnabled ?? true}
-          title="Claude connects through your Claude desktop app (Phase 6)"
+          data-state={claude.dot}
+          data-testid="claude-pill"
+          title="Claude connects through your own Claude app (see the Claude tab)"
         >
           <Sparkles size={13} />
-          Claude · not connected
+          {claude.label}
         </span>
         <IconButton label="Settings" onClick={onOpenSettings}>
           <Settings size={16} />

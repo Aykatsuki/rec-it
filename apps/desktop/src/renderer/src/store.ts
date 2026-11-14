@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import type { Sequence, TimelineItem, TrackKind, Transform } from '@rec-it/core';
 import type {
+  ClaudeState,
   DocumentState,
   ExportState,
   JobSummary,
@@ -54,6 +55,8 @@ interface AppState {
   faces: FaceStatus | null;
   /** 3D LUTs imported into the open project (ADR-040). */
   luts: LutInfo[];
+  /** The Claude connector: connection, activity, change cards, confirmations (ADR-044). */
+  claude: ClaudeState | null;
   /** Clips waiting for their media's face analysis, to be reframed when it finishes. */
   pendingReframe: Record<string, string[]>;
   /** The clip whose crop is being edited in the crop window (ADR-034). */
@@ -131,6 +134,7 @@ export const useApp = create<AppState>((set) => ({
   cropItemId: null,
   faces: null,
   luts: [],
+  claude: null,
   pendingReframe: {},
   safeZones: stored('recit.safeZones') === '1',
   setSafeZones: (safeZones) => {
@@ -192,6 +196,7 @@ export function startBackendSync(): () => void {
     syncTranscripts(await backend.invoke('transcript.status', {}), true);
     useApp.setState({ faces: await backend.invoke('faces.status', {}) });
     await loadLuts();
+    useApp.setState({ claude: await backend.invoke('claude.state', {}).catch(() => null) });
   };
   const loadLuts = async () => {
     const project = useApp.getState().project;
@@ -223,6 +228,11 @@ export function startBackendSync(): () => void {
     ),
     backend.on('project.changed', () => void loadLuts()),
     backend.on('luts.changed', (luts) => useApp.setState({ luts })),
+    backend.on('claude.changed', (claude) => {
+      const before = useApp.getState().claude;
+      useApp.setState({ claude });
+      if (claude.clients.length > (before?.clients.length ?? 0)) onClaudeConnected?.(claude);
+    }),
     backend.on('media.changed', (assets) =>
       useApp.setState((s) => ({
         assets,
@@ -250,6 +260,12 @@ export function startBackendSync(): () => void {
     }),
   ];
   return () => offs.forEach((off) => off());
+}
+
+let onClaudeConnected: ((state: ClaudeState) => void) | undefined;
+/** Called when a Claude app connects (the first-connection notice). */
+export function setOnClaudeConnected(fn: (state: ClaudeState) => void): void {
+  onClaudeConnected = fn;
 }
 
 /** Stores the transcription status and loads transcripts that are new or were just redone. */

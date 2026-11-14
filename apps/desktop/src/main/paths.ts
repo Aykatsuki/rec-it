@@ -19,6 +19,13 @@ export function bundledFontsDir(): string {
     : join(repoRoot(), 'resources', 'fonts');
 }
 
+/** The Claude connector's bridge (apps/mcp build output, or resources/mcp when packaged). */
+export function bundledMcpDir(): string {
+  return app.isPackaged
+    ? join(process.resourcesPath, 'mcp')
+    : join(repoRoot(), 'apps', 'mcp', 'dist');
+}
+
 export interface SidecarCommand {
   command: string;
   args: string[];

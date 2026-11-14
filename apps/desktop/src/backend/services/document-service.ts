@@ -52,9 +52,13 @@ export class DocumentService {
     };
   }
 
-  execute(command: Command): DocumentState {
+  /**
+   * Applies a command. Commands with the same `group` that follow each other form one undo step
+   * (Claude's edits, ADR-044).
+   */
+  execute(command: Command, group?: string): DocumentState {
     const before = this.history.doc;
-    this.history.execute(command, this.assets);
+    this.history.execute(command, this.assets, group);
     if (this.history.doc !== before) this.persist();
     return this.state();
   }
@@ -64,6 +68,18 @@ export class DocumentService {
     this.history.undo();
     this.persist();
     return this.state();
+  }
+
+  /** The group of the newest undo step, if it has one. */
+  get topGroup(): string | undefined {
+    return this.history.topGroup;
+  }
+
+  /** Undoes a group of edits, only while it is still the newest undo step. */
+  undoGroup(group: string): DocumentState {
+    if (this.history.topGroup !== group)
+      throw new CommandError('Other edits were made since; undo them first with Ctrl+Z.');
+    return this.undo();
   }
 
   redo(): DocumentState {

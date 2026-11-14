@@ -1,5 +1,5 @@
-import { useState } from 'react';
-import { MousePointerClick } from 'lucide-react';
+import { useState, type ReactNode } from 'react';
+import { MousePointerClick, Sparkles } from 'lucide-react';
 import { EmptyState, Tabs } from '@rec-it/ui';
 import { AssetDetails } from '../media/AssetDetails';
 import { primaryClip } from '../edit';
@@ -8,14 +8,16 @@ import { ClipInspector } from '../timeline/ClipInspector';
 import { TranscriptPanel } from '../timeline/TranscriptPanel';
 import { CaptionInspector } from '../timeline/CaptionInspector';
 import { CaptionsPanel } from '../timeline/CaptionsPanel';
+import { ClaudePanel } from '../claude/ClaudePanel';
 
-type RightTab = 'inspector' | 'transcript' | 'captions';
+type RightTab = 'inspector' | 'transcript' | 'captions' | 'claude';
 
-const TABS = [
+const TABS: { id: RightTab; label: string; icon?: ReactNode }[] = [
   { id: 'inspector', label: 'Inspector' },
   { id: 'transcript', label: 'Transcript' },
   { id: 'captions', label: 'Captions' },
-] as const;
+  { id: 'claude', label: 'Claude', icon: <Sparkles size={14} /> },
+];
 
 export function RightPanel() {
   const [tab, setTab] = useState<RightTab>('inspector');
@@ -59,6 +61,7 @@ export function RightPanel() {
         )}
         {tab === 'transcript' && <TranscriptPanel />}
         {tab === 'captions' && <CaptionsPanel />}
+        {tab === 'claude' && <ClaudePanel />}
       </div>
     </section>
   );

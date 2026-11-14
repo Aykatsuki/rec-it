@@ -20,6 +20,7 @@ import { systemStatusSchema } from './schemas/status';
 import { transcriptSchema, transcriptionStatusSchema } from './schemas/transcript';
 import { faceStatusSchema, faceTrackSchema } from './schemas/faces';
 import { lutDataSchema, lutInfoSchema } from './schemas/luts';
+import { claudeStateSchema } from './schemas/claude';
 
 const empty = z.object({}).strict();
 const ok = z.object({ ok: z.literal(true) });
@@ -188,6 +189,25 @@ export const backendContract = defineContract({
     },
     'export.cancel': { input: empty, output: ok },
     'export.status': { input: empty, output: exportStateSchema },
+
+    // Claude connector (ADR-044). Claude itself talks to the backend over a local socket.
+    'claude.state': { input: empty, output: claudeStateSchema },
+    /** Answers a confirmation request (export, transcription). */
+    'claude.respond': {
+      input: z.object({ id: z.string().min(1).max(100), allow: z.boolean() }).strict(),
+      output: ok,
+    },
+    /** Undoes all of a change card's edits (only while they are the newest undo step). */
+    'claude.undoChange': {
+      input: z.object({ group: z.string().min(1).max(100) }).strict(),
+      output: ok,
+    },
+    /** Keeps a change card's edits: later edits by Claude start a new card. */
+    'claude.keepChange': {
+      input: z.object({ group: z.string().min(1).max(100) }).strict(),
+      output: ok,
+    },
+    'claude.clearActivity': { input: empty, output: ok },
   },
   events: {
     'system.statusChanged': systemStatusSchema,
@@ -200,6 +220,7 @@ export const backendContract = defineContract({
     'transcript.changed': transcriptionStatusSchema,
     'faces.changed': faceStatusSchema,
     'luts.changed': z.array(lutInfoSchema),
+    'claude.changed': claudeStateSchema,
   },
 });
 
