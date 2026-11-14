@@ -1,8 +1,24 @@
 // Fades, opacity and colour effects for one clip (ADR-036).
 import { Eye, EyeOff, Plus, Trash2 } from 'lucide-react';
-import type { ColorEffect, Sequence, TimelineItem, Track } from '@rec-it/core';
+import {
+  TRANSITION_KINDS,
+  transitionSpans,
+  type ColorEffect,
+  type Sequence,
+  type TimelineItem,
+  type Track,
+} from '@rec-it/core';
 import { Button } from '@rec-it/ui';
-import { edit, setFade, toSeconds } from '../edit';
+import {
+  clipBefore,
+  edit,
+  mediaLength,
+  setFade,
+  setTransition,
+  toSeconds,
+  TRANSITION_LABELS,
+} from '../edit';
+import { useApp } from '../store';
 import { Slider } from './Slider';
 
 const pct = (v: number) => `${Math.round(v * 100)}%`;
@@ -177,6 +193,70 @@ export function ColourSection({
       >
         {effects.length ? 'Add another colour effect' : 'Add colour effect'}
       </Button>
+    </section>
+  );
+}
+
+const SHORT = { dissolve: 'Dissolve', dipBlack: 'Black', dipWhite: 'White' } as const;
+
+/** The transition on the cut before this clip (ADR-037). */
+export function TransitionSection({
+  seq,
+  item,
+  track,
+}: {
+  seq: Sequence;
+  item: TimelineItem;
+  track: Track;
+}) {
+  const assets = useApp((s) => s.assets);
+  const before = clipBefore(track, item);
+  if (!before || track.kind === 'caption') return null;
+  const t = item.transitionIn;
+  const max = Math.max(0.1, Math.min(5, toSeconds(before.duration), toSeconds(item.duration)));
+  const span = t
+    ? transitionSpans(track, mediaLength(new Map(assets.map((a) => [a.id, a])))).find(
+        (s) => s.toId === item.id,
+      )
+    : undefined;
+  const shown = span ? toSeconds(span.end - span.start) : 0;
+  return (
+    <section data-testid="transition">
+      <h4>Transition from previous clip</h4>
+      <div className="segmented segmented--wide" role="radiogroup" aria-label="Transition">
+        {[null, ...TRANSITION_KINDS].map((kind) => (
+          <button
+            key={kind ?? 'none'}
+            type="button"
+            role="radio"
+            aria-checked={(t?.kind ?? null) === kind}
+            title={kind ? TRANSITION_LABELS[kind] : 'No transition'}
+            disabled={track.locked}
+            onClick={() => void setTransition(seq, item.id, kind)}
+          >
+            {kind ? SHORT[kind] : 'None'}
+          </button>
+        ))}
+      </div>
+      {t && (
+        <Slider
+          label="Transition length"
+          value={toSeconds(t.duration)}
+          min={0.1}
+          max={max}
+          step={0.1}
+          format={(v) => `${v.toFixed(1)} s`}
+          disabled={track.locked}
+          onCommit={(v) => setTransition(seq, item.id, t.kind, v)}
+        />
+      )}
+      {t && t.kind === 'dissolve' && shown + 1e-3 < Math.min(toSeconds(t.duration), max) && (
+        <p className="details__hint" data-testid="transition-short">
+          {shown > 0
+            ? `Only ${shown.toFixed(2)} s is shown: a dissolve uses footage from after the first clip and before this one, and there is not more of it. Trim the clips to leave more.`
+            : 'Not shown: a dissolve needs footage from after the first clip or before this one. Trim one of the clips to leave some.'}
+        </p>
+      )}
     </section>
   );
 }

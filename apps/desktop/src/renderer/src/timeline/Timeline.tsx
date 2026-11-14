@@ -34,6 +34,7 @@ import {
   flicks,
   secondsToFlicks,
   sourceTimeAt,
+  transitionSpans,
   type KeyframeProperty,
   type Sequence,
   type TimelineItem,
@@ -50,7 +51,9 @@ import {
   itemEndSec,
   keyframeTimes,
   linkedPartners,
+  mediaLength,
   setFade,
+  TRANSITION_LABELS,
   redo,
   sequenceSeconds,
   splitAtPlayhead,
@@ -616,6 +619,7 @@ function TimelineBody({ seq }: { seq: Sequence }) {
     if (asset) void addToTimeline(asset, { trackId: track.id, start: snap(timeAt(e.clientX)) });
   };
 
+  const lengthOf = useMemo(() => mediaLength(byId), [byId]);
   const step = rulerStep(zoom);
   const ticks = Array.from({ length: Math.ceil(width / zoom / step) + 1 }, (_, i) => i * step);
 
@@ -694,6 +698,27 @@ function TimelineBody({ seq }: { seq: Sequence }) {
                     />
                   );
                 })}
+              {transitionSpans(track, lengthOf).map((span) => (
+                <div
+                  key={span.toId}
+                  className="tl__transition"
+                  data-kind={span.kind}
+                  data-testid="timeline-transition"
+                  title={`${TRANSITION_LABELS[span.kind]} (${toSeconds(span.end - span.start).toFixed(2)} s)`}
+                  style={{
+                    left: toSeconds(span.start) * zoom,
+                    width: Math.max(6, toSeconds(span.end - span.start) * zoom),
+                  }}
+                  onPointerDown={(e) => {
+                    if (e.button !== 0) return;
+                    e.stopPropagation();
+                    useApp.getState().selectItems([span.toId, ...linkedPartners(seq, [span.toId])]);
+                  }}
+                  onContextMenu={(e) =>
+                    openContextMenu(e, clipMenu(latest.current.seq, [span.toId]))
+                  }
+                />
+              ))}
               {drag?.kind === 'move' &&
                 drag.moved &&
                 groupTargets(drag)

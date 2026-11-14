@@ -198,7 +198,7 @@ The roadmap is ordered so that each phase produces something that works and can 
 
 ## Phase 6 · Effects and transitions (M) → **Milestone M2.5**
 
-**Progress (14 Nov 2026).** Slice A (ADR-036): fades (handles on clip corners, linked sound fades with the picture), opacity, and stackable colour effects (brightness, contrast, saturation) matching FFmpeg's `eq` exactly in the GPU preview; golden-frame and audio parity cases. Next: transitions (cross-dissolve, dip to black), blur and blurred-background fit, speed, LUTs, chroma key, then audio effects.
+**Progress (14 Nov 2026).** Slice A (ADR-036): fades (handles on clip corners, linked sound fades with the picture), opacity, and stackable colour effects (brightness, contrast, saturation) matching FFmpeg's `eq` exactly in the GPU preview; golden-frame and audio parity cases. Slice B (ADR-037): transitions — cross dissolve (with sound crossfade) and dip to black/white on any cut, from the clip menu or the Inspector, shown as bands on the timeline; golden-frame parity case. Next: blur and blurred-background fit, speed, LUTs, chroma key, more transitions (wipe, slide, zoom), then audio effects.
 
 **Goal:** the common visual and audio effects of a Shorts editor, previewed live and exported identically. Requested 12 Nov 2026; placed before the Claude phases so the editor is complete first.
 

@@ -2,6 +2,8 @@ import { createId } from '../ids';
 import { frameDuration, snapToFrame, secondsToFlicks, type Flicks, type Rational } from '../time';
 import {
   EFFECT_KINDS,
+  TRANSITION_KINDS,
+  type TransitionKind,
   type EffectKind,
   CAPTION_ASSET,
   CAPTION_STYLES,
@@ -156,6 +158,19 @@ export type Command =
   | { type: 'effect.remove'; sequenceId: string; itemId: string; effectId: string }
   /** Moves an effect to position `index` in the stack (order matters). */
   | { type: 'effect.move'; sequenceId: string; itemId: string; effectId: string; index: number }
+  /**
+   * Puts a transition on the cut before a clip (to the clip ending where it starts on the same
+   * track), and on its linked partners' cuts where they have one. ADR-037.
+   */
+  | {
+      type: 'transition.set';
+      sequenceId: string;
+      itemId: string;
+      kind: TransitionKind;
+      /** Flicks; limited to 1 frame … 5 s and the two clips' lengths. */
+      duration: number;
+    }
+  | { type: 'transition.remove'; sequenceId: string; itemId: string }
   /** Turns automatic captions on or off and changes their look (ADR-032). */
   | { type: 'captions.update'; sequenceId: string; captions: Partial<CaptionSettings> }
   /**
@@ -261,6 +276,10 @@ function clearRange(track: Track, start: number, end: number, exceptId?: string)
 
 /** A piece of a split clip keeps only the fade at its own outer edge. */
 function withoutFade(item: TimelineItem, side: 'in' | 'out' | null): TimelineItem {
+  if (side === 'in' && item.transitionIn) {
+    const { transitionIn: _t, ...rest } = item;
+    item = rest;
+  }
   if (!side || !item.fade) return item;
   const fade = { ...item.fade, [side]: 0 as Flicks };
   const { fade: _old, ...rest } = item;
@@ -840,6 +859,35 @@ export function applyCommand(doc: ProjectDocument, command: Command, assets: Ass
           out: Math.max(0, Math.round(command.fade.out ?? item.fade?.out ?? 0)) as Flicks,
         };
         fitFades(seq, item);
+      }
+      return;
+    }
+    case 'transition.set':
+    case 'transition.remove': {
+      const seq = sequenceOf(doc, command.sequenceId);
+      const found = findItem(seq, command.itemId);
+      if (command.type === 'transition.set' && !TRANSITION_KINDS.includes(command.kind))
+        fail('Unknown transition.');
+      const before = (track: Track, item: TimelineItem) =>
+        track.items.find((i) => i !== item && itemEnd(i) === item.start);
+      if (command.type === 'transition.set') {
+        if (found.track.kind === 'caption') fail('Captions have no transitions yet.');
+        if (!before(found.track, found.item))
+          fail(
+            'A transition needs another clip ending right where this one starts, on the same track.',
+          );
+      }
+      for (const { track, item } of [found, ...partnersOf(seq, found.item)]) {
+        const prev = before(track, item);
+        if (!prev || track.kind === 'caption') continue;
+        unlocked(track);
+        if (command.type === 'transition.remove') {
+          delete item.transitionIn;
+          continue;
+        }
+        const limit = Math.min(secondsToFlicks(5), prev.duration, item.duration);
+        const d = Math.max(frameOf(seq), Math.min(limit, Math.round(command.duration)));
+        item.transitionIn = { kind: command.kind, duration: d as Flicks };
       }
       return;
     }

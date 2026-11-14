@@ -40,6 +40,7 @@ Each record states the decision, why it was made and what else was considered. R
 | 034 | Crop and the facecam + gameplay layout (manual reframing) | Accepted |
 | 035 | Automatic reframing with face detection | Accepted |
 | 036 | Fades, opacity and colour effects | Accepted |
+| 037 | Transitions: cross dissolve and dips | Accepted |
 
 ---
 
@@ -501,4 +502,32 @@ Each record states the decision, why it was made and what else was considered. R
 - **One meaning, two renderers.** `pictureAt(item, time)` in `packages/core` gives a clip's alpha (opacity × fade, linear ramps) and its combined colour (stacked colour effects collapse into one `eq`: contrasts multiply, brightness carries through, saturations multiply). The export applies `eq` after the crop and scale, then `format=yuva420p`, `lutyuv=a=val*opacity` and `fade=…:alpha=1` in timeline time, so faded and transparent clips show the layers below (or black). Audio fades are `afade` (linear). The GPU preview draws each layer with alpha blending and a shader that converts to BT.709 TV-range codes and applies exactly the per-plane gain and offset FFmpeg's `eq` uses (`eqCodes`, which mirrors vf_eq's integer maths, including that 0.12 brightness adds 27 codes, not 30.6). Web Audio multiplies the gain curve by the fade, as for volume keyframes. The compatible preview approximates with CSS `opacity` and `filter`.
 - **Editing.** The Inspector has a Colour section (add effects, switch each on/off to compare, remove, brightness/contrast/saturation sliders) and a Fades section (fade in, fade out, and opacity for pictures). Clips show fade ramps and small round handles at their top corners; dragging a handle sets the fade length in tenths of a second. Fades apply to a clip and its linked partners together, so picture and sound fade as one. Sliders keep showing a committed value until the document catches up, so arrow-key changes do not jump back.
 - **Tests.** Unit tests for fades, splitting/trimming with fades, stacking and the `eq` integer maths (checked against FFmpeg 8.1 output); a real-FFmpeg export test (fade levels over time, sound fades, half opacity, zero saturation); an audio parity case with fades (r = 0.999, 0.1 dB); a golden-frame case with a faded, partly transparent, colour-graded clip over a still (SSIM 0.994 at three times, mean colour within 3 levels); and an end-to-end test of the Inspector and the fade handles.
+
+---
+
+## ADR-037 · Transitions: cross dissolve and dips
+
+**Status.** Accepted (14 Nov 2026, Phase 6 second slice). Wipes, slides, zooms, dragging transitions from a browser, and frame holding when there is no extra footage come later.
+
+**Decisions.**
+- **Stored on the cut, applied when drawing.** A clip's `transitionIn: {kind, duration}` describes the transition from the clip that ends exactly where it starts on the same track. The timeline itself never changes: clips do not overlap in the document, so moving, trimming, splitting, ripple, captions and the transcript keep working as before. A transition whose clips stop touching is ignored (and comes back if they touch again). Splitting keeps it on the left piece only. `transition.set` / `transition.remove` (one undo step) also apply to linked partners that have a cut in the same place, so a video and its detached sound change together. Length: one frame to 5 s, and no longer than either clip. Video and audio tracks; not caption tracks yet.
+- **`presentSequence(seq, mediaLength)`** in `packages/core` turns transitions into what is drawn and heard, and both the preview and the export call it, so they cannot disagree:
+  - **Cross dissolve.** The window is centred on the cut and uses the footage after the first clip (A) and before the second (B). B starts earlier and fades in over A, its sound with it. A plays on past the cut underneath, opaque, while its sound fades out. When one side has too little footage, the other side gives more. When neither has any, nothing is shown, and the Inspector says to trim the clips. Stills always have enough.
+  - **Dip to black / white.** A fades to the colour over the first half, and B fades from it over the second; the sound dips with it. Clips do not move.
+  - The fades a transition replaces (A's fade-out, B's fade-in) are not applied on those sides. Sound-only fades (`audioFade`) and fades to a colour (`tint`) exist only on presented clips.
+- **Rendering.**
+  - Export: the existing alpha fade and `afade`, plus `fade` with a colour for dips. FFmpeg's `fade` treats pure black as code 0 on frames with alpha (darker than video black, 16), so black is passed as `0x000001`. This was found by the new golden-frame case.
+  - GPU preview: the shader mixes towards the colour (the same linear mix in YUV codes).
+  - Web Audio: `gainAt` is volume × fades × transition fades, the same as the export.
+  - Compatible preview: CSS approximations.
+  - Media lengths come from the same probe in both: `ExportAsset.durationSec` in the export, the asset's probe in the preview.
+- **Editing.**
+  - The clip menu has "Transition from previous clip ▸ Cross dissolve / Dip to black / Dip to white / None", with a default length of 0.5 s.
+  - The Inspector has a Transition section: None, Dissolve, Black or White, a length slider, and a note when footage limits the dissolve.
+  - The timeline draws each transition as a band across the cut, as long as the transition really is. Clicking the band selects the clip, and right-clicking opens its menu.
+- **Tests.**
+  - Unit tests: overlap, fades and gains summing to one; one-sided and impossible dissolves; dips; ignored when not touching; limits; split.
+  - A real-FFmpeg test: half red/half blue mid-dissolve, white at the cut of a dip.
+  - A golden-frame case with a dissolve and a dip to black at frame-exact times: SSIM 0.994–0.997, mean colour within 4 levels.
+  - An end-to-end test of the menu, the Inspector, the timeline band and undo.
 

@@ -3,9 +3,9 @@ import { Maximize2, Pause, Play, SkipBack, SkipForward, StepBack, StepForward } 
 import {
   computeLayout,
   sourceTimeAt,
-  volumeAt,
   pictureAt,
-  fadeAt,
+  gainAt,
+  presentSequence,
   type Sequence,
   type TimelineItem,
   type Track,
@@ -21,7 +21,7 @@ import {
 import { notify } from '../notifications';
 import type { MediaAsset } from '@rec-it/ipc-contract';
 import { IconButton } from '@rec-it/ui';
-import { itemEndSec, sequenceSeconds, toFlicks, toSeconds } from '../edit';
+import { itemEndSec, mediaLength, sequenceSeconds, toFlicks, toSeconds } from '../edit';
 import { useApp } from '../store';
 import { openContextMenu } from '../ui/ContextMenu';
 import { clipMenu, programMenu } from './menus';
@@ -125,16 +125,18 @@ export function ProgramMonitor({ seq }: { seq: Sequence }) {
     };
   }, []);
   const byId = useMemo(() => new Map(assets.map((a) => [a.id, a])), [assets]);
+  // What plays: transitions become overlapping, faded clips, exactly as in the export (ADR-037).
+  const played = useMemo(() => presentSequence(seq, mediaLength(byId)), [seq, byId]);
   const clips = useMemo(
     () =>
-      audibleClips(seq, (item) => {
+      audibleClips(played, (item) => {
         const a = byId.get(item.assetId);
         if (!a?.urls.proxy) return undefined;
         return a.kind === 'audio' || (a.kind === 'video' && a.probe?.audio)
           ? a.urls.proxy
           : undefined;
       }),
-    [seq, byId],
+    [played, byId],
   );
   const webAudio = gpu && rate === 1;
 
@@ -192,8 +194,8 @@ export function ProgramMonitor({ seq }: { seq: Sequence }) {
   const mounted = useMemo(() => {
     const byId = new Map(assets.map((a) => [a.id, a]));
     const list: Mounted[] = [];
-    const videoTracks = seq.tracks.filter((t) => t.kind === 'video').reverse();
-    const audioTracks = seq.tracks.filter((t) => t.kind === 'audio');
+    const videoTracks = played.tracks.filter((t) => t.kind === 'video').reverse();
+    const audioTracks = played.tracks.filter((t) => t.kind === 'audio');
     [...videoTracks, ...audioTracks].forEach((track, layer) => {
       for (const item of track.items) {
         const asset = byId.get(item.assetId);
@@ -203,7 +205,7 @@ export function ProgramMonitor({ seq }: { seq: Sequence }) {
       }
     });
     return list;
-  }, [assets, seq, playhead]);
+  }, [assets, played, playhead]);
 
   // Keep every media element in step with the playhead.
   useEffect(() => {
@@ -218,7 +220,7 @@ export function ProgramMonitor({ seq }: { seq: Sequence }) {
       const fps = m.asset.probe?.video?.fps;
       const still = local + (fps && fps.num > 0 ? (0.25 * fps.den) / fps.num : 0.008);
       const at = toFlicks(playhead);
-      el.volume = Math.min(1, Math.max(0, volumeAt(m.item, at) * fadeAt(m.item, at)));
+      el.volume = Math.min(1, Math.max(0, gainAt(m.item, at)));
       el.muted =
         m.item.muted || m.track.muted || (m.asset.kind === 'video' && !m.asset.probe?.audio);
       if (!active) {
@@ -343,9 +345,19 @@ export function ProgramMonitor({ seq }: { seq: Sequence }) {
                     opacity: visible ? pic.alpha : 0,
                     // Approximation of the eq filter (exact in the GPU preview and export).
                     filter:
-                      pic.brightness || pic.contrast !== 1 || pic.saturation !== 1
-                        ? `brightness(${1 + pic.brightness}) contrast(${pic.contrast}) saturate(${pic.saturation})`
-                        : undefined,
+                      [
+                        pic.brightness || pic.contrast !== 1 || pic.saturation !== 1
+                          ? `brightness(${1 + pic.brightness}) contrast(${pic.contrast}) saturate(${pic.saturation})`
+                          : '',
+                        // Dips (ADR-037): towards black by darkening, towards white by inverting
+                        // the darkening (exact only in the GPU preview and export).
+                        pic.tint && pic.tintColor === 'black' ? `brightness(${1 - pic.tint})` : '',
+                        pic.tint && pic.tintColor === 'white'
+                          ? `invert(1) brightness(${1 - pic.tint}) invert(1)`
+                          : '',
+                      ]
+                        .filter(Boolean)
+                        .join(' ') || undefined,
                     // Crop (ADR-034): show only the kept part of the picture.
                     ...(v &&
                     (layout.source.w !== v.displayWidth || layout.source.h !== v.displayHeight)

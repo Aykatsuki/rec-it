@@ -236,7 +236,14 @@ describe.skipIf(!bins)('export renders correct frames (real FFmpeg)', () => {
   const exportAssets = (id: string): ExportAsset | undefined => {
     const i = info[id];
     return i
-      ? { path: files[id]!, kind: i.kind, width: i.width, height: i.height, hasAudio: i.hasAudio }
+      ? {
+          path: files[id]!,
+          kind: i.kind,
+          width: i.width,
+          height: i.height,
+          hasAudio: i.hasAudio,
+          ...(i.duration === null ? {} : { durationSec: i.duration / 705_600_000 }),
+        }
       : undefined;
   };
 
@@ -702,6 +709,46 @@ describe.skipIf(!bins)('export renders correct frames (real FFmpeg)', () => {
       ])
         expect(colour(pixel(out, t, x!, y!)), `${t}s at ${x},${y}`).toBe('green');
   }, 60_000);
+
+  it('cross dissolves and dips between clips', async () => {
+    const twoClips =
+      (kind: 'dissolve' | 'dipWhite') =>
+      ({ v1 }: { v1: string }) =>
+        [
+          {
+            type: 'item.add',
+            trackId: v1,
+            assetId: 'red',
+            start: 0,
+            sourceIn: 0,
+            duration: s(1.5),
+            id: 'r',
+          },
+          {
+            type: 'item.add',
+            trackId: v1,
+            assetId: 'blue',
+            start: s(1.5),
+            sourceIn: s(1),
+            duration: s(1.5),
+            id: 'b',
+          },
+          { type: 'transition.set', itemId: 'b', kind, duration: s(1) },
+        ] as unknown as Omit<Command, 'sequenceId'>[];
+    const at = (file: string, t: number) => pixel(file, t, 176, 316);
+    const mix = await render(twoClips('dissolve'));
+    expect(at(mix.out, 0.9)[0]).toBeGreaterThan(200); // red, before the dissolve
+    const mid = at(mix.out, 1.5);
+    // Half way: about half red, half blue.
+    expect(Math.abs(mid[0] - 128)).toBeLessThan(35);
+    expect(Math.abs(mid[2] - 128)).toBeLessThan(35);
+    expect(at(mix.out, 2.1)[2]).toBeGreaterThan(200);
+    const dip = await render(twoClips('dipWhite'));
+    expect(Math.min(...at(dip.out, 1.5))).toBeGreaterThan(215); // white at the cut
+    expect(at(dip.out, 1.25)[1]).toBeGreaterThan(90); // red on its way to white
+    expect(at(dip.out, 2.1)[2]).toBeGreaterThan(200);
+    expect(dip.plan.filterGraph).toContain('color=white');
+  }, 90_000);
 
   it('fades picture and sound, and applies opacity and colour', async () => {
     const { out } = await render(({ v1 }) => [

@@ -2,6 +2,8 @@
 // and the integration tests render real files from it.
 import {
   combinedColor,
+  presentSequence,
+  secondsToFlicks,
   itemEnd,
   computeLayout,
   cropRect,
@@ -22,6 +24,8 @@ export interface ExportAsset {
   height?: number;
   hasAudio: boolean;
   hdr?: boolean;
+  /** Media length (as probed); transitions use the media around a clip (ADR-037). */
+  durationSec?: number;
 }
 
 export type VideoCodec = 'h264' | 'hevc';
@@ -357,13 +361,28 @@ function opacityFilter(item: TimelineItem): string[] {
   return o >= 1 ? [] : [`lutyuv=a=val*${num(o)}`];
 }
 
-/** Picture fades on the alpha channel, in timeline time (after setpts). */
+/**
+ * Picture fades on the alpha channel, and dips to a colour (ADR-037) on the picture itself, in
+ * timeline time (after setpts).
+ */
 function fadeFilters(item: TimelineItem): string[] {
-  const f = item.fade;
-  if (!f) return [];
   const start = flicksToSeconds(item.start);
   const end = flicksToSeconds(itemEnd(item));
   const out: string[] = [];
+  const t = item.tint;
+  if (t) {
+    // FFmpeg's fade takes pure black to mean code 0 on pictures with alpha (darker than video
+    // black, 16); any other colour is converted properly, so black is given as 0x000001.
+    const color = t.color === 'white' ? 'white' : '0x000001';
+    if (t.in > 0)
+      out.push(`fade=t=in:st=${num(start)}:d=${num(flicksToSeconds(t.in))}:color=${color}`);
+    if (t.out > 0) {
+      const d = flicksToSeconds(t.out);
+      out.push(`fade=t=out:st=${num(end - d)}:d=${num(d)}:color=${color}`);
+    }
+  }
+  const f = item.fade;
+  if (!f) return out;
   if (f.in > 0) out.push(`fade=t=in:st=${num(start)}:d=${num(flicksToSeconds(f.in))}:alpha=1`);
   if (f.out > 0) {
     const d = flicksToSeconds(f.out);
@@ -374,14 +393,16 @@ function fadeFilters(item: TimelineItem): string[] {
 
 /** Sound fades, in the clip's own time (its audio starts at 0 after the input seek). */
 function audioFades(item: TimelineItem): string {
-  const f = item.fade;
-  if (!f) return '';
   const dur = flicksToSeconds(item.duration);
   let out = '';
-  if (f.in > 0) out += `afade=t=in:st=0:d=${num(flicksToSeconds(f.in))},`;
-  if (f.out > 0) {
-    const d = flicksToSeconds(f.out);
-    out += `afade=t=out:st=${num(dur - d)}:d=${num(d)},`;
+  // The clip's fades, then the sound-only fades of transitions (ADR-037): gains multiply.
+  for (const f of [item.fade, item.audioFade]) {
+    if (!f) continue;
+    if (f.in > 0) out += `afade=t=in:st=0:d=${num(flicksToSeconds(f.in))},`;
+    if (f.out > 0) {
+      const d = flicksToSeconds(f.out);
+      out += `afade=t=out:st=${num(dur - d)}:d=${num(d)},`;
+    }
   }
   return out;
 }
@@ -412,6 +433,13 @@ function buildGraph(
   audioFinish: string | null,
   withVideo: boolean,
 ): GraphParts {
+  // What is drawn and heard: transitions become overlapping, faded clips (ADR-037).
+  seq = presentSequence(seq, (id) => {
+    const a = assets(id);
+    if (!a) return undefined;
+    if (a.kind === 'image') return null;
+    return a.durationSec === undefined ? undefined : secondsToFlicks(a.durationSec);
+  });
   const total = flicksToSeconds(sequenceDuration(seq));
   if (total <= 0)
     throw new ExportPlanError('The timeline is empty. Add some clips before exporting.');

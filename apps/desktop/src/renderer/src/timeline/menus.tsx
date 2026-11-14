@@ -27,8 +27,9 @@ import {
   VolumeX,
   LayoutPanelTop,
   ScanFace,
+  Blend,
 } from 'lucide-react';
-import { DEFAULT_TRANSFORM, type Sequence, type Track } from '@rec-it/core';
+import { DEFAULT_TRANSFORM, TRANSITION_KINDS, type Sequence, type Track } from '@rec-it/core';
 import type { MediaAsset } from '@rec-it/ipc-contract';
 import { backend, shell } from '../api';
 import {
@@ -53,6 +54,10 @@ import {
   updateSelected,
   facecamLayout,
   autoReframeClip,
+  clipBefore,
+  findItem,
+  setTransition,
+  TRANSITION_LABELS,
 } from '../edit';
 import { notify } from '../notifications';
 import { activeSequence, useApp } from '../store';
@@ -179,6 +184,7 @@ export function clipMenu(seq: Sequence, ids: string[]): MenuEntry[] {
         },
       ],
     },
+    transitionMenu(seq, ids[0]!),
     !anyCaption && {
       label: allMuted ? 'Unmute clip' : 'Mute clip',
       icon: allMuted ? <Volume2 size={I} /> : <VolumeX size={I} />,
@@ -416,4 +422,24 @@ export function assetMenu(asset: MediaAsset): MenuEntry[] {
           .catch((err: unknown) => notify(String((err as Error).message ?? err), 'warn')),
     },
   ];
+}
+
+/** "Transition from previous clip" for the clicked clip, when another clip ends where it starts. */
+function transitionMenu(seq: Sequence, id: string): MenuEntry {
+  const found = findItem(seq, id);
+  if (!found || found.track.kind === 'caption' || !clipBefore(found.track, found.item)) return null;
+  const current = found.item.transitionIn?.kind;
+  return {
+    label: 'Transition from previous clip',
+    icon: <Blend size={I} />,
+    submenu: [
+      ...TRANSITION_KINDS.map((kind) => ({
+        label: TRANSITION_LABELS[kind],
+        checked: current === kind,
+        onSelect: () => void setTransition(seq, id, kind),
+      })),
+      sep,
+      { label: 'None', checked: !current, onSelect: () => void setTransition(seq, id, null) },
+    ],
+  };
 }
