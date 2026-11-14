@@ -28,6 +28,7 @@ import {
   LayoutPanelTop,
   ScanFace,
   Blend,
+  Layers,
 } from 'lucide-react';
 import { DEFAULT_TRANSFORM, TRANSITION_KINDS, type Sequence, type Track } from '@rec-it/core';
 import type { MediaAsset } from '@rec-it/ipc-contract';
@@ -54,6 +55,7 @@ import {
   updateSelected,
   facecamLayout,
   autoReframeClip,
+  blurredBackground,
   clipBefore,
   findItem,
   setTransition,
@@ -148,6 +150,13 @@ export function clipMenu(seq: Sequence, ids: string[]): MenuEntry[] {
           onSelect: () =>
             void updateSelected({ transform: { crop: { left: 0, top: 0, right: 0, bottom: 0 } } }),
         },
+        one &&
+          one.track.kind === 'video' &&
+          !one.item.caption && {
+            label: 'Fit with blurred background',
+            icon: <Layers size={I} />,
+            onSelect: () => void blurredBackground(one.item.id),
+          },
         one &&
           one.track.kind === 'video' &&
           asset?.kind === 'video' && {

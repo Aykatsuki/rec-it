@@ -112,7 +112,7 @@ export interface Transition {
 export type TintColor = 'black' | 'white';
 
 /** Effect kinds available so far; more arrive through Phase 6. */
-export const EFFECT_KINDS = ['color'] as const;
+export const EFFECT_KINDS = ['color', 'blur'] as const;
 export type EffectKind = (typeof EFFECT_KINDS)[number];
 
 /**
@@ -128,7 +128,19 @@ export interface ColorEffect {
   contrast: number;
   saturation: number;
 }
-export type Effect = ColorEffect;
+/**
+ * Gaussian blur. `size` is the blur's standard deviation as a share of the picture's height on
+ * screen, so it looks the same at any preview or export size (ADR-038).
+ */
+export interface BlurEffect {
+  id: string;
+  kind: 'blur';
+  enabled: boolean;
+  size: number;
+}
+export const DEFAULT_BLUR = 0.02;
+export const MAX_BLUR = 0.2;
+export type Effect = ColorEffect | BlurEffect;
 
 /** How a clip's picture looks at a moment: alpha (opacity × fades) and combined colour. */
 export interface PictureState {
@@ -136,6 +148,8 @@ export interface PictureState {
   /** How far the picture is faded to `tintColor` (0 = not at all), for dip transitions. */
   tint: number;
   tintColor: TintColor;
+  /** Blur (standard deviation as a share of the picture's height; 0 = sharp). ADR-038. */
+  blur: number;
   brightness: number;
   contrast: number;
   saturation: number;
@@ -170,6 +184,7 @@ export function pictureAt(item: TimelineItem, time: number): PictureState {
   }
   const tint = item.tint ? 1 - fadeAt({ ...item, fade: item.tint }, time) : 0;
   return {
+    blur: blurOf(item),
     alpha: (item.opacity ?? 1) * fadeAt(item, time),
     tint,
     tintColor: item.tint?.color ?? 'black',
@@ -177,6 +192,13 @@ export function pictureAt(item: TimelineItem, time: number): PictureState {
     contrast,
     saturation,
   };
+}
+
+/** The clip's blur: blurs in a stack add up like Gaussians (√ of the sum of squares). */
+export function blurOf(item: TimelineItem): number {
+  let v = 0;
+  for (const e of item.effects ?? []) if (e.enabled && e.kind === 'blur') v += e.size * e.size;
+  return Math.sqrt(v);
 }
 
 /** The colour effects the export applies, collapsed into one (null when unchanged). */

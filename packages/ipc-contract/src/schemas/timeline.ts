@@ -57,14 +57,22 @@ export const timelineItemSchema = z.object({
     .optional(),
   effects: z
     .array(
-      z.object({
-        id,
-        kind: z.literal('color'),
-        enabled: z.boolean(),
-        brightness: z.number().min(-1).max(1),
-        contrast: z.number().min(0).max(3),
-        saturation: z.number().min(0).max(3),
-      }),
+      z.discriminatedUnion('kind', [
+        z.object({
+          id,
+          kind: z.literal('color'),
+          enabled: z.boolean(),
+          brightness: z.number().min(-1).max(1),
+          contrast: z.number().min(0).max(3),
+          saturation: z.number().min(0).max(3),
+        }),
+        z.object({
+          id,
+          kind: z.literal('blur'),
+          enabled: z.boolean(),
+          size: z.number().min(0).max(0.2),
+        }),
+      ]),
     )
     .max(16)
     .optional(),
@@ -147,6 +155,7 @@ const singleCommandSchema = z.discriminatedUnion('type', [
     ...seqId,
     kind: z.enum(['video', 'audio', 'caption']),
     id: id.optional(),
+    below: id.optional(),
   }),
   z.object({ type: z.literal('track.remove'), ...seqId, trackId: id }),
   z.object({
@@ -300,7 +309,7 @@ const singleCommandSchema = z.discriminatedUnion('type', [
     type: z.literal('effect.add'),
     ...seqId,
     itemId: id,
-    kind: z.enum(['color']),
+    kind: z.enum(['color', 'blur']),
     id: id.optional(),
   }),
   z.object({
@@ -314,6 +323,7 @@ const singleCommandSchema = z.discriminatedUnion('type', [
         brightness: z.number().min(-1).max(1).optional(),
         contrast: z.number().min(0).max(3).optional(),
         saturation: z.number().min(0).max(3).optional(),
+        size: z.number().min(0).max(0.2).optional(),
       })
       .strict()
       .optional(),

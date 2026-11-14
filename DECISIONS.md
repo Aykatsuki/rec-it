@@ -41,6 +41,7 @@ Each record states the decision, why it was made and what else was considered. R
 | 035 | Automatic reframing with face detection | Accepted |
 | 036 | Fades, opacity and colour effects | Accepted |
 | 037 | Transitions: cross dissolve and dips | Accepted |
+| 038 | Blur and the blurred-background fit | Accepted |
 
 ---
 
@@ -530,4 +531,21 @@ Each record states the decision, why it was made and what else was considered. R
   - A real-FFmpeg test: half red/half blue mid-dissolve, white at the cut of a dip.
   - A golden-frame case with a dissolve and a dip to black at frame-exact times: SSIM 0.994–0.997, mean colour within 4 levels.
   - An end-to-end test of the menu, the Inspector, the timeline band and undo.
+
+---
+
+## ADR-038 · Blur and the blurred-background fit
+
+**Status.** Accepted (14 Nov 2026, Phase 6 third slice). Also delivers the "blurred-background fit" fallback layout of Phase 5.
+
+**Decisions.**
+- **Blur effect.** A new effect kind, `blur`, with one setting, `size`: the Gaussian's standard deviation as a share of the picture's height on screen (0–0.2; new blurs start at 0.02). Because it is relative to the picture as shown, a blur looks the same in a small preview, full screen and the export. Several blurs in a stack add up like Gaussians (√ of the sum of squares). The blur stays inside the picture: its edges repeat rather than fade into what is behind. That is what a background fill needs, and it is the same in preview and export.
+- **Export.** After scaling, `format=yuva420p`, then `gblur` with 4 steps (within a few levels of a true Gaussian; 1 step is noticeably boxy). Luma gets the sigma and the half-size chroma planes get half of it. gblur blurs every plane by the same number of plane pixels, which spread colour twice as far as brightness and left fringes at colour edges; the golden-frame test showed this. Keyframed clips blur once at their largest size, before the per-frame transform.
+- **Preview.** The compositor renders a blurred layer through two separable blur passes into offscreen textures. The passes run at a reduced size where the blur is at most 8 pixels wide (blurred pictures have no fine detail to lose), capped at 2048 px, so a strong full-screen blur costs little. Samples are clamped to the kept part of the picture, matching the export's edges. Then the layer is drawn as usual, with rotation, opacity, colour and fades. The compatible preview uses CSS `blur()`.
+- **Blurred background.** One action ("Blurred background" in the Inspector's Framing, or "Fit with blurred background" in the clip's Framing menu) fits the clip into the frame. It also puts a muted, linked copy of it, filling the frame, on the nearest free video track below; `track.add` gained `below` to create one there. The copy is blurred (0.03) and slightly darkened with a colour effect. Everything stays editable: the copy is an ordinary clip with ordinary effects. One undo step.
+- **Inspector.** The Colour section became **Effects**: colour and blur cards in stack order, each with on/off and remove, and buttons to add either.
+- **Tests.**
+  - Unit tests for blur stacking, limits and on/off.
+  - A real-FFmpeg test: sigma in proportion to the picture height, and the ramp across an edge at 0, ±1 sigma and further out.
+  - A golden-frame case of the blurred-background layout, created through the UI (SSIM 0.997).
 

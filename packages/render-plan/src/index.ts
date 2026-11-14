@@ -1,6 +1,7 @@
 // Sequence → FFmpeg export command (ARCHITECTURE §10). Pure: no I/O, so it is unit-tested,
 // and the integration tests render real files from it.
 import {
+  blurOf,
   combinedColor,
   presentSequence,
   secondsToFlicks,
@@ -320,6 +321,7 @@ function animatedLayer(
     filters: [
       `scale=${wB}:${hB}:flags=bicubic:out_color_matrix=bt709:out_range=tv`,
       'setsar=1',
+      ...blurFilter(item, hB),
       'format=yuva420p',
       `pad=${Dw}:${Dh}:(ow-iw)/2:(oh-ih)/2:color=black@0`,
       `perspective=x0='${x0}':y0='${y0}':x1='${x1}':y1='${y1}':x2='${x2}':y2='${y2}':x3='${x3}':y3='${y3}':sense=destination:eval=frame:interpolation=linear`,
@@ -352,6 +354,22 @@ function colorFilter(item: TimelineItem): string[] {
   if (!c) return [];
   return [
     `eq=brightness=${num(c.brightness)}:contrast=${num(c.contrast)}:saturation=${num(c.saturation)}`,
+  ];
+}
+
+/**
+ * Blur (ADR-038) on the picture as laid out, `height` pixels tall: the standard deviation is a
+ * share of that height. gblur with 4 steps is within a few levels of a true Gaussian. It blurs
+ * every plane by the same number of plane pixels, so the half-size chroma planes of 4:2:0 get
+ * half the sigma (otherwise colours spread twice as far as brightness and edges get fringes).
+ */
+function blurFilter(item: TimelineItem, height: number): string[] {
+  const sigma = blurOf(item) * height;
+  if (sigma < 0.3) return [];
+  return [
+    'format=yuva420p',
+    `gblur=sigma=${num(sigma)}:steps=4:planes=1`,
+    `gblur=sigma=${num(sigma / 2)}:steps=4:planes=6`,
   ];
 }
 
@@ -523,6 +541,7 @@ function buildGraph(
         // Converting to BT.709 here keeps colours the same as the preview for every source.
         `scale=${width}:${height}:flags=bicubic:out_color_matrix=bt709:out_range=tv`,
         'setsar=1',
+        ...blurFilter(item, height),
         ...colorFilter(item),
         'format=yuva420p',
         ...opacityFilter(item),

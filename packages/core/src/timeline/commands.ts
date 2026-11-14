@@ -2,6 +2,8 @@ import { createId } from '../ids';
 import { frameDuration, snapToFrame, secondsToFlicks, type Flicks, type Rational } from '../time';
 import {
   EFFECT_KINDS,
+  DEFAULT_BLUR,
+  MAX_BLUR,
   TRANSITION_KINDS,
   type TransitionKind,
   type EffectKind,
@@ -48,7 +50,14 @@ export type Command =
       height?: number;
       fps?: Rational;
     }
-  | { type: 'track.add'; sequenceId: string; kind: TrackKind; id?: string }
+  | {
+      type: 'track.add';
+      sequenceId: string;
+      kind: TrackKind;
+      id?: string;
+      /** Puts a new video track just below this one instead of on top. */
+      below?: string;
+    }
   /** Deletes a track and every clip on it. The last video or audio track cannot be deleted. */
   | { type: 'track.remove'; sequenceId: string; trackId: string }
   | {
@@ -153,7 +162,7 @@ export type Command =
       itemId: string;
       effectId: string;
       enabled?: boolean;
-      params?: Partial<Record<'brightness' | 'contrast' | 'saturation', number>>;
+      params?: Partial<Record<'brightness' | 'contrast' | 'saturation' | 'size', number>>;
     }
   | { type: 'effect.remove'; sequenceId: string; itemId: string; effectId: string }
   /** Moves an effect to position `index` in the stack (order matters). */
@@ -404,7 +413,11 @@ export function applyCommand(doc: ProjectDocument, command: Command, assets: Ass
       const n = nextTrackNumber(seq, command.kind);
       const track = blankTrack(command.kind, `${TRACK_LETTER[command.kind]}${n}`, command.id);
       if (command.kind === 'caption') seq.tracks.unshift(track);
-      else if (command.kind === 'video') {
+      else if (command.kind === 'video' && command.below) {
+        const at = seq.tracks.findIndex((t) => t.id === command.below && t.kind === 'video');
+        if (at < 0) fail('No such video track.');
+        seq.tracks.splice(at + 1, 0, track);
+      } else if (command.kind === 'video') {
         // New video tracks go on top of the video tracks, below any caption tracks.
         const firstVideo = seq.tracks.findIndex((t) => t.kind === 'video');
         seq.tracks.splice(firstVideo < 0 ? 0 : firstVideo, 0, track);
@@ -898,14 +911,12 @@ export function applyCommand(doc: ProjectDocument, command: Command, assets: Ass
       if (item.caption || track.kind !== 'video') fail('Effects go on video clips and images.');
       if (!EFFECT_KINDS.includes(command.kind)) fail('Unknown effect.');
       if ((item.effects?.length ?? 0) >= 16) fail('A clip can have up to 16 effects.');
-      (item.effects ??= []).push({
-        id: command.id ?? createId('fx'),
-        kind: 'color',
-        enabled: true,
-        brightness: 0,
-        contrast: 1,
-        saturation: 1,
-      });
+      const id = command.id ?? createId('fx');
+      (item.effects ??= []).push(
+        command.kind === 'blur'
+          ? { id, kind: 'blur', enabled: true, size: DEFAULT_BLUR }
+          : { id, kind: 'color', enabled: true, brightness: 0, contrast: 1, saturation: 1 },
+      );
       return;
     }
     case 'effect.update': {
@@ -917,6 +928,10 @@ export function applyCommand(doc: ProjectDocument, command: Command, assets: Ass
       const p = command.params ?? {};
       const clamp = (v: number | undefined, lo: number, hi: number, d: number) =>
         v === undefined || !Number.isFinite(v) ? d : Math.min(hi, Math.max(lo, v));
+      if (fx.kind === 'blur') {
+        fx.size = clamp(p.size, 0, MAX_BLUR, fx.size);
+        return;
+      }
       fx.brightness = clamp(p.brightness, -1, 1, fx.brightness);
       fx.contrast = clamp(p.contrast, 0, 3, fx.contrast);
       fx.saturation = clamp(p.saturation, 0, 3, fx.saturation);

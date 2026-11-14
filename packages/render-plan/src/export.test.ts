@@ -223,6 +223,16 @@ describe.skipIf(!bins)('export renders correct frames (real FFmpeg)', () => {
       files.blue,
     );
     run('-f', 'lavfi', '-i', 'color=0x00ff00:s=200x200', '-frames:v', '1', files.green);
+    files.half = join(dir, 'half.png');
+    run(
+      '-f',
+      'lavfi',
+      '-i',
+      'color=black:s=200x200,drawbox=x=100:y=0:w=100:h=200:color=white:t=fill',
+      '-frames:v',
+      '1',
+      files.half,
+    );
     run('-f', 'lavfi', '-i', 'sine=f=500:d=5', files.tone);
   }, 60_000);
   afterAll(() => rmSync(dir, { recursive: true, force: true }));
@@ -231,6 +241,7 @@ describe.skipIf(!bins)('export renders correct frames (real FFmpeg)', () => {
     red: { kind: 'video', duration: s(3), hasAudio: true, width: 640, height: 360 },
     blue: { kind: 'video', duration: s(3), hasAudio: false, width: 640, height: 360 },
     green: { kind: 'image', duration: null, hasAudio: false, width: 200, height: 200 },
+    half: { kind: 'image', duration: null, hasAudio: false, width: 200, height: 200 },
     tone: { kind: 'audio', duration: s(5), hasAudio: true },
   };
   const exportAssets = (id: string): ExportAsset | undefined => {
@@ -708,6 +719,34 @@ describe.skipIf(!bins)('export renders correct frames (real FFmpeg)', () => {
         [176, 316],
       ])
         expect(colour(pixel(out, t, x!, y!)), `${t}s at ${x},${y}`).toBe('green');
+  }, 60_000);
+
+  it('blurs a picture in proportion to its height on screen', async () => {
+    const { out, plan } = await render(({ v1 }) => [
+      {
+        type: 'item.add',
+        trackId: v1,
+        assetId: 'half',
+        start: 0,
+        duration: s(1),
+        id: 'g',
+        transform: { fit: 'fit' },
+      },
+      { type: 'effect.add', itemId: 'g', kind: 'blur', id: 'b' },
+      { type: 'effect.update', itemId: 'g', effectId: 'b', params: { size: 0.05 } },
+    ]);
+    // The picture is 360 px tall on screen: sigma 18 px.
+    expect(plan.filterGraph).toContain(
+      'gblur=sigma=18:steps=4:planes=1,gblur=sigma=9:steps=4:planes=6',
+    );
+    // Black left half, white right half, the edge at x = 180: grey there, a soft ramp around it.
+    const v = (x: number) => pixel(out, 0.5, x - 4, 316)[1];
+    expect(Math.abs(v(180) - 128)).toBeLessThan(25);
+    expect(v(162)).toBeGreaterThan(20); // 1 sigma into the black: about 16% white
+    expect(v(162)).toBeLessThan(70);
+    expect(v(198)).toBeGreaterThan(185);
+    expect(v(198)).toBeLessThan(235);
+    expect(v(60)).toBeLessThan(8);
   }, 60_000);
 
   it('cross dissolves and dips between clips', async () => {
