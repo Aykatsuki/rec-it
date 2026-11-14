@@ -1,5 +1,6 @@
 // Timeline editing helpers used by the timeline, inspector and shortcuts.
 import {
+  DEFAULT_TRANSFORM,
   FLICKS_PER_SECOND,
   autoReframe,
   hasKeyframes,
@@ -854,4 +855,89 @@ export function mediaLength(byId: Map<string, MediaAsset>) {
     const d = a.probe?.durationSec;
     return d === undefined ? undefined : Math.round(d * FLICKS_PER_SECOND);
   };
+}
+
+/** How strong the blur behind a fitted clip is (share of the frame height). */
+export const BACKGROUND_BLUR = 0.03;
+
+/**
+ * Fits a clip into the frame with a blurred, darkened copy of itself filling the frame behind it
+ * (ADR-038). The copy is muted and linked, on the nearest free video track below (or a new one).
+ */
+export async function blurredBackground(itemId: string): Promise<void> {
+  const state = useApp.getState();
+  const seq = activeSequence(state);
+  const found = findItem(seq, itemId);
+  if (!seq || !found || found.track.kind !== 'video' || found.item.caption) return;
+  const { item, track } = found;
+  const videoTracks = seq.tracks.filter((t) => t.kind === 'video');
+  const free = (t: Track) =>
+    !t.locked &&
+    !t.items.some((i) => i.start < item.start + item.duration && i.start + i.duration > item.start);
+  const below = videoTracks.slice(videoTracks.indexOf(track) + 1).find(free);
+  const trackId = below?.id ?? `track_${crypto.randomUUID()}`;
+  const copyId = `item_${crypto.randomUUID()}`;
+  const blurId = `fx_${crypto.randomUUID()}`;
+  const dimId = `fx_${crypto.randomUUID()}`;
+  const ok = await edit({
+    type: 'batch',
+    commands: [
+      ...(below
+        ? []
+        : [
+            {
+              type: 'track.add' as const,
+              sequenceId: seq.id,
+              kind: 'video' as const,
+              id: trackId,
+              below: track.id,
+            },
+          ]),
+      {
+        type: 'item.add',
+        sequenceId: seq.id,
+        trackId,
+        assetId: item.assetId,
+        id: copyId,
+        start: item.start,
+        sourceIn: item.sourceIn,
+        duration: item.duration,
+        muted: true,
+        volume: item.volume,
+        transform: {
+          ...DEFAULT_TRANSFORM,
+          ...(item.transform.crop ? { crop: item.transform.crop } : {}),
+        },
+      },
+      { type: 'effect.add', sequenceId: seq.id, itemId: copyId, kind: 'blur', id: blurId },
+      {
+        type: 'effect.update',
+        sequenceId: seq.id,
+        itemId: copyId,
+        effectId: blurId,
+        params: { size: BACKGROUND_BLUR },
+      },
+      { type: 'effect.add', sequenceId: seq.id, itemId: copyId, kind: 'color', id: dimId },
+      {
+        type: 'effect.update',
+        sequenceId: seq.id,
+        itemId: copyId,
+        effectId: dimId,
+        params: { brightness: -0.08 },
+      },
+      {
+        type: 'item.update',
+        sequenceId: seq.id,
+        itemId: item.id,
+        transform: { fit: 'fit' },
+      },
+      {
+        type: 'item.link',
+        sequenceId: seq.id,
+        itemIds: [item.id, copyId],
+        ...(item.linkId ? { linkId: item.linkId } : {}),
+      },
+    ],
+  });
+  if (ok) notify('Added a blurred copy behind the clip. Select it to change the blur.', 'info');
 }

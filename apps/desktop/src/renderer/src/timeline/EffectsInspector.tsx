@@ -3,7 +3,7 @@ import { Eye, EyeOff, Plus, Trash2 } from 'lucide-react';
 import {
   TRANSITION_KINDS,
   transitionSpans,
-  type ColorEffect,
+  type Effect,
   type Sequence,
   type TimelineItem,
   type Track,
@@ -93,106 +93,137 @@ export function ColourSection({
   item: TimelineItem;
   track: Track;
 }) {
-  const effects = (item.effects ?? []).filter((e): e is ColorEffect => e.kind === 'color');
-  const update = (e: ColorEffect, change: { enabled?: boolean; params?: Partial<ColorEffect> }) =>
+  const effects = item.effects ?? [];
+  const update = (
+    e: Effect,
+    change: {
+      enabled?: boolean;
+      params?: Partial<Record<'brightness' | 'contrast' | 'saturation' | 'size', number>>;
+    },
+  ) =>
     edit({
       type: 'effect.update',
       sequenceId: seq.id,
       itemId: item.id,
       effectId: e.id,
       ...(change.enabled !== undefined ? { enabled: change.enabled } : {}),
-      ...(change.params
-        ? {
-            params: {
-              ...(change.params.brightness !== undefined
-                ? { brightness: change.params.brightness }
-                : {}),
-              ...(change.params.contrast !== undefined ? { contrast: change.params.contrast } : {}),
-              ...(change.params.saturation !== undefined
-                ? { saturation: change.params.saturation }
-                : {}),
-            },
-          }
-        : {}),
+      ...(change.params ? { params: change.params } : {}),
     });
+  const count = (kind: Effect['kind']) => effects.filter((e) => e.kind === kind).length;
+  const add = (kind: Effect['kind']) =>
+    void edit({ type: 'effect.add', sequenceId: seq.id, itemId: item.id, kind });
   return (
     <section data-testid="colour">
-      <h4>Colour</h4>
-      {effects.map((e, i) => (
-        <div key={e.id} className="effect" data-testid="colour-effect">
-          <div className="effect__head">
-            <span className="effect__name">
-              Colour{effects.length > 1 ? ` ${i + 1}` : ''}
-              {!e.enabled && ' (off)'}
-            </span>
-            <Button
-              size="sm"
-              variant="ghost"
-              icon={e.enabled ? <Eye size={13} /> : <EyeOff size={13} />}
-              aria-label={e.enabled ? 'Turn effect off' : 'Turn effect on'}
-              title={e.enabled ? 'Turn off (compare with the original)' : 'Turn on'}
-              disabled={track.locked}
-              onClick={() => void update(e, { enabled: !e.enabled })}
-            />
-            <Button
-              size="sm"
-              variant="ghost"
-              icon={<Trash2 size={13} />}
-              aria-label="Remove effect"
-              disabled={track.locked}
-              onClick={() =>
-                void edit({
-                  type: 'effect.remove',
-                  sequenceId: seq.id,
-                  itemId: item.id,
-                  effectId: e.id,
-                })
-              }
-            />
+      <h4>Effects</h4>
+      {effects.map((e) => {
+        const same = effects.filter((x) => x.kind === e.kind);
+        const name =
+          (e.kind === 'color' ? 'Colour' : 'Blur') +
+          (same.length > 1 ? ` ${same.indexOf(e) + 1}` : '');
+        return (
+          <div
+            key={e.id}
+            className="effect"
+            data-testid={e.kind === 'color' ? 'colour-effect' : 'blur-effect'}
+          >
+            <div className="effect__head">
+              <span className="effect__name">
+                {name}
+                {!e.enabled && ' (off)'}
+              </span>
+              <Button
+                size="sm"
+                variant="ghost"
+                icon={e.enabled ? <Eye size={13} /> : <EyeOff size={13} />}
+                aria-label={e.enabled ? 'Turn effect off' : 'Turn effect on'}
+                title={e.enabled ? 'Turn off (compare with the original)' : 'Turn on'}
+                disabled={track.locked}
+                onClick={() => void update(e, { enabled: !e.enabled })}
+              />
+              <Button
+                size="sm"
+                variant="ghost"
+                icon={<Trash2 size={13} />}
+                aria-label="Remove effect"
+                disabled={track.locked}
+                onClick={() =>
+                  void edit({
+                    type: 'effect.remove',
+                    sequenceId: seq.id,
+                    itemId: item.id,
+                    effectId: e.id,
+                  })
+                }
+              />
+            </div>
+            {e.kind === 'blur' ? (
+              <Slider
+                label="Blur amount"
+                value={e.size}
+                min={0}
+                max={0.1}
+                step={0.001}
+                format={(v) => `${(v * 1000).toFixed(0)}`}
+                disabled={track.locked}
+                onCommit={(v) => update(e, { params: { size: v } })}
+              />
+            ) : (
+              <>
+                <Slider
+                  label="Brightness"
+                  value={e.brightness}
+                  min={-0.5}
+                  max={0.5}
+                  step={0.01}
+                  format={(v) => `${v > 0 ? '+' : ''}${Math.round(v * 100)}`}
+                  disabled={track.locked}
+                  onCommit={(v) => update(e, { params: { brightness: v } })}
+                />
+                <Slider
+                  label="Contrast"
+                  value={e.contrast}
+                  min={0}
+                  max={2}
+                  step={0.01}
+                  format={pct}
+                  disabled={track.locked}
+                  onCommit={(v) => update(e, { params: { contrast: v } })}
+                />
+                <Slider
+                  label="Saturation"
+                  value={e.saturation}
+                  min={0}
+                  max={3}
+                  step={0.01}
+                  format={pct}
+                  disabled={track.locked}
+                  onCommit={(v) => update(e, { params: { saturation: v } })}
+                />
+              </>
+            )}
           </div>
-          <Slider
-            label="Brightness"
-            value={e.brightness}
-            min={-0.5}
-            max={0.5}
-            step={0.01}
-            format={(v) => `${v > 0 ? '+' : ''}${Math.round(v * 100)}`}
-            disabled={track.locked}
-            onCommit={(v) => update(e, { params: { brightness: v } })}
-          />
-          <Slider
-            label="Contrast"
-            value={e.contrast}
-            min={0}
-            max={2}
-            step={0.01}
-            format={pct}
-            disabled={track.locked}
-            onCommit={(v) => update(e, { params: { contrast: v } })}
-          />
-          <Slider
-            label="Saturation"
-            value={e.saturation}
-            min={0}
-            max={3}
-            step={0.01}
-            format={pct}
-            disabled={track.locked}
-            onCommit={(v) => update(e, { params: { saturation: v } })}
-          />
-        </div>
-      ))}
-      <Button
-        size="sm"
-        icon={<Plus size={13} />}
-        disabled={track.locked || effects.length >= 16}
-        data-testid="add-colour"
-        onClick={() =>
-          void edit({ type: 'effect.add', sequenceId: seq.id, itemId: item.id, kind: 'color' })
-        }
-      >
-        {effects.length ? 'Add another colour effect' : 'Add colour effect'}
-      </Button>
+        );
+      })}
+      <div className="details__actions">
+        <Button
+          size="sm"
+          icon={<Plus size={13} />}
+          disabled={track.locked || effects.length >= 16}
+          data-testid="add-colour"
+          onClick={() => add('color')}
+        >
+          {count('color') ? 'Another colour' : 'Colour'}
+        </Button>
+        <Button
+          size="sm"
+          icon={<Plus size={13} />}
+          disabled={track.locked || effects.length >= 16}
+          data-testid="add-blur"
+          onClick={() => add('blur')}
+        >
+          {count('blur') ? 'Another blur' : 'Blur'}
+        </Button>
+      </div>
     </section>
   );
 }

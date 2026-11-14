@@ -809,4 +809,83 @@ test.describe('preview and export match', () => {
       await app.close();
     }
   });
+
+  test('golden frames: blurred background (blur effect)', async () => {
+    const userData = tempUserData();
+    const shots = join(userData, 'shots');
+    mkdirSync(shots);
+    const { app, page } = await launch(userData, env());
+    try {
+      await createProject(page, 'Blur parity');
+      await mockOpenDialog(app, [fx.video]);
+      await page.getByRole('button', { name: 'Import footage' }).click();
+      await page.getByLabel(/I have the right/).check();
+      await page.getByRole('button', { name: 'Import' }).last().click();
+      await expect(page.locator('[data-testid=asset-card][data-status=ready]')).toHaveCount(1, {
+        timeout: 60_000,
+      });
+      await page.locator('[data-testid=asset-card]').dblclick();
+      await page.getByTestId('timeline-item').click();
+      await page.getByTestId('blurred-background').click();
+      await expect(page.getByTestId('timeline-item')).toHaveCount(2);
+
+      // The copy behind (on a new track below) carries the blur.
+      await page
+        .getByTestId('timeline-item')
+        .last()
+        .click({ position: { x: 20, y: 30 } });
+      await expect(page.getByTestId('blur-effect')).toHaveCount(1);
+      await page.keyboard.press('Escape');
+      const t = 1;
+      await page.getByTestId('ruler').click({ position: { x: t * ZOOM, y: 10 } });
+      await expect(page.getByTestId('program-time')).toContainText('00:01.000');
+      await page.waitForFunction((at) => {
+        const c = document.querySelector<HTMLCanvasElement>('[data-testid=program-canvas]');
+        return !c || c.dataset.time === at;
+      }, '1.000');
+      await page.waitForTimeout(300);
+      const preview = join(shots, 'preview-blur.png');
+      await page.locator('.program').screenshot({ path: preview });
+
+      const out = join(userData, 'blur.mp4');
+      await page.getByTestId('export-button').click();
+      await page.getByRole('radio', { name: 'YouTube Short', exact: true }).click();
+      await setExportTarget(app, page, out);
+      await page
+        .getByTestId('export-dialog')
+        .getByRole('button', { name: /Export$/ })
+        .click();
+      await expect(page.getByTestId('export-status')).toHaveAttribute('data-state', 'done', {
+        timeout: 120_000,
+      });
+      const [w, h] = execFileSync(
+        bins!.ffprobe,
+        ['-v', 'error', '-show_entries', 'stream=width,height', '-of', 'csv=p=0', preview],
+        { encoding: 'utf8' },
+      )
+        .trim()
+        .split(',')
+        .map(Number);
+      const exported = join(shots, 'export-blur.png');
+      execFileSync(bins!.ffmpeg, [
+        '-v',
+        'error',
+        '-y',
+        '-ss',
+        String(t),
+        '-i',
+        out,
+        '-frames:v',
+        '1',
+        '-vf',
+        `scale=${w}:${h}:flags=area`,
+        exported,
+      ]);
+      const score = ssim(bins!.ffmpeg, preview, exported);
+      console.info(`Blur SSIM ${score}`);
+      expect(score).toBeGreaterThanOrEqual(MIN_SSIM);
+    } finally {
+      await app.close();
+    }
+  });
 });

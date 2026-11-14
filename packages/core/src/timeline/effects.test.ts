@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { FRAME_RATES, secondsToFlicks as S } from '../time';
 import type { Command } from './commands';
 import { History } from './history';
-import { emptyDocument, eqCodes, fadeAt, pictureAt } from './model';
+import { emptyDocument, eqCodes, fadeAt, pictureAt, type ColorEffect } from './model';
 
 const lookup = (id: string) =>
   id === 'clip'
@@ -79,7 +79,7 @@ describe('fades and effects', () => {
       effectId: 'b',
       params: { brightness: -0.05, contrast: 0.5 },
     });
-    expect(items()[0]!.effects![0]!.saturation).toBe(3); // limited
+    expect((items()[0]!.effects![0] as ColorEffect).saturation).toBe(3); // limited
     // b after a: 0.5·(2x + 0.1) − 0.05 = x + 0
     const p = pictureAt(items()[0]!, S(2));
     expect([p.contrast, p.saturation]).toEqual([1, 3]);
@@ -115,5 +115,39 @@ describe('fades and effects', () => {
       gain: 1,
       offset: 0,
     });
+  });
+
+  it('blur effects add up like Gaussians and are limited', () => {
+    const { run, items } = setup();
+    run({ type: 'effect.add', sequenceId: 's', itemId: 'c', kind: 'blur', id: 'b1' });
+    expect(items()[0]!.effects![0]).toEqual({ id: 'b1', kind: 'blur', enabled: true, size: 0.02 });
+    run({ type: 'effect.add', sequenceId: 's', itemId: 'c', kind: 'blur', id: 'b2' });
+    run({
+      type: 'effect.update',
+      sequenceId: 's',
+      itemId: 'c',
+      effectId: 'b1',
+      params: { size: 0.03 },
+    });
+    run({
+      type: 'effect.update',
+      sequenceId: 's',
+      itemId: 'c',
+      effectId: 'b2',
+      params: { size: 0.04 },
+    });
+    expect(pictureAt(items()[0]!, S(2)).blur).toBeCloseTo(0.05, 9);
+    run({
+      type: 'effect.update',
+      sequenceId: 's',
+      itemId: 'c',
+      effectId: 'b2',
+      params: { size: 9 },
+    });
+    expect(items()[0]!.effects![1]).toMatchObject({ size: 0.2 });
+    run({ type: 'effect.update', sequenceId: 's', itemId: 'c', effectId: 'b2', enabled: false });
+    expect(pictureAt(items()[0]!, S(2)).blur).toBeCloseTo(0.03, 9);
+    // Colour effects ignore blurs.
+    expect(pictureAt(items()[0]!, S(2)).contrast).toBe(1);
   });
 });

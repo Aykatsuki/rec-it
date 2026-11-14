@@ -8,6 +8,7 @@ import {
   VolumeX,
   Crop as CropIcon,
   LayoutPanelTop,
+  Layers,
 } from 'lucide-react';
 import type { Sequence, TimelineItem, Track, Transform } from '@rec-it/core';
 import type { MediaAsset } from '@rec-it/ipc-contract';
@@ -22,6 +23,7 @@ import {
   type KeyframeProperty,
 } from '@rec-it/core';
 import {
+  blurredBackground,
   commitTransform,
   commitVolume,
   edit,
@@ -136,6 +138,16 @@ export function ClipInspector({
                 Remove crop
               </Button>
             )}
+            <Button
+              size="sm"
+              icon={<Layers size={14} />}
+              disabled={track.locked}
+              onClick={() => void blurredBackground(item.id)}
+              title="Show the whole picture, with a blurred copy filling the frame behind it"
+              data-testid="blurred-background"
+            >
+              Blurred background
+            </Button>
             {asset?.kind === 'video' && (
               <Button
                 size="sm"

@@ -352,6 +352,10 @@ export function ProgramMonitor({ seq }: { seq: Sequence }) {
                         // Dips (ADR-037): towards black by darkening, towards white by inverting
                         // the darkening (exact only in the GPU preview and export).
                         pic.tint && pic.tintColor === 'black' ? `brightness(${1 - pic.tint})` : '',
+                        // Blur (ADR-038): CSS blur radius is the standard deviation in CSS pixels.
+                        pic.blur && layout
+                          ? `blur(${pic.blur * layout.height * (box.h / seq.height)}px)`
+                          : '',
                         pic.tint && pic.tintColor === 'white'
                           ? `invert(1) brightness(${1 - pic.tint}) invert(1)`
                           : '',

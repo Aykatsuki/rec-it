@@ -174,7 +174,7 @@ The roadmap is ordered so that each phase produces something that works and can 
 
 ## Phase 5 · Vertical reframing (M) → **Milestone M2** — 🟡 two slices done (13 Nov 2026)
 
-**Progress (13 Nov 2026).** Slice A (ADR-034): crop for any clip (crop window with keep-shape, identical in preview and export, parity 0.995), a one-click facecam + gameplay layout (linked, muted camera copy on top), and a Shorts safe-zone overlay. Slice B (ADR-035): automatic reframing — local face detection (OpenCV YuNet, optional one-time install), a smoothed framing path with dead zone, pans and cuts, written as editable Position X keyframes. Next: scene-cut detection and active-speaker choice, blurred-background fit (with the Phase 6 blur), keyframed crop, then the exit-criteria measurements on real footage.
+**Progress (13 Nov 2026).** Slice A (ADR-034): crop for any clip (crop window with keep-shape, identical in preview and export, parity 0.995), a one-click facecam + gameplay layout (linked, muted camera copy on top), and a Shorts safe-zone overlay. Slice B (ADR-035): automatic reframing — local face detection (OpenCV YuNet, optional one-time install), a smoothed framing path with dead zone, pans and cuts, written as editable Position X keyframes. Blurred-background fit arrived with the Phase 6 blur (ADR-038). Next: scene-cut detection and active-speaker choice, keyframed crop, then the exit-criteria measurements on real footage.
 
 **Goal:** reliable 9:16 conversion.
 
@@ -198,7 +198,7 @@ The roadmap is ordered so that each phase produces something that works and can 
 
 ## Phase 6 · Effects and transitions (M) → **Milestone M2.5**
 
-**Progress (14 Nov 2026).** Slice A (ADR-036): fades (handles on clip corners, linked sound fades with the picture), opacity, and stackable colour effects (brightness, contrast, saturation) matching FFmpeg's `eq` exactly in the GPU preview; golden-frame and audio parity cases. Slice B (ADR-037): transitions — cross dissolve (with sound crossfade) and dip to black/white on any cut, from the clip menu or the Inspector, shown as bands on the timeline; golden-frame parity case. Next: blur and blurred-background fit, speed, LUTs, chroma key, more transitions (wipe, slide, zoom), then audio effects.
+**Progress (14 Nov 2026).** Slice A (ADR-036): fades (handles on clip corners, linked sound fades with the picture), opacity, and stackable colour effects (brightness, contrast, saturation) matching FFmpeg's `eq` exactly in the GPU preview; golden-frame and audio parity cases. Slice B (ADR-037): transitions — cross dissolve (with sound crossfade) and dip to black/white on any cut, from the clip menu or the Inspector, shown as bands on the timeline; golden-frame parity case. Slice C (ADR-038): blur effect (size relative to the picture, exact in preview and export) and a one-click blurred-background fit for landscape clips. Next: speed (constant speed, reverse, freeze frame), LUTs, chroma key, more transitions (wipe, slide, zoom), then audio effects.
 
 **Goal:** the common visual and audio effects of a Shorts editor, previewed live and exported identically. Requested 12 Nov 2026; placed before the Claude phases so the editor is complete first.
 
