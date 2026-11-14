@@ -784,3 +784,25 @@ setOnFacesReady((assetId) => {
   });
   for (const id of ids) void applyReframe(id);
 });
+
+/**
+ * Sets a clip's fade-in or fade-out length (seconds), on its linked partners too so picture and
+ * sound fade together (ADR-036).
+ */
+export async function setFade(
+  seq: Sequence,
+  item: TimelineItem,
+  side: 'in' | 'out',
+  seconds: number,
+): Promise<void> {
+  const ids = [item.id, ...linkedPartners(seq, [item.id])];
+  await edit({
+    type: 'batch',
+    commands: ids.map((itemId) => ({
+      type: 'item.update' as const,
+      sequenceId: seq.id,
+      itemId,
+      fade: { [side]: toFlicks(Math.max(0, seconds)) },
+    })),
+  });
+}

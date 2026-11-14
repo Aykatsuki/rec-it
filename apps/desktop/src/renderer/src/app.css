@@ -2538,3 +2538,56 @@ button.statusbar__item:hover {
   position: absolute;
   border: 1px dashed rgb(255 255 255 / 55%);
 }
+
+/* Effects (ADR-036) */
+.effect {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md, 6px);
+  padding: var(--space-2);
+  margin-bottom: var(--space-2);
+}
+.effect__head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+.effect__name {
+  flex: 1;
+  font-weight: 600;
+}
+.tl__fade {
+  position: absolute;
+  top: 0;
+  height: 100%;
+  pointer-events: none;
+  z-index: 1;
+}
+.tl__fade polygon {
+  fill: rgb(0 0 0 / 45%);
+  stroke: rgb(255 255 255 / 70%);
+  stroke-width: 1;
+  vector-effect: non-scaling-stroke;
+}
+.tl__fade--in {
+  left: 0;
+}
+.tl__fade--out {
+  right: 0;
+}
+.tl__fade-handle {
+  position: absolute;
+  top: 1px;
+  width: 9px;
+  height: 9px;
+  margin-left: -4.5px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 0 0 1px rgb(0 0 0 / 60%);
+  cursor: ew-resize;
+  z-index: 2;
+  opacity: 0;
+}
+.tl__item:hover .tl__fade-handle,
+.tl__item[data-selected='true'] .tl__fade-handle {
+  opacity: 1;
+}

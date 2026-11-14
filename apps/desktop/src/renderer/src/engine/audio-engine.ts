@@ -5,6 +5,7 @@ import {
   flicksToSeconds,
   sourceTimeAt,
   volumeAt,
+  fadeAt,
   type Sequence,
   type TimelineItem,
 } from '@rec-it/core';
@@ -195,13 +196,16 @@ export class AudioEngine {
     const node = ctx.createBufferSource();
     node.buffer = buffer;
     const gain = ctx.createGain();
-    if (clip.item.keyframes?.volume?.length) {
+    const fade = clip.item.fade;
+    if (clip.item.keyframes?.volume?.length || (fade && (fade.in > 0 || fade.out > 0))) {
       const points = Math.max(2, Math.ceil(duration * CURVE_POINTS_PER_SECOND));
       const curve = new Float32Array(points);
       const t0 = b - duration; // timeline time where this node starts
       for (let i = 0; i < points; i++) {
         const t = t0 + (duration * i) / (points - 1);
-        curve[i] = volumeAt(clip.item, Math.round(t * FLICKS_PER_SECOND));
+        const at = Math.round(t * FLICKS_PER_SECOND);
+        // Fades match FFmpeg's afade (linear) in the export (ADR-036).
+        curve[i] = volumeAt(clip.item, at) * fadeAt(clip.item, at);
       }
       gain.gain.setValueCurveAtTime(curve, when, duration);
     } else {

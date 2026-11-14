@@ -1,6 +1,6 @@
 // WebGL2 compositor for the preview (ADR-008, ADR-029). Each layer is one textured quad placed
 // with the same layout maths as the export (computeLayout), so preview and export agree.
-import { computeLayout, type Transform } from '@rec-it/core';
+import { computeLayout, eqCodes, type PictureState, type Transform } from '@rec-it/core';
 
 export interface Layer {
   /** Stable key (the timeline item id) so its texture is reused between frames. */
@@ -9,15 +9,37 @@ export interface Layer {
   width: number;
   height: number;
   transform: Transform;
+  /** Opacity × fade and colour effects (ADR-036). Missing means unchanged. */
+  picture?: PictureState;
 }
 
 const VS = `#version 300 es
 in vec2 pos; in vec2 uv; out vec2 v_uv;
 void main() { v_uv = uv; gl_Position = vec4(pos, 0.0, 1.0); }`;
+// Colour effects match FFmpeg's `eq` filter, which works on BT.709 TV-range YUV codes:
+// out = gain·code + offset per plane, with the gains and offsets from eqCodes (ADR-036).
 const FS = `#version 300 es
-precision mediump float;
+precision highp float;
 in vec2 v_uv; uniform sampler2D tex; out vec4 color;
-void main() { color = texture(tex, v_uv); }`;
+uniform float u_alpha; uniform vec4 u_eq; uniform bool u_color;
+void main() {
+  vec4 t = texture(tex, v_uv);
+  vec3 c = t.rgb;
+  if (u_color) {
+    float Y = dot(c, vec3(0.2126, 0.7152, 0.0722));
+    vec3 codes = vec3(16.0 + 219.0 * Y, 128.0 + 224.0 * (c.b - Y) / 1.8556, 128.0 + 224.0 * (c.r - Y) / 1.5748);
+    codes = floor(codes + 0.5);
+    codes = clamp(floor(codes * vec3(u_eq.x, u_eq.z, u_eq.z)) + vec3(u_eq.y, u_eq.w, u_eq.w), 0.0, 255.0);
+    Y = (codes.x - 16.0) / 219.0;
+    float cb = (codes.y - 128.0) / 224.0;
+    float cr = (codes.z - 128.0) / 224.0;
+    float r = Y + 1.5748 * cr;
+    float b = Y + 1.8556 * cb;
+    float g = (Y - 0.2126 * r - 0.0722 * b) / 0.7152;
+    c = clamp(vec3(r, g, b), 0.0, 1.0);
+  }
+  color = vec4(c, t.a * u_alpha);
+}`;
 
 function compile(gl: WebGL2RenderingContext, type: number, src: string): WebGLShader {
   const s = gl.createShader(type)!;
@@ -149,9 +171,21 @@ export class Compositor {
     gl.enableVertexAttribArray(uvLoc);
     gl.vertexAttribPointer(posLoc, 2, gl.FLOAT, false, 16, 0);
     gl.vertexAttribPointer(uvLoc, 2, gl.FLOAT, false, 16, 8);
+    const alphaLoc = gl.getUniformLocation(this.program, 'u_alpha');
+    const eqLoc = gl.getUniformLocation(this.program, 'u_eq');
+    const colorLoc = gl.getUniformLocation(this.program, 'u_color');
     for (const layer of layers) {
       const tex = this.textures.get(layer.key);
       if (!tex) continue;
+      const p = layer.picture;
+      if (p && p.alpha <= 0) continue;
+      gl.uniform1f(alphaLoc, p?.alpha ?? 1);
+      const neutral = !p || (p.brightness === 0 && p.contrast === 1 && p.saturation === 1);
+      gl.uniform1i(colorLoc, neutral ? 0 : 1);
+      if (!neutral) {
+        const { luma, chroma } = eqCodes(p);
+        gl.uniform4f(eqLoc, luma.gain, luma.offset, chroma.gain, chroma.offset);
+      }
       const l = computeLayout(layer.width, layer.height, frameW, frameH, layer.transform);
       const cx = l.left + l.width / 2;
       const cy = l.top + l.height / 2;

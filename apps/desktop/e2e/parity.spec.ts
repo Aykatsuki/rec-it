@@ -44,6 +44,28 @@ function ssim(ffmpeg: string, a: string, b: string): number {
   return m ? Number(m[1]) : 0;
 }
 
+/** Average colour of the middle of an image (where the video is in the effects case). */
+function meanColour(ffmpeg: string, file: string): number[] {
+  const r = spawnSync(
+    ffmpeg,
+    [
+      '-v',
+      'error',
+      '-i',
+      file,
+      '-vf',
+      'crop=iw*0.6:ih*0.15,scale=1:1:flags=area',
+      '-f',
+      'rawvideo',
+      '-pix_fmt',
+      'rgb24',
+      '-',
+    ],
+    { maxBuffer: 1 << 20 },
+  );
+  return [...r.stdout.subarray(0, 3)];
+}
+
 test.describe('preview and export match', () => {
   test.skip(!bins, 'FFmpeg is not available (run pnpm fetch-ffmpeg)');
   // Smooth content (colour fields, a moving box) so SSIM measures layout, colour and timing,
@@ -396,6 +418,157 @@ test.describe('preview and export match', () => {
         console.info(`Caption SSIM (${style}) ${score}`);
         expect(score, `caption SSIM, ${style}`).toBeGreaterThanOrEqual(MIN_SSIM);
       }
+    } finally {
+      await app.close();
+    }
+  });
+
+  test('golden frames: fades, opacity and colour effects', async () => {
+    const userData = tempUserData();
+    const shots = join(userData, 'shots');
+    mkdirSync(shots);
+    const { app, page } = await launch(userData, env());
+    try {
+      await createProject(page, 'Effects parity');
+      await mockOpenDialog(app, [fx.video, fx.still]);
+      await page.getByRole('button', { name: 'Import footage' }).click();
+      await page.getByLabel(/I have the right/).check();
+      await page.getByRole('button', { name: 'Import 2 files' }).click();
+      await expect(page.locator('[data-testid=asset-card][data-status=ready]')).toHaveCount(2, {
+        timeout: 60_000,
+      });
+      await page.locator('[data-testid=asset-card][data-name="bars.png"]').dblclick();
+      await expect(page.getByTestId('timeline-item')).toHaveCount(1);
+      await page.evaluate(async (S) => {
+        type Track = { id: string; items: { id: string }[] };
+        const call = async <T>(channel: string, input: unknown): Promise<T> => {
+          const r = (await window.recit.backend.invoke(channel as never, input as never)) as {
+            ok: boolean;
+            result?: unknown;
+            error?: { message: string };
+          };
+          if (!r.ok) throw new Error(r.error?.message);
+          return r.result as T;
+        };
+        const state = await call<{ doc: { sequences: { id: string; tracks: Track[] }[] } }>(
+          'doc.get',
+          {},
+        );
+        const seq = state.doc.sequences[0]!;
+        const [v2, v1] = seq.tracks;
+        const assets = await call<{ id: string; name: string }[]>('media.list', {});
+        const clip = assets.find((a) => a.name === 'moving box.mp4')!.id;
+        const still = v1!.items[0]!.id;
+        const id = 'item_fx';
+        await call('doc.execute', {
+          command: {
+            type: 'batch',
+            commands: [
+              { type: 'item.trim', sequenceId: seq.id, itemId: still, edge: 'end', time: 3 * S },
+              // A small still in a corner, so most of the video fades to and from black.
+              {
+                type: 'item.update',
+                sequenceId: seq.id,
+                itemId: still,
+                transform: { fit: 'fit', scale: 0.4, x: -0.25, y: 0.3 },
+              },
+              // The video over the still: fading in, partly transparent, colour graded.
+              {
+                type: 'item.add',
+                sequenceId: seq.id,
+                trackId: v2!.id,
+                assetId: clip,
+                id,
+                start: 0,
+                sourceIn: 0,
+                duration: 3 * S,
+                transform: { fit: 'fit', scale: 0.8 },
+              },
+              {
+                type: 'item.update',
+                sequenceId: seq.id,
+                itemId: id,
+                opacity: 0.75,
+                fade: { in: 1 * S, out: 1 * S },
+              },
+              { type: 'effect.add', sequenceId: seq.id, itemId: id, kind: 'color', id: 'fx_a' },
+              {
+                type: 'effect.update',
+                sequenceId: seq.id,
+                itemId: id,
+                effectId: 'fx_a',
+                params: { brightness: 0.12, contrast: 1.3, saturation: 0.4 },
+              },
+            ],
+          },
+        });
+      }, 705_600_000);
+      await expect(page.getByTestId('program-monitor')).toHaveAttribute('data-engine', 'gpu');
+      const times = [0.5, 1.5, 2.5];
+      for (const t of times) {
+        const at = t.toFixed(3);
+        await page.getByTestId('ruler').click({ position: { x: t * ZOOM, y: 10 } });
+        await expect(page.getByTestId('program-time')).toContainText(`00:0${at}`);
+        await page.waitForFunction(
+          (want) =>
+            document.querySelector<HTMLCanvasElement>('[data-testid=program-canvas]')?.dataset
+              .time === want,
+          at,
+        );
+        await page.waitForTimeout(300);
+        await page.locator('.program').screenshot({ path: join(shots, `preview-fx-${t}.png`) });
+      }
+
+      const out = join(userData, 'effects.mp4');
+      await page.getByTestId('export-button').click();
+      await page.getByRole('radio', { name: 'YouTube Short', exact: true }).click();
+      await setExportTarget(app, page, out);
+      await page
+        .getByTestId('export-dialog')
+        .getByRole('button', { name: /Export$/ })
+        .click();
+      await expect(page.getByTestId('export-status')).toHaveAttribute('data-state', 'done', {
+        timeout: 120_000,
+      });
+      const means: number[][] = [];
+      for (const t of times) {
+        const preview = join(shots, `preview-fx-${t}.png`);
+        const [w, h] = execFileSync(
+          bins!.ffprobe,
+          ['-v', 'error', '-show_entries', 'stream=width,height', '-of', 'csv=p=0', preview],
+          { encoding: 'utf8' },
+        )
+          .trim()
+          .split(',')
+          .map(Number);
+        const exported = join(shots, `export-fx-${t}.png`);
+        execFileSync(bins!.ffmpeg, [
+          '-v',
+          'error',
+          '-y',
+          '-ss',
+          String(t),
+          '-i',
+          out,
+          '-frames:v',
+          '1',
+          '-vf',
+          `scale=${w}:${h}:flags=area`,
+          exported,
+        ]);
+        const score = ssim(bins!.ffmpeg, preview, exported);
+        const [a, b] = [meanColour(bins!.ffmpeg, preview), meanColour(bins!.ffmpeg, exported)];
+        means.push(b);
+        console.info(`Effects at ${t}s: SSIM ${score}, mean colour preview ${a} export ${b}`);
+        expect(score, `SSIM at ${t}s`).toBeGreaterThanOrEqual(MIN_SSIM);
+        // Brightness, contrast, saturation, opacity and the fade all move the average colour by
+        // tens of levels; preview and export agree within a few (rounding in YUV ↔ RGB, as without effects).
+        for (let c = 0; c < 3; c++)
+          expect(Math.abs(a[c]! - b[c]!), `channel ${c} at ${t}s`).toBeLessThan(6);
+      }
+      // Half-way through the fade in, the picture is clearly darker than once it is in.
+      const sum = (c: number[]) => c[0]! + c[1]! + c[2]!;
+      expect(sum(means[0]!)).toBeLessThan(sum(means[1]!) * 0.8);
     } finally {
       await app.close();
     }
