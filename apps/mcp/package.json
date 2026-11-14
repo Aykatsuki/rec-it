@@ -1,0 +1,21 @@
+{
+  "name": "@rec-it/mcp",
+  "version": "0.0.1",
+  "private": true,
+  "description": "Rec-It's MCP connector: lets the user's Claude app edit the project open in Rec-It",
+  "license": "GPL-3.0-or-later",
+  "type": "module",
+  "scripts": {
+    "build": "node build.mjs",
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.32.2",
+    "@rec-it/tools": "workspace:*",
+    "zod": "^4.6.0"
+  },
+  "devDependencies": {
+    "@anthropic-ai/mcpb": "^2.1.2",
+    "esbuild": "^0.27.0"
+  }
+}

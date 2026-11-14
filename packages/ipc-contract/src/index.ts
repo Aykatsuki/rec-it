@@ -14,3 +14,4 @@ export * from './schemas/timeline';
 export * from './schemas/transcript';
 export * from './schemas/faces';
 export * from './schemas/luts';
+export * from './schemas/claude';

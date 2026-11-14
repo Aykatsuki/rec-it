@@ -47,6 +47,7 @@ Each record states the decision, why it was made and what else was considered. R
 | 041 | Green screen (chroma key) | Accepted |
 | 042 | Sound effects: EQ, compressor, ducking | Accepted |
 | 043 | Wipe, slide and zoom transitions | Accepted |
+| 044 | The Claude connector (MCP) | Accepted |
 
 ---
 
@@ -668,3 +669,50 @@ Each record states the decision, why it was made and what else was considered. R
   - A golden-frame case with all three at frame-exact times (SSIM 0.992–0.997).
   - The end-to-end transitions test switches to Slide.
 
+
+---
+
+## ADR-044 · The Claude connector (MCP)
+
+**Status.** Accepted (14 Nov 2026, Phase 7 first slice). Implements ARCHITECTURE §13. The in-app chat (7b), more tools (effects, keyframes, LUTs, ducking), the "find the best Shorts" analysis and the live eval suite come later.
+
+**Decisions.**
+- **Shape.** The user's Claude app (Claude Desktop, Claude Code) starts `recit-mcp`, a stdio MCP server built from `apps/mcp` into one file. The bridge lists the tools, prompts and instructions itself, so they appear even while Rec-It is closed (calls then answer "Rec-It is not open…"). It forwards tool calls to the running app and holds no state.
+- **One catalogue.** `packages/tools` defines every tool once, with a zod input schema, a tier and a description. The bridge lists them as JSON Schema with MCP annotations (read tools are marked read-only). The backend validates and runs them. The `.mcpb` manifest is generated from the same list.
+- **Local link.**
+  - The backend listens on a named pipe (Windows) or a Unix socket in the temp folder, mode 0600, with a random name per launch.
+  - The bridge must first send a 256-bit per-launch token (constant-time comparison); anything else is refused and closed. Connections that do not say hello within 5 s are dropped.
+  - The bridge finds the endpoint and token in `mcp-endpoint.json` (0600) in Rec-It's user-data folder (`RECIT_USER_DATA` overrides). Rec-It writes the file when it starts and removes it when it quits, if it is still its own.
+  - The protocol is newline-delimited JSON (`hello`, `call`). No network port is opened.
+- **Tools (24).** All times are timeline seconds.
+  - Read: project summary, timeline clips in a range, transcript in a range (up to 1,500 words, paged), transcript search, a frame image (JPEG, 768 px, rendered by the export graph so it shows exactly what will export), caption styles, job status.
+  - Edit: create sequence, add clip, remove time ranges, remove clips, split, trim, move, volume, framing, speed/reverse, transition, fades, generate captions, caption style, caption text.
+  - Heavy: transcribe and export. Each waits for the user's Allow in Rec-It; no answer within 5 minutes counts as no.
+  - Results are short text (compact JSON for structure), so they cost little of the user's plan.
+- **`sequence.removeRanges`** is a new core command for silence and filler removal. It takes timeline ranges, merged and measured before any removal. It cuts every track (picture, sound and caption clips alike, fades dropped at the cut edges) and closes the gaps, so a whole clean-up is one call and stays in sync.
+- **Undo as one step.**
+  - History entries can carry a group. A grouped command joins the step below it when that step has the same group and nothing has been undone.
+  - Claude's edits share a group while they come within 60 s of each other and are still the newest step. The group is shown as a *change card* listing the edits, with **Undo all** (only while it is the newest step) and **Keep** (later edits start a new card).
+  - A user edit in between, a pause, Keep or Undo all start a new card.
+- **Conflicts.** Edit tools take an optional `version`. If the document changed since then (the user edited), nothing is done, and the error carries a fresh summary to re-plan from. Every edit result returns the new version.
+- **Untrusted content.** Instructions tell Claude that transcripts, captions and media names are data. The defence that matters is structural: no tool deletes media or files, imports, or reaches the network. Export and transcription need a click in Rec-It whatever Claude was told.
+- **Off switch and visibility.**
+  - With "Allow Claude…" off in Settings, every call is refused with a message saying so.
+  - A Claude tab (icon in the right panel) shows the connected app, pending confirmations, change cards, the activity feed (every call, with errors and declines) and setup.
+    - Setup: open the `.mcpb`, or `claude mcp add rec-it -- node "<path>"`, or a manual config.
+    - It also explains what Claude can see.
+  - The top-bar chip shows off / not connected / connected / needs your OK.
+  - A notice appears when a Claude app connects.
+- **Packaging.** `pnpm build:mcp` bundles the bridge with esbuild (Node 18+, no dependencies at run time). It packs `rec-it.mcpb` (manifest 0.3, Node server) with the official `@anthropic-ai/mcpb` CLI, after validating the manifest. `pnpm build` builds it first. Packaged apps will ship both in `resources/mcp`, and Rec-It points to them from the Claude tab.
+- **Tests.**
+  - Unit: grouping window and Keep, failures in the feed, phrase search.
+  - Backend integration through the real bridge connection:
+    - the discovery file and socket are private;
+    - a wrong token is refused before any call;
+    - reading, a grouped edit, and Undo all;
+    - a stale version is refused;
+    - a 768 px JPEG frame;
+    - an export waits for and respects a decline;
+    - invalid input and the off switch.
+  - Core: `removeRanges` across linked and unlinked tracks, and grouped undo.
+  - End to end: a real MCP client starts the built bridge against the running app. Claude's edits appear live, the change card undoes them in one click, and an export is declined in the dialog.

@@ -11,7 +11,8 @@
   },
   "scripts": {
     "dev": "pnpm --filter @rec-it/desktop dev",
-    "build": "pnpm --filter @rec-it/desktop build",
+    "build": "pnpm --filter @rec-it/mcp build && pnpm --filter @rec-it/desktop build",
+    "build:mcp": "pnpm --filter @rec-it/mcp build",
     "typecheck": "pnpm -r --parallel typecheck",
     "lint": "eslint . --max-warnings 0",
     "format": "prettier --write .",

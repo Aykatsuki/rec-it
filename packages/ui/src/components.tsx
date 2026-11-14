@@ -63,6 +63,8 @@ export function IconButton({ label, size = 'md', className, children, ...rest }:
 export interface TabItem<T extends string> {
   id: T;
   label: string;
+  /** Shown instead of the label (which stays the accessible name and tooltip). */
+  icon?: ReactNode;
 }
 
 /** Accessible tab list with arrow-key navigation. */
@@ -103,8 +105,9 @@ export function Tabs<T extends string>({
           aria-selected={item.id === value}
           tabIndex={item.id === value ? 0 : -1}
           onClick={() => onChange(item.id)}
+          {...(item.icon ? { 'aria-label': item.label, title: item.label } : {})}
         >
-          {item.label}
+          {item.icon ?? item.label}
         </button>
       ))}
     </div>

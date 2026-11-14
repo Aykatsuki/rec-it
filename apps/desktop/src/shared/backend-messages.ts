@@ -12,6 +12,9 @@ export interface BackendConfig {
   sidecar: { command: string; args: string[]; cwd: string } | null;
   /** Bundled caption fonts (resources/fonts); captions need them in preview and export. */
   fontsDir?: string;
+  /** The Claude connector's MCP bridge script and .mcpb bundle, when built (ADR-044). */
+  mcpBridge?: string;
+  mcpBundle?: string;
 }
 
 export type MainToBackend =

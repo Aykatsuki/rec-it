@@ -225,7 +225,9 @@ The roadmap is ordered so that each phase produces something that works and can 
 
 ---
 
-## Phase 7 · Claude connection (M)
+## Phase 7 · Claude connection (M) — 🟡 slice A done (14 Nov 2026)
+
+**Progress (14 Nov 2026).** Slice A (ADR-044): the MCP connector. A stdio bridge (`apps/mcp`, also packed as `rec-it.mcpb` for Claude Desktop, or `claude mcp add` for Claude Code) talks to the running app over a private, token-protected pipe/socket. There are 24 tools (read, edit, and confirm-in-Rec-It for export and transcription) and four prompts. Silence and filler removal is one `remove_ranges` call. Claude's edits are grouped into change cards with Undo all / Keep. Version checks stop Claude from editing over the user's changes. Rec-It has a Claude tab with the activity feed, confirmations and setup, a status chip, and the off switch. Next: tools for effects, keyframes and ducking, red-team transcript fixtures and the recorded tool-call scripts, then the live eval suite through Claude Code and the end-to-end check from Claude Desktop on the reference PC.
 
 **Goal:** Claude can read and edit the project from your Claude app, using your existing plan.
 

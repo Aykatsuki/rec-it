@@ -152,6 +152,8 @@ export class ExportService {
     assets: Assets,
     captions: CaptionsInput | null = null,
     prepareLuts: PrepareLuts = async () => ({}),
+    /** Output size as a fraction of the sequence size (Claude's previews are small). */
+    scale = 1,
   ): Promise<void> {
     checkMedia(seq, assets);
     const { bins, tonemap, ffmpeg } = await toolchain();
@@ -163,6 +165,7 @@ export class ExportService {
         tonemap,
         captions: await prepareCaptions(work, captions, ffmpeg),
         luts: await prepareLuts(work),
+        ...(scale !== 1 ? { scale } : {}),
       });
       await runPlan(bins.ffmpeg, plan, work, [...(jpeg ? ['-q:v', '2'] : []), part]);
       await rm(path, { force: true });

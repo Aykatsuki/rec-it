@@ -5,10 +5,13 @@
   "license": "GPL-3.0-or-later",
   "type": "module",
   "exports": {
-    ".": "./src/index.ts"
+    ".": "./src/index.ts",
+    "./protocol": "./src/protocol.ts"
   },
   "scripts": {
     "typecheck": "tsc -p tsconfig.json"
   },
-  "dependencies": {}
+  "dependencies": {
+    "zod": "^4.6.0"
+  }
 }

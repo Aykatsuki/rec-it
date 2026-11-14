@@ -147,7 +147,7 @@ function GeneralTab() {
             checked={settings.aiEnabled}
             onChange={(e) => void update({ aiEnabled: e.target.checked })}
           />
-          Allow Claude to use Rec-It's tools (takes effect from Phase 6)
+          Allow Claude to read and edit projects through your Claude app
         </label>
       </Row>
       <Row label="Motion">

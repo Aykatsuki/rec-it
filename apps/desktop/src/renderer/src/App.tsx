@@ -14,6 +14,7 @@ import { CropDialog } from './timeline/CropDialog';
 import { SequenceSettingsHost } from './timeline/SequenceSettings';
 import { shuttle, stepFrames, togglePlay } from './timeline/ProgramMonitor';
 import { ContextMenuHost } from './ui/ContextMenu';
+import { ClaudeConfirmHost } from './claude/ClaudeConfirm';
 import {
   copySelected,
   cutSelected,
@@ -58,6 +59,7 @@ export function App() {
       <ExportDialogHost />
       <CropDialog />
       <ContextMenuHost />
+      <ClaudeConfirmHost />
       <Toasts />
       {dragging && (
         <div className="drop-overlay" aria-hidden>
