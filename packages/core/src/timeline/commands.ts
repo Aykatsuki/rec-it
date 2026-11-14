@@ -1,6 +1,8 @@
 import { createId } from '../ids';
 import { frameDuration, snapToFrame, secondsToFlicks, type Flicks, type Rational } from '../time';
 import {
+  EFFECT_KINDS,
+  type EffectKind,
   CAPTION_ASSET,
   CAPTION_STYLES,
   type CaptionContent,
@@ -137,7 +139,23 @@ export type Command =
       volume?: number;
       muted?: boolean;
       transform?: Partial<Transform>;
+      opacity?: number;
+      /** Fade lengths in flicks; each is limited so the two fit in the clip. */
+      fade?: { in?: number; out?: number };
     }
+  /** Adds an effect to the end of a clip's effect stack (ADR-036). */
+  | { type: 'effect.add'; sequenceId: string; itemId: string; kind: EffectKind; id?: string }
+  | {
+      type: 'effect.update';
+      sequenceId: string;
+      itemId: string;
+      effectId: string;
+      enabled?: boolean;
+      params?: Partial<Record<'brightness' | 'contrast' | 'saturation', number>>;
+    }
+  | { type: 'effect.remove'; sequenceId: string; itemId: string; effectId: string }
+  /** Moves an effect to position `index` in the stack (order matters). */
+  | { type: 'effect.move'; sequenceId: string; itemId: string; effectId: string; index: number }
   /** Turns automatic captions on or off and changes their look (ADR-032). */
   | { type: 'captions.update'; sequenceId: string; captions: Partial<CaptionSettings> }
   /**
@@ -239,6 +257,33 @@ function clearRange(track: Track, start: number, end: number, exceptId?: string)
   }
   track.items = next;
   sortItems(track);
+}
+
+/** A piece of a split clip keeps only the fade at its own outer edge. */
+function withoutFade(item: TimelineItem, side: 'in' | 'out' | null): TimelineItem {
+  if (!side || !item.fade) return item;
+  const fade = { ...item.fade, [side]: 0 as Flicks };
+  const { fade: _old, ...rest } = item;
+  const piece: TimelineItem = fade.in || fade.out ? { ...rest, fade } : rest;
+  if (piece.fade) {
+    const out = Math.min(piece.fade.out, piece.duration);
+    piece.fade = {
+      in: Math.min(piece.fade.in, piece.duration - out) as Flicks,
+      out: out as Flicks,
+    };
+  }
+  return piece;
+}
+
+/** Fades never overlap: when the clip gets shorter, the fade-out keeps its length first. */
+function fitFades(seq: Sequence, item: TimelineItem): void {
+  if (!item.fade) return;
+  const d = item.duration;
+  const out = Math.min(item.fade.out, d);
+  const inn = Math.min(item.fade.in, d - out);
+  if (inn <= 0 && out <= 0) delete item.fade;
+  else item.fade = { in: Math.max(0, inn) as Flicks, out: Math.max(0, out) as Flicks };
+  void seq;
 }
 
 const TRACK_LETTER: Record<TrackKind, string> = { video: 'V', audio: 'A', caption: 'C' };
@@ -488,20 +533,25 @@ export function applyCommand(doc: ProjectDocument, command: Command, assets: Ass
             continue;
           }
           const first = time - item.start;
-          next.push({ ...item, duration: first as Flicks });
+          next.push(withoutFade({ ...item, duration: first as Flicks }, 'out'));
           let linkId = item.linkId;
           if (linkId) {
             if (!newLinks.has(linkId)) newLinks.set(linkId, createId('link'));
             linkId = newLinks.get(linkId);
           }
-          next.push({
-            ...item,
-            id: createId('item'),
-            start: time,
-            duration: (item.duration - first) as Flicks,
-            sourceIn: (item.sourceIn + first) as Flicks,
-            ...(linkId ? { linkId } : {}),
-          });
+          next.push(
+            withoutFade(
+              {
+                ...item,
+                id: createId('item'),
+                start: time,
+                duration: (item.duration - first) as Flicks,
+                sourceIn: (item.sourceIn + first) as Flicks,
+                ...(linkId ? { linkId } : {}),
+              },
+              'in',
+            ),
+          );
           split++;
         }
         track.items = next;
@@ -546,7 +596,13 @@ export function applyCommand(doc: ProjectDocument, command: Command, assets: Ass
         const left = a > it.start;
         const right = b < end;
         const pieces: TimelineItem[] = [];
-        if (left) pieces.push({ ...it, duration: (Math.min(a, end) - it.start) as Flicks });
+        if (left)
+          pieces.push(
+            withoutFade(
+              { ...it, duration: (Math.min(a, end) - it.start) as Flicks },
+              right ? 'out' : null,
+            ),
+          );
         if (right) {
           const cut = Math.max(b, it.start);
           let linkId = it.linkId;
@@ -554,14 +610,19 @@ export function applyCommand(doc: ProjectDocument, command: Command, assets: Ass
             if (!newLinks.has(linkId)) newLinks.set(linkId, createId('link'));
             linkId = newLinks.get(linkId);
           }
-          pieces.push({
-            ...it,
-            id: left ? createId('item') : it.id,
-            start: cut as Flicks,
-            duration: (end - cut) as Flicks,
-            sourceIn: (it.sourceIn + (cut - it.start)) as Flicks,
-            ...(linkId ? { linkId } : {}),
-          });
+          pieces.push(
+            withoutFade(
+              {
+                ...it,
+                id: left ? createId('item') : it.id,
+                start: cut as Flicks,
+                duration: (end - cut) as Flicks,
+                sourceIn: (it.sourceIn + (cut - it.start)) as Flicks,
+                ...(linkId ? { linkId } : {}),
+              },
+              left ? 'in' : null,
+            ),
+          );
         }
         tr.items = tr.items.flatMap((x) => (x.id === it.id ? pieces : [x]));
       }
@@ -767,6 +828,69 @@ export function applyCommand(doc: ProjectDocument, command: Command, assets: Ass
       if (command.muted !== undefined) item.muted = command.muted;
       if (command.transform)
         item.transform = cleanTransform({ ...item.transform, ...command.transform });
+      if (command.opacity !== undefined) {
+        if (item.caption) fail('Caption opacity comes from the caption style.');
+        const o = Math.min(1, Math.max(0, command.opacity));
+        if (o === 1) delete item.opacity;
+        else item.opacity = o;
+      }
+      if (command.fade) {
+        item.fade = {
+          in: Math.max(0, Math.round(command.fade.in ?? item.fade?.in ?? 0)) as Flicks,
+          out: Math.max(0, Math.round(command.fade.out ?? item.fade?.out ?? 0)) as Flicks,
+        };
+        fitFades(seq, item);
+      }
+      return;
+    }
+    case 'effect.add': {
+      const seq = sequenceOf(doc, command.sequenceId);
+      const { track, item } = findItem(seq, command.itemId);
+      unlocked(track);
+      if (item.caption || track.kind !== 'video') fail('Effects go on video clips and images.');
+      if (!EFFECT_KINDS.includes(command.kind)) fail('Unknown effect.');
+      if ((item.effects?.length ?? 0) >= 16) fail('A clip can have up to 16 effects.');
+      (item.effects ??= []).push({
+        id: command.id ?? createId('fx'),
+        kind: 'color',
+        enabled: true,
+        brightness: 0,
+        contrast: 1,
+        saturation: 1,
+      });
+      return;
+    }
+    case 'effect.update': {
+      const seq = sequenceOf(doc, command.sequenceId);
+      const { track, item } = findItem(seq, command.itemId);
+      unlocked(track);
+      const fx = item.effects?.find((e) => e.id === command.effectId) ?? fail('No such effect.');
+      if (command.enabled !== undefined) fx.enabled = command.enabled;
+      const p = command.params ?? {};
+      const clamp = (v: number | undefined, lo: number, hi: number, d: number) =>
+        v === undefined || !Number.isFinite(v) ? d : Math.min(hi, Math.max(lo, v));
+      fx.brightness = clamp(p.brightness, -1, 1, fx.brightness);
+      fx.contrast = clamp(p.contrast, 0, 3, fx.contrast);
+      fx.saturation = clamp(p.saturation, 0, 3, fx.saturation);
+      return;
+    }
+    case 'effect.remove': {
+      const seq = sequenceOf(doc, command.sequenceId);
+      const { track, item } = findItem(seq, command.itemId);
+      unlocked(track);
+      item.effects = item.effects?.filter((e) => e.id !== command.effectId);
+      if (!item.effects?.length) delete item.effects;
+      return;
+    }
+    case 'effect.move': {
+      const seq = sequenceOf(doc, command.sequenceId);
+      const { track, item } = findItem(seq, command.itemId);
+      unlocked(track);
+      const list = item.effects ?? [];
+      const from = list.findIndex((e) => e.id === command.effectId);
+      if (from < 0) fail('No such effect.');
+      const [fx] = list.splice(from, 1);
+      list.splice(Math.min(Math.max(0, command.index), list.length), 0, fx!);
       return;
     }
   }
@@ -800,6 +924,7 @@ function trimOne(
     const newEnd = Math.max(Math.min(time, latest), item.start + minLen);
     item.duration = (newEnd - item.start) as Flicks;
   }
+  fitFades(seq, item);
 }
 
 /** Other clips linked to `item`. */

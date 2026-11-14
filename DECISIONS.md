@@ -39,6 +39,7 @@ Each record states the decision, why it was made and what else was considered. R
 | 033 | Captions become clips on caption tracks | Accepted |
 | 034 | Crop and the facecam + gameplay layout (manual reframing) | Accepted |
 | 035 | Automatic reframing with face detection | Accepted |
+| 036 | Fades, opacity and colour effects | Accepted |
 
 ---
 
@@ -486,3 +487,18 @@ Each record states the decision, why it was made and what else was considered. R
 - **Framing path** (`autoReframe` in `packages/core`, pure and unit-tested): the main face is the largest at first, then the one nearest to where it was (among faces at least 40% of the largest); gaps hold the last position; a five-sample median removes single-frame mistakes. A virtual camera then holds still while the face stays within a dead zone (12% of the visible width), pans at up to 0.6 visible widths per second when it leaves it (and keeps panning smoothly while the face keeps moving), and cuts — holding still first, then jumping on one frame — when the face has been far away (more than 55% of the visible width) for 0.6 s. The path respects the clip's crop, fill/fit and zoom, never shows past the picture's edges, and is simplified (Ramer–Douglas–Peucker, 0.4% of the frame width) into linear keyframes on Position X, with `hold` before cuts. A steady walk across the picture becomes about five keyframes.
 - **Applying.** "Auto reframe" (Inspector, or the clip's Framing menu) analyses the media if needed and applies itself when the analysis finishes. It replaces the clip's X keyframes in one undoable batch; "Remove" clears them. Clips that show their full width (fit, or panels of the facecam layout) are refused with an explanation, as are clips with no faces.
 - **Not yet:** scene cuts (the cut rule covers most hard cuts), picking the active speaker among several people, vertical movement and zoom, and measuring against labelled footage (Phase 5 exit criteria) on the reference PC.
+
+---
+
+## ADR-036 · Fades, opacity and colour effects
+
+**Status.** Accepted (14 Nov 2026, Phase 6 first slice). Starts the effect model of Phase 6; transitions, blur, speed, LUTs, chroma key and audio effects follow.
+
+**Context.** Phase 6 asks for an effect stack per clip whose every effect looks the same in the preview and the export. The most used ones in Shorts are fades, opacity and simple colour correction, and they set up the shape the later effects will use.
+
+**Decisions.**
+- **Model.** A timeline item gains `opacity` (0–1, absent = 1), `fade: {in, out}` (lengths in flicks) and `effects`, an ordered list. The first effect kind is `color` (brightness −1…1, contrast and saturation 0…3, with an `enabled` switch), the same parameters as FFmpeg's `eq` filter. Commands: `item.update` takes `opacity` and `fade`; `effect.add/update/remove/move` edit the stack (video tracks only, at most 16, values clamped). Fades are kept within the clip (the fade-out keeps its length first when they would overlap) and follow trims; a split keeps the fade-in on the left part and the fade-out on the right. Caption clips have no opacity or effects yet. Effect parameters are not keyframed yet.
+- **One meaning, two renderers.** `pictureAt(item, time)` in `packages/core` gives a clip's alpha (opacity × fade, linear ramps) and its combined colour (stacked colour effects collapse into one `eq`: contrasts multiply, brightness carries through, saturations multiply). The export applies `eq` after the crop and scale, then `format=yuva420p`, `lutyuv=a=val*opacity` and `fade=…:alpha=1` in timeline time, so faded and transparent clips show the layers below (or black). Audio fades are `afade` (linear). The GPU preview draws each layer with alpha blending and a shader that converts to BT.709 TV-range codes and applies exactly the per-plane gain and offset FFmpeg's `eq` uses (`eqCodes`, which mirrors vf_eq's integer maths, including that 0.12 brightness adds 27 codes, not 30.6). Web Audio multiplies the gain curve by the fade, as for volume keyframes. The compatible preview approximates with CSS `opacity` and `filter`.
+- **Editing.** The Inspector has a Colour section (add effects, switch each on/off to compare, remove, brightness/contrast/saturation sliders) and a Fades section (fade in, fade out, and opacity for pictures). Clips show fade ramps and small round handles at their top corners; dragging a handle sets the fade length in tenths of a second. Fades apply to a clip and its linked partners together, so picture and sound fade as one. Sliders keep showing a committed value until the document catches up, so arrow-key changes do not jump back.
+- **Tests.** Unit tests for fades, splitting/trimming with fades, stacking and the `eq` integer maths (checked against FFmpeg 8.1 output); a real-FFmpeg export test (fade levels over time, sound fades, half opacity, zero saturation); an audio parity case with fades (r = 0.999, 0.1 dB); a golden-frame case with a faded, partly transparent, colour-graded clip over a still (SSIM 0.994 at three times, mean colour within 3 levels); and an end-to-end test of the Inspector and the fade handles.
+

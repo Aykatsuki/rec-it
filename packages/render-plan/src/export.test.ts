@@ -703,6 +703,56 @@ describe.skipIf(!bins)('export renders correct frames (real FFmpeg)', () => {
         expect(colour(pixel(out, t, x!, y!)), `${t}s at ${x},${y}`).toBe('green');
   }, 60_000);
 
+  it('fades picture and sound, and applies opacity and colour', async () => {
+    const { out } = await render(({ v1 }) => [
+      { type: 'item.add', trackId: v1, assetId: 'red', start: 0, duration: s(3), id: 'r' },
+      { type: 'item.update', itemId: 'r', fade: { in: s(1), out: s(1) } },
+    ]);
+    const red = (t: number) => pixel(out, t, 176, 316)[0];
+    expect(red(0.02)).toBeLessThan(30);
+    expect(Math.abs(red(0.5) - 128)).toBeLessThan(30);
+    expect(red(1.5)).toBeGreaterThan(200);
+    expect(Math.abs(red(2.5) - 128)).toBeLessThan(30);
+    // Sound: quiet at the very start, full in the middle.
+    const level = (from: number) => {
+      const r = spawnSync(
+        bins!.ffmpeg,
+        [
+          '-hide_banner',
+          '-ss',
+          String(from),
+          '-t',
+          '0.1',
+          '-i',
+          out,
+          '-af',
+          'volumedetect',
+          '-f',
+          'null',
+          '-',
+        ],
+        { encoding: 'utf8' },
+      );
+      return Number(/mean_volume: (-?[\d.]+) dB/.exec(r.stderr)?.[1] ?? -99);
+    };
+    expect(level(1.4) - level(0)).toBeGreaterThan(12);
+
+    // Half opacity over black halves the red; a colour effect brightens a grey still.
+    const half = await render(({ v1 }) => [
+      { type: 'item.add', trackId: v1, assetId: 'red', start: 0, duration: s(1), id: 'h' },
+      { type: 'item.update', itemId: 'h', opacity: 0.5 },
+    ]);
+    expect(Math.abs(pixel(half.out, 0.5, 176, 316)[0] - 128)).toBeLessThan(25);
+    const bright = await render(({ v1 }) => [
+      { type: 'item.add', trackId: v1, assetId: 'blue', start: 0, duration: s(1), id: 'b' },
+      { type: 'effect.add', itemId: 'b', kind: 'color', id: 'fx' },
+      { type: 'effect.update', itemId: 'b', effectId: 'fx', params: { saturation: 0 } },
+    ]);
+    const [r, g, b] = pixel(bright.out, 0.5, 176, 316);
+    // No saturation: blue becomes a grey (channels equal).
+    expect(Math.max(r, g, b) - Math.min(r, g, b)).toBeLessThan(12);
+  }, 90_000);
+
   it('renders a single frame with the export graph', async () => {
     const h = new History(emptyDocument());
     h.execute(

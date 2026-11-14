@@ -31,6 +31,8 @@ import {
 } from 'lucide-react';
 import {
   FLICKS_PER_SECOND,
+  flicks,
+  secondsToFlicks,
   sourceTimeAt,
   type KeyframeProperty,
   type Sequence,
@@ -48,6 +50,7 @@ import {
   itemEndSec,
   keyframeTimes,
   linkedPartners,
+  setFade,
   redo,
   sequenceSeconds,
   splitAtPlayhead,
@@ -81,6 +84,14 @@ type Drag =
     }
   | { kind: 'trim'; item: TimelineItem; edge: 'start' | 'end'; startX: number; time: number }
   | {
+      kind: 'fade';
+      item: TimelineItem;
+      side: 'in' | 'out';
+      startX: number;
+      /** Fade length in seconds. */
+      seconds: number;
+    }
+  | {
       kind: 'marquee';
       x0: number;
       y0: number;
@@ -90,6 +101,8 @@ type Drag =
       base: string[];
       moved: boolean;
     };
+
+type DragMode = 'move' | 'start' | 'end' | 'fadeIn' | 'fadeOut';
 
 function timecode(seconds: number, fine = false): string {
   const m = Math.floor(seconds / 60);
@@ -410,7 +423,7 @@ function TimelineBody({ seq }: { seq: Sequence }) {
     e: ReactPointerEvent,
     track: Track,
     item: TimelineItem,
-    mode: 'move' | 'start' | 'end',
+    mode: DragMode,
   ) => {
     if (e.button !== 0) return;
     e.stopPropagation();
@@ -436,6 +449,17 @@ function TimelineBody({ seq }: { seq: Sequence }) {
       t.items.filter((i) => ids.has(i.id)).map((i) => ({ item: i, track: t })),
     );
     if (mode === 'move' && group.some((g) => g.track.locked)) return;
+    if (mode === 'fadeIn' || mode === 'fadeOut') {
+      const side = mode === 'fadeIn' ? 'in' : 'out';
+      setDrag({
+        kind: 'fade',
+        item,
+        side,
+        startX: e.clientX,
+        seconds: toSeconds(item.fade?.[side] ?? 0),
+      });
+      return;
+    }
     setDrag(
       mode === 'move'
         ? {
@@ -502,6 +526,12 @@ function TimelineBody({ seq }: { seq: Sequence }) {
         trackShift,
         moved: drag.moved || Math.abs(e.clientX - drag.startX) > 3,
       });
+    } else if (drag.kind === 'fade') {
+      const base = toSeconds(drag.item.fade?.[drag.side] ?? 0);
+      const length = toSeconds(drag.item.duration);
+      const next = base + (drag.side === 'in' ? dx : -dx);
+      // Round to a tenth of a second, like the inspector slider.
+      setDrag({ ...drag, seconds: Math.round(Math.max(0, Math.min(length, next)) * 10) / 10 });
     } else {
       const base = drag.edge === 'start' ? toSeconds(drag.item.start) : itemEndSec(drag.item);
       setDrag({ ...drag, time: snap(base + dx, drag.item.id) });
@@ -531,6 +561,9 @@ function TimelineBody({ seq }: { seq: Sequence }) {
           start: Math.max(0, item.start + delta),
         })),
       });
+    } else if (d.kind === 'fade') {
+      if (d.seconds !== toSeconds(d.item.fade?.[d.side] ?? 0))
+        void setFade(seq, d.item, d.side, d.seconds);
     } else if (d.kind === 'trim') {
       void edit({
         type: 'item.trim',
@@ -631,7 +664,18 @@ function TimelineBody({ seq }: { seq: Sequence }) {
                   return (
                     <ItemView
                       key={item.id}
-                      item={item}
+                      item={
+                        drag?.kind === 'fade' && drag.item.id === item.id
+                          ? {
+                              ...item,
+                              fade: {
+                                in: item.fade?.in ?? flicks(0),
+                                out: item.fade?.out ?? flicks(0),
+                                [drag.side]: secondsToFlicks(drag.seconds),
+                              },
+                            }
+                          : item
+                      }
                       track={track}
                       asset={byId.get(item.assetId)}
                       zoom={zoom}
@@ -797,7 +841,7 @@ function ItemViewInner({
   view: { left: number; width: number };
   selected: boolean;
   dimmed: boolean;
-  onPointerDown: (e: ReactPointerEvent, mode: 'move' | 'start' | 'end') => void;
+  onPointerDown: (e: ReactPointerEvent, mode: DragMode) => void;
   onContextMenu: (e: React.MouseEvent) => void;
 }) {
   const left = toSeconds(item.start) * zoom;
@@ -858,12 +902,69 @@ function ItemViewInner({
         keyframeTimes(item)
           .filter((t) => t >= toSeconds(item.start) && t <= itemEndSec(item))
           .map((t) => <KeyframeMarker key={t} item={item} time={t} zoom={zoom} />)}
+      {detailed && !item.caption && (
+        <FadeHandles item={item} zoom={zoom} width={width} onPointerDown={onPointerDown} />
+      )}
       <span
         className="tl__handle tl__handle--start"
         onPointerDown={(e) => onPointerDown(e, 'start')}
       />
       <span className="tl__handle tl__handle--end" onPointerDown={(e) => onPointerDown(e, 'end')} />
     </div>
+  );
+}
+
+/** Fade ramps and their drag handles at a clip's top corners (ADR-036). */
+function FadeHandles({
+  item,
+  zoom,
+  width,
+  onPointerDown,
+}: {
+  item: TimelineItem;
+  zoom: number;
+  width: number;
+  onPointerDown: (e: ReactPointerEvent, mode: DragMode) => void;
+}) {
+  const fin = Math.min(width, toSeconds(item.fade?.in ?? 0) * zoom);
+  const fout = Math.min(width, toSeconds(item.fade?.out ?? 0) * zoom);
+  return (
+    <>
+      {fin > 0 && (
+        <svg
+          className="tl__fade tl__fade--in"
+          style={{ width: fin }}
+          viewBox="0 0 100 100"
+          preserveAspectRatio="none"
+        >
+          <polygon points="0,0 100,0 0,100" />
+        </svg>
+      )}
+      {fout > 0 && (
+        <svg
+          className="tl__fade tl__fade--out"
+          style={{ width: fout }}
+          viewBox="0 0 100 100"
+          preserveAspectRatio="none"
+        >
+          <polygon points="0,0 100,0 100,100" />
+        </svg>
+      )}
+      <span
+        className="tl__fade-handle"
+        style={{ left: fin }}
+        data-testid="fade-in-handle"
+        title={`Fade in${fin ? ` (${toSeconds(item.fade!.in).toFixed(1)} s)` : ''} — drag`}
+        onPointerDown={(e) => onPointerDown(e, 'fadeIn')}
+      />
+      <span
+        className="tl__fade-handle"
+        style={{ left: width - fout }}
+        data-testid="fade-out-handle"
+        title={`Fade out${fout ? ` (${toSeconds(item.fade!.out).toFixed(1)} s)` : ''} — drag`}
+        onPointerDown={(e) => onPointerDown(e, 'fadeOut')}
+      />
+    </>
   );
 }
 

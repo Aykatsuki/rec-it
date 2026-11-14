@@ -4,6 +4,8 @@ import {
   computeLayout,
   sourceTimeAt,
   volumeAt,
+  pictureAt,
+  fadeAt,
   type Sequence,
   type TimelineItem,
   type Track,
@@ -215,7 +217,8 @@ export function ProgramMonitor({ seq }: { seq: Sequence }) {
       // under its nominal time, and seeking exactly onto it shows the previous frame.
       const fps = m.asset.probe?.video?.fps;
       const still = local + (fps && fps.num > 0 ? (0.25 * fps.den) / fps.num : 0.008);
-      el.volume = Math.min(1, volumeAt(m.item, toFlicks(playhead)));
+      const at = toFlicks(playhead);
+      el.volume = Math.min(1, Math.max(0, volumeAt(m.item, at) * fadeAt(m.item, at)));
       el.muted =
         m.item.muted || m.track.muted || (m.asset.kind === 'video' && !m.asset.probe?.audio);
       if (!active) {
@@ -327,6 +330,7 @@ export function ProgramMonitor({ seq }: { seq: Sequence }) {
                     transformFor(m.item, draft, playhead),
                   )
                 : null;
+              const pic = pictureAt(m.item, toFlicks(playhead));
               const style = layout
                 ? ({
                     left: `${(layout.left / seq.width) * 100}%`,
@@ -336,7 +340,12 @@ export function ProgramMonitor({ seq }: { seq: Sequence }) {
                     zIndex: m.layer,
                     transform: layout.rotation ? `rotate(${layout.rotation}deg)` : undefined,
                     // Opacity, not visibility: Chromium does not repaint a hidden video after a seek.
-                    opacity: visible ? 1 : 0,
+                    opacity: visible ? pic.alpha : 0,
+                    // Approximation of the eq filter (exact in the GPU preview and export).
+                    filter:
+                      pic.brightness || pic.contrast !== 1 || pic.saturation !== 1
+                        ? `brightness(${1 + pic.brightness}) contrast(${pic.contrast}) saturate(${pic.saturation})`
+                        : undefined,
                     // Crop (ADR-034): show only the kept part of the picture.
                     ...(v &&
                     (layout.source.w !== v.displayWidth || layout.source.h !== v.displayHeight)
@@ -529,6 +538,7 @@ function GpuCanvas({
             width: v.displayWidth,
             height: v.displayHeight,
             transform,
+            picture: pictureAt(m.item, now),
           });
       } else if (m.asset.kind === 'video' && m.asset.urls.proxy) {
         layers.push({
@@ -539,6 +549,7 @@ function GpuCanvas({
           width: v.displayWidth,
           height: v.displayHeight,
           transform,
+          picture: pictureAt(m.item, now),
         });
       }
     }

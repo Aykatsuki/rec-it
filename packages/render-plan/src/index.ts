@@ -1,6 +1,8 @@
 // Sequence → FFmpeg export command (ARCHITECTURE §10). Pure: no I/O, so it is unit-tested,
 // and the integration tests render real files from it.
 import {
+  combinedColor,
+  itemEnd,
   computeLayout,
   cropRect,
   flicksToSeconds,
@@ -340,6 +342,50 @@ interface GraphParts {
   height: number;
 }
 
+/** Colour effects as one `eq` (ADR-036): the stack combines exactly like chained eq filters. */
+function colorFilter(item: TimelineItem): string[] {
+  const c = combinedColor(item);
+  if (!c) return [];
+  return [
+    `eq=brightness=${num(c.brightness)}:contrast=${num(c.contrast)}:saturation=${num(c.saturation)}`,
+  ];
+}
+
+/** Static opacity scales the layer's alpha (the layer is yuva420p by then). */
+function opacityFilter(item: TimelineItem): string[] {
+  const o = item.opacity ?? 1;
+  return o >= 1 ? [] : [`lutyuv=a=val*${num(o)}`];
+}
+
+/** Picture fades on the alpha channel, in timeline time (after setpts). */
+function fadeFilters(item: TimelineItem): string[] {
+  const f = item.fade;
+  if (!f) return [];
+  const start = flicksToSeconds(item.start);
+  const end = flicksToSeconds(itemEnd(item));
+  const out: string[] = [];
+  if (f.in > 0) out.push(`fade=t=in:st=${num(start)}:d=${num(flicksToSeconds(f.in))}:alpha=1`);
+  if (f.out > 0) {
+    const d = flicksToSeconds(f.out);
+    out.push(`fade=t=out:st=${num(end - d)}:d=${num(d)}:alpha=1`);
+  }
+  return out;
+}
+
+/** Sound fades, in the clip's own time (its audio starts at 0 after the input seek). */
+function audioFades(item: TimelineItem): string {
+  const f = item.fade;
+  if (!f) return '';
+  const dur = flicksToSeconds(item.duration);
+  let out = '';
+  if (f.in > 0) out += `afade=t=in:st=0:d=${num(flicksToSeconds(f.in))},`;
+  if (f.out > 0) {
+    const d = flicksToSeconds(f.out);
+    out += `afade=t=out:st=${num(dur - d)}:d=${num(d)},`;
+  }
+  return out;
+}
+
 /** Cuts the kept part out of the source (crop, ADR-034); nothing when the whole picture is used. */
 function cropFilter(
   asset: { width?: number | undefined; height?: number | undefined },
@@ -422,8 +468,11 @@ function buildGraph(
           ...(asset.hdr && options.tonemap ? [TONEMAP] : []),
           `fps=${fps}`,
           ...cropFilter(asset, kept),
+          ...colorFilter(item),
           ...a.filters,
+          ...opacityFilter(item),
           `setpts=PTS-STARTPTS+${start}/TB`,
+          ...fadeFilters(item),
         ];
         graph.push(`[${k}:v]${chain.join(',')}[v${n}]`);
         graph.push(
@@ -446,13 +495,16 @@ function buildGraph(
         // Converting to BT.709 here keeps colours the same as the preview for every source.
         `scale=${width}:${height}:flags=bicubic:out_color_matrix=bt709:out_range=tv`,
         'setsar=1',
+        ...colorFilter(item),
         'format=yuva420p',
+        ...opacityFilter(item),
         ...(rotation
           ? [
               `rotate=a=${((rotation * Math.PI) / 180).toFixed(6)}:ow=${bounds.width}:oh=${bounds.height}:c=none:bilinear=1`,
             ]
           : []),
         `setpts=PTS-STARTPTS+${start}/TB`,
+        ...fadeFilters(item),
       ];
       graph.push(`[${k}:v]${chain.join(',')}[v${n}]`);
       graph.push(
@@ -475,7 +527,7 @@ function buildGraph(
     const delayMs = Math.round(flicksToSeconds(item.start) * 1000);
     graph.push(
       `[${k}:a]aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo,` +
-        `${volumeFilter(item)},adelay=${delayMs}:all=1[a${n}]`,
+        `${volumeFilter(item)},${audioFades(item)}adelay=${delayMs}:all=1[a${n}]`,
     );
     audioLabels.push(`[a${n}]`);
   });

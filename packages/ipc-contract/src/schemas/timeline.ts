@@ -50,6 +50,21 @@ export const timelineItemSchema = z.object({
   transform: transformSchema,
   keyframes: z.partialRecord(keyframeProperty, z.array(keyframeSchema).max(10_000)).optional(),
   linkId: id.optional(),
+  opacity: z.number().min(0).max(1).optional(),
+  fade: z.object({ in: flicks, out: flicks }).optional(),
+  effects: z
+    .array(
+      z.object({
+        id,
+        kind: z.literal('color'),
+        enabled: z.boolean(),
+        brightness: z.number().min(-1).max(1),
+        contrast: z.number().min(0).max(3),
+        saturation: z.number().min(0).max(3),
+      }),
+    )
+    .max(16)
+    .optional(),
   caption: z
     .object({
       words: z
@@ -275,6 +290,38 @@ const singleCommandSchema = z.discriminatedUnion('type', [
     volume: z.number().min(0).max(2).optional(),
     muted: z.boolean().optional(),
     transform: transformPatchSchema.optional(),
+    opacity: z.number().min(0).max(1).optional(),
+    fade: z.object({ in: flicks.optional(), out: flicks.optional() }).strict().optional(),
+  }),
+  z.object({
+    type: z.literal('effect.add'),
+    ...seqId,
+    itemId: id,
+    kind: z.enum(['color']),
+    id: id.optional(),
+  }),
+  z.object({
+    type: z.literal('effect.update'),
+    ...seqId,
+    itemId: id,
+    effectId: id,
+    enabled: z.boolean().optional(),
+    params: z
+      .object({
+        brightness: z.number().min(-1).max(1).optional(),
+        contrast: z.number().min(0).max(3).optional(),
+        saturation: z.number().min(0).max(3).optional(),
+      })
+      .strict()
+      .optional(),
+  }),
+  z.object({ type: z.literal('effect.remove'), ...seqId, itemId: id, effectId: id }),
+  z.object({
+    type: z.literal('effect.move'),
+    ...seqId,
+    itemId: id,
+    effectId: id,
+    index: z.number().int().min(0).max(64),
   }),
 ]);
 

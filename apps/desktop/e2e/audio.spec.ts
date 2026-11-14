@@ -1,6 +1,6 @@
 // Audio parity (ADR-030): the preview's Web Audio mix, rendered offline, must match the
 // exported file's sound in timing (within 20 ms) and level (within 1 dB), including volume
-// keyframes, a clip's own sound and a separate audio clip.
+// keyframes, fades, a clip's own sound and a separate audio clip.
 import { expect, test } from '@playwright/test';
 import { execFileSync } from 'node:child_process';
 import { rmSync } from 'node:fs';
@@ -100,7 +100,14 @@ test.describe('preview audio', () => {
           command: {
             type: 'batch',
             commands: [
-              { type: 'item.update', sequenceId: seq.id, itemId: video, volume: 0.5 },
+              {
+                type: 'item.update',
+                sequenceId: seq.id,
+                itemId: video,
+                volume: 0.5,
+                // Fades (ADR-036) shape the gain like volume keyframes do.
+                fade: { in: 0.3 * S, out: S },
+              },
               {
                 type: 'item.add',
                 sequenceId: seq.id,

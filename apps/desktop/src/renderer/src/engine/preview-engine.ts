@@ -1,5 +1,5 @@
 // Frame-accurate preview (ADR-008, ADR-029): WebCodecs decodes the proxies, WebGL2 composites.
-import type { Transform } from '@rec-it/core';
+import type { PictureState, Transform } from '@rec-it/core';
 import { Compositor } from './compositor';
 import { VideoSource } from './video-source';
 
@@ -14,6 +14,7 @@ export interface EngineLayer {
   width: number;
   height: number;
   transform: Transform;
+  picture?: PictureState;
 }
 
 /** True when this system can run the GPU preview. */

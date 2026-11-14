@@ -85,6 +85,110 @@ export interface TimelineItem {
   linkId?: string;
   /** Set on caption clips (on caption tracks; assetId is CAPTION_ASSET). ADR-033. */
   caption?: CaptionContent;
+  /** Picture opacity 0..1 (absent = 1). ADR-036. */
+  opacity?: number;
+  /** Fade in from / out to nothing, picture and sound together (timeline lengths). ADR-036. */
+  fade?: { in: Flicks; out: Flicks };
+  /** Effects applied to the picture, in order (ADR-036). */
+  effects?: Effect[];
+}
+
+/** Effect kinds available so far; more arrive through Phase 6. */
+export const EFFECT_KINDS = ['color'] as const;
+export type EffectKind = (typeof EFFECT_KINDS)[number];
+
+/**
+ * Brightness (-1..1, 0 = unchanged), contrast and saturation (0..3, 1 = unchanged), with the
+ * same meaning as FFmpeg's `eq` filter: brightness shifts and contrast scales luma around mid
+ * grey, saturation scales chroma.
+ */
+export interface ColorEffect {
+  id: string;
+  kind: 'color';
+  enabled: boolean;
+  brightness: number;
+  contrast: number;
+  saturation: number;
+}
+export type Effect = ColorEffect;
+
+/** How a clip's picture looks at a moment: alpha (opacity × fades) and combined colour. */
+export interface PictureState {
+  alpha: number;
+  brightness: number;
+  contrast: number;
+  saturation: number;
+}
+
+/** Fade multiplier (0..1) at timeline time `time`: linear ramps at the clip's ends. */
+export function fadeAt(
+  item: Pick<TimelineItem, 'start' | 'duration' | 'fade'>,
+  time: number,
+): number {
+  const f = item.fade;
+  if (!f) return 1;
+  const into = time - item.start;
+  const left = item.start + item.duration - time;
+  let k = 1;
+  if (f.in > 0 && into < f.in) k = Math.min(k, Math.max(0, into / f.in));
+  if (f.out > 0 && left < f.out) k = Math.min(k, Math.max(0, left / f.out));
+  return k;
+}
+
+/** The clip's picture at timeline time `time` (enabled colour effects combine in order). */
+export function pictureAt(item: TimelineItem, time: number): PictureState {
+  let brightness = 0;
+  let contrast = 1;
+  let saturation = 1;
+  for (const e of item.effects ?? []) {
+    if (!e.enabled || e.kind !== 'color') continue;
+    // eq(b2, c2) after eq(b1, c1) on luma around mid grey: c2·(c1·x + b1) + b2.
+    brightness = e.contrast * brightness + e.brightness;
+    contrast *= e.contrast;
+    saturation *= e.saturation;
+  }
+  return { alpha: (item.opacity ?? 1) * fadeAt(item, time), brightness, contrast, saturation };
+}
+
+/** The colour effects the export applies, collapsed into one (null when unchanged). */
+export function combinedColor(
+  item: TimelineItem,
+): { brightness: number; contrast: number; saturation: number } | null {
+  const p = pictureAt(item, item.start);
+  return p.brightness === 0 && p.contrast === 1 && p.saturation === 1
+    ? null
+    : { brightness: p.brightness, contrast: p.contrast, saturation: p.saturation };
+}
+
+/** Gain and offset (in 8-bit code values) that one plane of FFmpeg's `eq` filter applies. */
+export interface EqPlane {
+  gain: number;
+  offset: number;
+}
+
+/**
+ * Exactly what FFmpeg's `eq` filter does to 8-bit luma (`luma`) and chroma (`chroma`) codes for
+ * these parameters: `out = gain·code + offset`, clamped to 0..255. It mirrors vf_eq.h, including
+ * that the parameters pass through a float and are truncated to whole steps (brightness 0.12 adds
+ * 27 codes, not 30.6), so the preview can match the export (ADR-036). The values are first
+ * rounded the way the export writes them into the filter string.
+ */
+export function eqCodes(color: { brightness: number; contrast: number; saturation: number }): {
+  luma: EqPlane;
+  chroma: EqPlane;
+} {
+  const written = (n: number) => Math.fround(Number(n.toFixed(6)));
+  const plane = (contrast: number, brightness: number): EqPlane => {
+    if (contrast === 1 && brightness === 0) return { gain: 1, offset: 0 };
+    const c = Math.trunc(contrast * 4096);
+    const b =
+      Math.trunc((Math.trunc(100 * brightness + 100) * 511) / 200) - 128 - Math.trunc(c / 32);
+    return { gain: c / 4096, offset: b };
+  };
+  return {
+    luma: plane(written(color.contrast), written(color.brightness)),
+    chroma: plane(written(color.saturation), 0),
+  };
 }
 
 /** The pseudo media id of caption clips (they have no media file). */

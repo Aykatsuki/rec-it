@@ -1,4 +1,3 @@
-import { useState, type ReactNode } from 'react';
 import {
   ChevronLeft,
   ChevronRight,
@@ -38,62 +37,8 @@ import { formatDuration } from '../format';
 import { useApp } from '../store';
 import { transformFor } from './TransformOverlay';
 import { AutoReframe } from './AutoReframe';
-
-/** A slider that previews locally and commits one undoable edit when released. */
-function Slider({
-  label,
-  value,
-  min,
-  max,
-  step,
-  format,
-  onCommit,
-  onPreview,
-  extra,
-}: {
-  /** Shown after the value (keyframe buttons). */
-  extra?: ReactNode;
-  label: string;
-  value: number;
-  min: number;
-  max: number;
-  step: number;
-  format: (v: number) => string;
-  onCommit: (v: number) => void | Promise<void>;
-  /** Called while dragging, so the preview can update live. */
-  onPreview?: (v: number) => void;
-}) {
-  const [local, setLocal] = useState<number | null>(null);
-  const shown = local ?? value;
-  const commit = () => {
-    // Compare with nothing: while dragging, the live preview already shows `local` as `value`.
-    // Committing an unchanged value is a no-op in the edit helpers.
-    if (local !== null) void onCommit(local);
-    setLocal(null);
-  };
-  return (
-    <label className="slider">
-      <span className="slider__label">{label}</span>
-      <input
-        type="range"
-        min={min}
-        max={max}
-        step={step}
-        value={shown}
-        aria-label={label}
-        onChange={(e) => {
-          setLocal(Number(e.target.value));
-          onPreview?.(Number(e.target.value));
-        }}
-        onPointerUp={commit}
-        onKeyUp={commit}
-        onBlur={commit}
-      />
-      <span className="slider__value">{format(shown)}</span>
-      {extra}
-    </label>
-  );
-}
+import { ColourSection, FadesSection } from './EffectsInspector';
+import { Slider } from './Slider';
 
 export function ClipInspector({
   seq,
@@ -279,6 +224,10 @@ export function ClipInspector({
       {visual && asset?.kind === 'video' && (
         <AutoReframe seq={seq} track={track} item={item} asset={asset} />
       )}
+      {visual && asset && <ColourSection seq={seq} item={item} track={track} />}
+      {(visual || hasAudio || track.kind === 'audio') && (
+        <FadesSection seq={seq} item={item} track={track} />
+      )}
       {hasKeyframes(item) && <KeyframeSection seq={seq} item={item} playhead={playhead} />}
       {(hasAudio || track.kind === 'audio') && (
         <section>
@@ -291,7 +240,7 @@ export function ClipInspector({
             max={2}
             step={0.01}
             format={pct}
-            onCommit={(v) => void commitVolume(seq, item, v, useApp.getState().playhead)}
+            onCommit={(v) => commitVolume(seq, item, v, useApp.getState().playhead)}
           />
           <div className="details__actions">
             <Button
