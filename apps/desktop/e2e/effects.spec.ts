@@ -143,6 +143,8 @@ test.describe('effects', () => {
         'data-kind',
         'dipWhite',
       );
+      await section.getByRole('radio', { name: 'Slide' }).click();
+      await expect(page.getByTestId('timeline-transition')).toHaveAttribute('data-kind', 'slide');
 
       // None removes it; undo brings it back.
       await section.getByRole('radio', { name: 'None' }).click();

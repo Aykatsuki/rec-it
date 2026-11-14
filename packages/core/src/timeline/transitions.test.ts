@@ -3,7 +3,7 @@ import { FRAME_RATES, secondsToFlicks as S } from '../time';
 import type { Command } from './commands';
 import { History } from './history';
 import { emptyDocument, fadeAt, gainAt, pictureAt } from './model';
-import { presentSequence, transitionSpans } from './transitions';
+import { motionAt, presentSequence, transitionSpans, wipeAt, ZOOM_TO } from './transitions';
 
 const lookup = (id: string) =>
   id === 'clip'
@@ -125,5 +125,26 @@ describe('transitions', () => {
     expect(items[2]!.transitionIn).toBeUndefined();
     run({ type: 'transition.remove', sequenceId: 's', itemId: 'b' });
     expect(seq().tracks[1]!.items[1]!.transitionIn).toBeUndefined();
+  });
+
+  it('wipe, slide and zoom overlap like a dissolve and move or reveal the clips', () => {
+    const { run, shown } = setup();
+    run({ type: 'transition.set', sequenceId: 's', itemId: 'b', kind: 'slide', duration: S(1) });
+    let [a, b] = shown();
+    expect(b!.start).toBe(S(2.5));
+    expect(motionAt(a!, S(2.5))).toEqual({ dx: 0, ds: 1 });
+    expect(motionAt(a!, S(3)).dx).toBeCloseTo(-0.5, 6);
+    expect(motionAt(b!, S(3.5)).dx).toBe(0);
+    expect(pictureAt(b!, S(3)).alpha).toBe(1); // no fade: it moves
+    expect(gainAt(a!, S(3)) + gainAt(b!, S(3))).toBeCloseTo(1, 6); // sound still crossfades
+    run({ type: 'transition.set', sequenceId: 's', itemId: 'b', kind: 'wipe', duration: S(1) });
+    [, b] = shown();
+    expect(wipeAt(b!, S(2.5))).toBe(0);
+    expect(wipeAt(b!, S(3))).toBeCloseTo(0.5, 6);
+    expect(wipeAt(b!, S(4))).toBe(1);
+    run({ type: 'transition.set', sequenceId: 's', itemId: 'b', kind: 'zoom', duration: S(1) });
+    [a, b] = shown();
+    expect(motionAt(a!, S(3.5)).ds).toBeCloseTo(ZOOM_TO, 6);
+    expect(pictureAt(b!, S(3)).alpha).toBeCloseTo(0.5, 6);
   });
 });

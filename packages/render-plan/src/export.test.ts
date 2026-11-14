@@ -868,6 +868,49 @@ describe.skipIf(!bins)('export renders correct frames (real FFmpeg)', () => {
     expect(v(60)).toBeLessThan(8);
   }, 60_000);
 
+  it('slides, wipes and zooms between clips', async () => {
+    const two =
+      (kind: 'slide' | 'wipe' | 'zoom') =>
+      ({ v1 }: { v1: string }) =>
+        [
+          {
+            type: 'item.add',
+            trackId: v1,
+            assetId: 'red',
+            start: 0,
+            sourceIn: 0,
+            duration: s(1.5),
+            id: 'r',
+          },
+          {
+            type: 'item.add',
+            trackId: v1,
+            assetId: 'blue',
+            start: s(1.5),
+            sourceIn: s(1),
+            duration: s(1.5),
+            id: 'b',
+          },
+          { type: 'transition.set', itemId: 'b', kind, duration: s(1) },
+        ] as unknown as Omit<Command, 'sequenceId'>[];
+    // Half way through (the cut, 1.5 s). Slide: A (red) is leaving on the left, B (blue) arriving
+    // on the right. Wipe: B has been revealed from the left up to the middle.
+    for (const [kind, left, right] of [
+      ['slide', 0, 2],
+      ['wipe', 2, 0],
+    ] as const) {
+      const { out } = await render(two(kind));
+      expect(pixel(out, 1.5, 60, 316)[left], `${kind} left`).toBeGreaterThan(180);
+      expect(pixel(out, 1.5, 290, 316)[right], `${kind} right`).toBeGreaterThan(180);
+      expect(pixel(out, 0.8, 290, 316)[0], `${kind} before`).toBeGreaterThan(180);
+      expect(pixel(out, 2.2, 60, 316)[2], `${kind} after`).toBeGreaterThan(180);
+    }
+    const zoom = await render(two('zoom'));
+    const mid = pixel(zoom.out, 1.5, 176, 316);
+    expect(Math.abs(mid[0] - 128)).toBeLessThan(35);
+    expect(Math.abs(mid[2] - 128)).toBeLessThan(35);
+  }, 120_000);
+
   it('cross dissolves and dips between clips', async () => {
     const twoClips =
       (kind: 'dissolve' | 'dipWhite') =>

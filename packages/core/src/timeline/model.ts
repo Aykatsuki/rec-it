@@ -105,10 +105,21 @@ export interface TimelineItem {
   /** Set only on presented items (presentSequence): sound-only fades and fades to a colour. */
   audioFade?: { in: Flicks; out: Flicks };
   tint?: { in: Flicks; out: Flicks; color: TintColor };
+  /** Presented only: movement during a slide or zoom transition (timeline window). ADR-043. */
+  motion?: { start: Flicks; end: Flicks; x0: number; x1: number; s0: number; s1: number };
+  /** Presented only: a left-to-right wipe revealing the clip over this window. ADR-043. */
+  wipe?: { start: Flicks; end: Flicks };
 }
 
 /** Transitions between two clips on the same track (ADR-037). */
-export const TRANSITION_KINDS = ['dissolve', 'dipBlack', 'dipWhite'] as const;
+export const TRANSITION_KINDS = [
+  'dissolve',
+  'dipBlack',
+  'dipWhite',
+  'wipe',
+  'slide',
+  'zoom',
+] as const;
 export type TransitionKind = (typeof TRANSITION_KINDS)[number];
 export interface Transition {
   kind: TransitionKind;

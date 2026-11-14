@@ -825,6 +825,9 @@ export const TRANSITION_LABELS: Record<TransitionKind, string> = {
   dissolve: 'Cross dissolve',
   dipBlack: 'Dip to black',
   dipWhite: 'Dip to white',
+  wipe: 'Wipe',
+  slide: 'Slide (push)',
+  zoom: 'Zoom',
 };
 /** Length of a new transition, in seconds. */
 export const DEFAULT_TRANSITION_SECONDS = 0.5;

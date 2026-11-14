@@ -3,6 +3,7 @@
 // export draw: overlapping, faded clips. Everything else keeps using the plain timeline.
 import type { Flicks } from '../time';
 import {
+  type TransitionKind,
   itemEnd,
   itemHandles,
   sliceItem,
@@ -45,7 +46,7 @@ export function transitionSpans(track: Track, length: MediaLength): TransitionSp
     const d = Math.min(t.duration, a.duration, b.duration);
     let pre: number;
     let post: number;
-    if (t.kind === 'dissolve') {
+    if (OVERLAPPING.has(t.kind)) {
       // Centred on the cut, using extra media before B and after A; when one side has too
       // little, the other side gives more.
       const hA = Math.min(handles(a, length).after, b.duration);
@@ -75,6 +76,30 @@ export function transitionSpans(track: Track, length: MediaLength): TransitionSp
 
 const zero = 0 as Flicks;
 
+/** Transitions where both clips play during the window (the others are dips). */
+const OVERLAPPING = new Set<TransitionKind>(['dissolve', 'wipe', 'slide', 'zoom']);
+/** How far the outgoing clip grows in a zoom transition. */
+export const ZOOM_TO = 1.6;
+
+/** Smoothstep progress (0–1) through a window at time `t`; preview and export use the same curve. */
+export function windowProgress(w: { start: number; end: number }, t: number): number {
+  const p = Math.min(1, Math.max(0, (t - w.start) / Math.max(1, w.end - w.start)));
+  return p * p * (3 - 2 * p);
+}
+
+/** Extra x offset (frame widths) and scale factor from a slide or zoom transition at `time`. */
+export function motionAt(item: TimelineItem, time: number): { dx: number; ds: number } {
+  const m = item.motion;
+  if (!m) return { dx: 0, ds: 1 };
+  const e = windowProgress(m, time);
+  return { dx: m.x0 + (m.x1 - m.x0) * e, ds: m.s0 + (m.s1 - m.s0) * e };
+}
+
+/** How far across the frame (0–1) a wipe has revealed the clip at `time`; 1 when no wipe. */
+export function wipeAt(item: TimelineItem, time: number): number {
+  return item.wipe ? windowProgress(item.wipe, time) : 1;
+}
+
 /**
  * The track's clips as preview and export draw them. Cross dissolve: B starts earlier (playing
  * the media before its in point) and fades in over A, which plays on past the cut underneath
@@ -92,11 +117,26 @@ export function presentTrack(track: Track, length: MediaLength): TimelineItem[] 
     const post = s.end - s.cut;
     const fadeA = { in: a.fade?.in ?? zero, out: zero };
     const fadeB = { in: zero, out: b.fade?.out ?? zero };
-    if (s.kind === 'dissolve') {
+    if (OVERLAPPING.has(s.kind)) {
+      // Both clips play through the window; B is drawn over A.
+      const d = (pre + post) as Flicks;
       Object.assign(a, sliceItem(a, a.start, itemEnd(a) + post));
-      a.audioFade = { in: a.audioFade?.in ?? zero, out: (pre + post) as Flicks };
+      a.audioFade = { in: a.audioFade?.in ?? zero, out: d };
       Object.assign(b, sliceItem(b, s.start, itemEnd(b)));
-      fadeB.in = (pre + post) as Flicks;
+      const window = { start: s.start, end: s.end };
+      if (s.kind === 'dissolve') fadeB.in = d;
+      else b.audioFade = { in: d, out: b.audioFade?.out ?? zero };
+      if (s.kind === 'wipe') b.wipe = window;
+      if (s.kind === 'slide') {
+        // Push: B comes in from the right as A leaves to the left.
+        a.motion = { ...window, x0: 0, x1: -1, s0: 1, s1: 1 };
+        b.motion = { ...window, x0: 1, x1: 0, s0: 1, s1: 1 };
+      }
+      if (s.kind === 'zoom') {
+        // A rushes towards the viewer while B fades in over it.
+        a.motion = { ...window, x0: 0, x1: 0, s0: 1, s1: ZOOM_TO };
+        fadeB.in = d;
+      }
     } else {
       const color = s.kind === 'dipWhite' ? 'white' : 'black';
       a.tint = { in: a.tint?.in ?? zero, out: pre as Flicks, color };
