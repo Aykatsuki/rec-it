@@ -1,16 +1,20 @@
 // Fades, opacity and colour effects for one clip (ADR-036).
-import { Eye, EyeOff, Pause, Pipette, Plus, Repeat, Trash2 } from 'lucide-react';
+import { AudioLines, Eye, EyeOff, Mic, Pause, Pipette, Plus, Repeat, Trash2 } from 'lucide-react';
 import {
   TRANSITION_KINDS,
   transitionSpans,
   type Effect,
+  type AudioEffect,
   type Sequence,
   type TimelineItem,
   type Track,
 } from '@rec-it/core';
+import type { CommandInput } from '@rec-it/ipc-contract';
 import { Button } from '@rec-it/ui';
 import {
   addLut,
+  duckUnderVoices,
+  voicePreset,
   importLut,
   clipBefore,
   edit,
@@ -98,32 +102,12 @@ export function ColourSection({
   item: TimelineItem;
   track: Track;
 }) {
-  const effects = item.effects ?? [];
+  const all = item.effects ?? [];
+  const effects = all.filter(
+    (e): e is Exclude<Effect, AudioEffect> => e.kind !== 'eq' && e.kind !== 'compressor',
+  );
   const luts = useApp((s) => s.luts);
-  const update = (
-    e: Effect,
-    change: {
-      enabled?: boolean;
-      params?: Partial<
-        Record<
-          'brightness' | 'contrast' | 'saturation' | 'size' | 'strength' | 'similarity' | 'blend',
-          number
-        >
-      >;
-      lutId?: string;
-      color?: string;
-    },
-  ) =>
-    edit({
-      type: 'effect.update',
-      sequenceId: seq.id,
-      itemId: item.id,
-      effectId: e.id,
-      ...(change.enabled !== undefined ? { enabled: change.enabled } : {}),
-      ...(change.params ? { params: change.params } : {}),
-      ...(change.lutId ? { lutId: change.lutId } : {}),
-      ...(change.color ? { color: change.color } : {}),
-    });
+  const update = effectUpdater(seq, item);
   const count = (kind: Effect['kind']) => effects.filter((e) => e.kind === kind).length;
   const add = (kind: Effect['kind']) =>
     void edit({ type: 'effect.add', sequenceId: seq.id, itemId: item.id, kind });
@@ -333,7 +317,7 @@ export function ColourSection({
         <Button
           size="sm"
           icon={<Plus size={13} />}
-          disabled={track.locked || effects.length >= 16}
+          disabled={track.locked || all.length >= 16}
           data-testid="add-colour"
           onClick={() => add('color')}
         >
@@ -342,7 +326,7 @@ export function ColourSection({
         <Button
           size="sm"
           icon={<Plus size={13} />}
-          disabled={track.locked || effects.length >= 16}
+          disabled={track.locked || all.length >= 16}
           data-testid="add-blur"
           onClick={() => add('blur')}
         >
@@ -351,7 +335,7 @@ export function ColourSection({
         <Button
           size="sm"
           icon={<Plus size={13} />}
-          disabled={track.locked || effects.length >= 16 || count('chromaKey') > 0}
+          disabled={track.locked || all.length >= 16 || count('chromaKey') > 0}
           data-testid="add-key"
           title="Make a green or blue background transparent"
           onClick={() => add('chromaKey')}
@@ -361,7 +345,7 @@ export function ColourSection({
         <Button
           size="sm"
           icon={<Plus size={13} />}
-          disabled={track.locked || effects.length >= 16 || count('lut') > 0}
+          disabled={track.locked || all.length >= 16 || count('lut') > 0}
           data-testid="add-lut"
           title="A colour look from a .cube file"
           onClick={() => void addLut(seq, item.id)}
@@ -525,6 +509,264 @@ export function SpeedSection({
         Changing the speed changes the clip's length; clips after it on its track move along. Sound
         keeps its pitch.
       </p>
+    </section>
+  );
+}
+
+type EffectChange = {
+  enabled?: boolean;
+  params?: Partial<Record<EffectParam, number>>;
+  lutId?: string;
+  color?: string;
+  lowCut?: boolean;
+};
+type EffectParam =
+  NonNullable<Extract<CommandInput, { type: 'effect.update' }>['params']> extends infer P
+    ? keyof P
+    : never;
+
+/** Sends one effect change as an undoable edit. */
+function effectUpdater(seq: Sequence, item: TimelineItem) {
+  return (e: Effect, change: EffectChange) =>
+    edit({
+      type: 'effect.update',
+      sequenceId: seq.id,
+      itemId: item.id,
+      effectId: e.id,
+      ...(change.enabled !== undefined ? { enabled: change.enabled } : {}),
+      ...(change.params ? { params: change.params } : {}),
+      ...(change.lutId ? { lutId: change.lutId } : {}),
+      ...(change.color ? { color: change.color } : {}),
+      ...(change.lowCut !== undefined ? { lowCut: change.lowCut } : {}),
+    });
+}
+
+/** A card's title row: name, on/off and remove. */
+function EffectHead({
+  seq,
+  item,
+  track,
+  effect,
+  name,
+}: {
+  seq: Sequence;
+  item: TimelineItem;
+  track: Track;
+  effect: Effect;
+  name: string;
+}) {
+  const update = effectUpdater(seq, item);
+  return (
+    <div className="effect__head">
+      <span className="effect__name">
+        {name}
+        {!effect.enabled && ' (off)'}
+      </span>
+      <Button
+        size="sm"
+        variant="ghost"
+        icon={effect.enabled ? <Eye size={13} /> : <EyeOff size={13} />}
+        aria-label={effect.enabled ? 'Turn effect off' : 'Turn effect on'}
+        title={effect.enabled ? 'Turn off (compare with the original)' : 'Turn on'}
+        disabled={track.locked}
+        onClick={() => void update(effect, { enabled: !effect.enabled })}
+      />
+      <Button
+        size="sm"
+        variant="ghost"
+        icon={<Trash2 size={13} />}
+        aria-label="Remove effect"
+        disabled={track.locked}
+        onClick={() =>
+          void edit({
+            type: 'effect.remove',
+            sequenceId: seq.id,
+            itemId: item.id,
+            effectId: effect.id,
+          })
+        }
+      />
+    </div>
+  );
+}
+
+const db = (v: number) => `${v > 0 ? '+' : ''}${v.toFixed(1)} dB`;
+
+/** Sound effects (ADR-042): EQ, compressor and ducking. */
+export function SoundSection({
+  seq,
+  item,
+  track,
+}: {
+  seq: Sequence;
+  item: TimelineItem;
+  track: Track;
+}) {
+  const all = item.effects ?? [];
+  const effects = all.filter((e): e is AudioEffect => e.kind === 'eq' || e.kind === 'compressor');
+  const update = effectUpdater(seq, item);
+  const add = (kind: AudioEffect['kind']) =>
+    void edit({ type: 'effect.add', sequenceId: seq.id, itemId: item.id, kind });
+  return (
+    <section data-testid="sound-effects">
+      <h4>Sound</h4>
+      {effects.map((e) => (
+        <div key={e.id} className="effect" data-testid={`${e.kind}-effect`}>
+          <EffectHead
+            seq={seq}
+            item={item}
+            track={track}
+            effect={e}
+            name={e.kind === 'eq' ? 'Equaliser' : 'Compressor'}
+          />
+          {e.kind === 'eq' ? (
+            <>
+              <label className="effect__check">
+                <input
+                  type="checkbox"
+                  checked={e.lowCut}
+                  disabled={track.locked}
+                  onChange={(ev) => void update(e, { lowCut: ev.target.checked })}
+                />
+                Low cut (removes rumble below 80 Hz)
+              </label>
+              <Slider
+                label="Bass"
+                value={e.low}
+                min={-12}
+                max={12}
+                step={0.5}
+                format={db}
+                disabled={track.locked}
+                onCommit={(v) => update(e, { params: { low: v } })}
+              />
+              <Slider
+                label="Mid"
+                value={e.mid}
+                min={-12}
+                max={12}
+                step={0.5}
+                format={db}
+                disabled={track.locked}
+                onCommit={(v) => update(e, { params: { mid: v } })}
+              />
+              <Slider
+                label="Mid frequency"
+                value={e.midFreq}
+                min={200}
+                max={10000}
+                step={50}
+                format={(v) => (v >= 1000 ? `${(v / 1000).toFixed(1)} kHz` : `${v} Hz`)}
+                disabled={track.locked}
+                onCommit={(v) => update(e, { params: { midFreq: v } })}
+              />
+              <Slider
+                label="Treble"
+                value={e.high}
+                min={-12}
+                max={12}
+                step={0.5}
+                format={db}
+                disabled={track.locked}
+                onCommit={(v) => update(e, { params: { high: v } })}
+              />
+            </>
+          ) : (
+            <>
+              <Slider
+                label="Threshold"
+                value={e.threshold}
+                min={-60}
+                max={0}
+                step={1}
+                format={(v) => `${v} dB`}
+                disabled={track.locked}
+                onCommit={(v) => update(e, { params: { threshold: v } })}
+              />
+              <Slider
+                label="Ratio"
+                value={e.ratio}
+                min={1}
+                max={20}
+                step={0.5}
+                format={(v) => `${v}:1`}
+                disabled={track.locked}
+                onCommit={(v) => update(e, { params: { ratio: v } })}
+              />
+              <Slider
+                label="Attack"
+                value={e.attack}
+                min={1}
+                max={200}
+                step={1}
+                format={(v) => `${v} ms`}
+                disabled={track.locked}
+                onCommit={(v) => update(e, { params: { attack: v } })}
+              />
+              <Slider
+                label="Release"
+                value={e.release}
+                min={20}
+                max={1000}
+                step={10}
+                format={(v) => `${v} ms`}
+                disabled={track.locked}
+                onCommit={(v) => update(e, { params: { release: v } })}
+              />
+              <Slider
+                label="Make-up gain"
+                value={e.makeup}
+                min={0}
+                max={24}
+                step={0.5}
+                format={db}
+                disabled={track.locked}
+                onCommit={(v) => update(e, { params: { makeup: v } })}
+              />
+            </>
+          )}
+        </div>
+      ))}
+      <div className="details__actions">
+        <Button
+          size="sm"
+          icon={<Plus size={13} />}
+          disabled={track.locked || all.length >= 16}
+          data-testid="add-eq"
+          onClick={() => add('eq')}
+        >
+          EQ
+        </Button>
+        <Button
+          size="sm"
+          icon={<Plus size={13} />}
+          disabled={track.locked || all.length >= 16}
+          data-testid="add-compressor"
+          onClick={() => add('compressor')}
+        >
+          Compressor
+        </Button>
+        <Button
+          size="sm"
+          icon={<Mic size={13} />}
+          disabled={track.locked}
+          data-testid="voice-preset"
+          title="Low cut, a little presence and gentle compression"
+          onClick={() => void voicePreset(seq, item)}
+        >
+          Voice preset
+        </Button>
+        <Button
+          size="sm"
+          icon={<AudioLines size={13} />}
+          disabled={track.locked}
+          data-testid="duck"
+          title="Turns this clip down while the other clips have speech (as volume keyframes)"
+          onClick={() => void duckUnderVoices(item.id)}
+        >
+          Duck under voices
+        </Button>
+      </div>
     </section>
   );
 }

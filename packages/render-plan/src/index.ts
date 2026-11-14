@@ -2,6 +2,10 @@
 // and the integration tests render real files from it.
 import {
   blurOf,
+  audioEffectsOf,
+  EQ_HIGH_HZ,
+  EQ_LOW_CUT_HZ,
+  EQ_LOW_HZ,
   keyOf,
   sourceSpan,
   combinedColor,
@@ -395,6 +399,29 @@ function tempoFilters(item: TimelineItem): string {
   return out;
 }
 
+/**
+ * Sound effects (ADR-042), after volume and fades: Audio-EQ-Cookbook biquads (the same as Web
+ * Audio's BiquadFilterNode: shelves with slope 1, a bell with Q 1, a 2-pole low cut with
+ * Q 0.7071) and acompressor (RMS detection, channels averaged; the preview runs a port of it).
+ */
+function audioEffectFilters(item: TimelineItem): string {
+  let out = '';
+  for (const e of audioEffectsOf(item)) {
+    if (e.kind === 'eq') {
+      if (e.lowCut) out += `highpass=f=${EQ_LOW_CUT_HZ}:t=q:w=0.707107,`;
+      if (e.low) out += `lowshelf=f=${EQ_LOW_HZ}:t=s:w=1:g=${num(e.low)},`;
+      if (e.mid) out += `equalizer=f=${num(e.midFreq)}:t=q:w=1:g=${num(e.mid)},`;
+      if (e.high) out += `highshelf=f=${EQ_HIGH_HZ}:t=s:w=1:g=${num(e.high)},`;
+    } else {
+      const lin = (db: number) => num(Math.pow(10, db / 20));
+      out +=
+        `acompressor=threshold=${lin(e.threshold)}:ratio=${num(e.ratio)}:attack=${num(e.attack)}` +
+        `:release=${num(e.release)}:makeup=${lin(e.makeup)}:knee=2.82843:link=average:detection=rms,`;
+    }
+  }
+  return out;
+}
+
 function volumeFilter(item: TimelineItem): string {
   const keys = item.keyframes?.volume;
   if (!keys?.length) return `volume=${item.volume.toFixed(3)}`;
@@ -695,7 +722,7 @@ function buildGraph(
     const delayMs = Math.round(flicksToSeconds(item.start) * 1000);
     graph.push(
       `[${k}:a]aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo,` +
-        `${volumeFilter(item)},${tempoFilters(item)}${audioFades(item)}adelay=${delayMs}:all=1[a${n}]`,
+        `${volumeFilter(item)},${tempoFilters(item)}${audioFades(item)}${audioEffectFilters(item)}adelay=${delayMs}:all=1[a${n}]`,
     );
     audioLabels.push(`[a${n}]`);
   });

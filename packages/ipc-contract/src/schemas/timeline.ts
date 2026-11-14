@@ -2,6 +2,7 @@ import { z } from 'zod';
 
 const flicks = z.number().int().nonnegative();
 const id = z.string().min(1).max(100);
+const dB = z.number().min(-24).max(24);
 const hexColor = z.string().regex(/^#[0-9a-fA-F]{6}$/);
 const rational = z.object({ num: z.number().int().positive(), den: z.number().int().positive() });
 
@@ -90,6 +91,26 @@ export const timelineItemSchema = z.object({
           color: hexColor,
           similarity: z.number().min(0.01).max(1),
           blend: z.number().min(0).max(1),
+        }),
+        z.object({
+          id,
+          kind: z.literal('eq'),
+          enabled: z.boolean(),
+          lowCut: z.boolean(),
+          low: dB,
+          mid: dB,
+          midFreq: z.number().min(200).max(10000),
+          high: dB,
+        }),
+        z.object({
+          id,
+          kind: z.literal('compressor'),
+          enabled: z.boolean(),
+          threshold: z.number().min(-60).max(0),
+          ratio: z.number().min(1).max(20),
+          attack: z.number().min(0.1).max(2000),
+          release: z.number().min(1).max(9000),
+          makeup: z.number().min(0).max(24),
         }),
       ]),
     )
@@ -347,7 +368,7 @@ const singleCommandSchema = z.discriminatedUnion('type', [
     type: z.literal('effect.add'),
     ...seqId,
     itemId: id,
-    kind: z.enum(['color', 'blur', 'lut', 'chromaKey']),
+    kind: z.enum(['color', 'blur', 'lut', 'chromaKey', 'eq', 'compressor']),
     id: id.optional(),
     lutId: id.optional(),
   }),
@@ -366,11 +387,21 @@ const singleCommandSchema = z.discriminatedUnion('type', [
         strength: z.number().min(0).max(1).optional(),
         similarity: z.number().min(0).max(1).optional(),
         blend: z.number().min(0).max(1).optional(),
+        low: dB.optional(),
+        mid: dB.optional(),
+        midFreq: z.number().min(200).max(10000).optional(),
+        high: dB.optional(),
+        threshold: z.number().min(-60).max(0).optional(),
+        ratio: z.number().min(1).max(20).optional(),
+        attack: z.number().min(0.1).max(2000).optional(),
+        release: z.number().min(1).max(9000).optional(),
+        makeup: z.number().min(0).max(24).optional(),
       })
       .strict()
       .optional(),
     lutId: id.optional(),
     color: hexColor.optional(),
+    lowCut: z.boolean().optional(),
   }),
   z.object({ type: z.literal('effect.remove'), ...seqId, itemId: id, effectId: id }),
   z.object({

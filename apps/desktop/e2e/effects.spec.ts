@@ -201,4 +201,48 @@ test.describe('effects', () => {
       await app.close();
     }
   });
+
+  test('sound effects: voice preset, EQ, compressor and ducking music under speech', async () => {
+    const { app, page } = await launch(tempUserData(), env());
+    try {
+      await createProject(page, 'Sound');
+      await mockOpenDialog(app, [fx.h264, fx.audio]);
+      await page.getByRole('button', { name: 'Import footage' }).click();
+      await page.getByLabel(/I have the right/).check();
+      await page.getByRole('button', { name: 'Import 2 files' }).click();
+      await expect(page.locator('[data-testid=asset-card][data-status=ready]')).toHaveCount(2, {
+        timeout: 60_000,
+      });
+      const cards = page.locator('[data-testid=asset-card]');
+      await cards.filter({ hasText: 'clip h264' }).dblclick();
+      await page.getByTestId('ruler').click({ position: { x: 2, y: 10 } });
+      await cards.filter({ hasNotText: 'clip h264' }).dblclick();
+      await expect(page.getByTestId('timeline-item')).toHaveCount(2);
+
+      // The "voice": the video's own sound gets the voice preset.
+      await page
+        .locator('[data-kind=video] [data-testid=timeline-item]')
+        .click({ position: { x: 20, y: 30 } });
+      await page.getByTestId('voice-preset').click();
+      await expect(page.getByTestId('eq-effect')).toHaveCount(1);
+      await expect(page.getByTestId('compressor-effect')).toHaveCount(1);
+      await expect(page.getByTestId('eq-effect').getByRole('checkbox')).toBeChecked();
+
+      // The "music" on the audio track ducks under it, as volume keyframes.
+      await page
+        .locator('[data-kind=audio] [data-testid=timeline-item]')
+        .click({ position: { x: 20, y: 20 } });
+      await page.getByTestId('duck').click();
+      await expect
+        .poll(() => page.locator('[data-kind=audio] [data-testid=timeline-keyframe]').count())
+        .toBeGreaterThanOrEqual(2);
+      // One undo removes them all.
+      await page.keyboard.press('Control+z');
+      await expect(page.locator('[data-kind=audio] [data-testid=timeline-keyframe]')).toHaveCount(
+        0,
+      );
+    } finally {
+      await app.close();
+    }
+  });
 });

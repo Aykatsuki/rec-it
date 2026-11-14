@@ -5,6 +5,11 @@ import {
   flicksToSeconds,
   sourceTimeAt,
   gainAt,
+  audioEffectsOf,
+  EQ_HIGH_HZ,
+  EQ_LOW_CUT_HZ,
+  EQ_LOW_HZ,
+  type AudioEffect,
   isRetimed,
   speedOf,
   type Sequence,
@@ -12,6 +17,7 @@ import {
 } from '@rec-it/core';
 import { AudioSource } from './audio-source';
 import { timeStretch } from './time-stretch';
+import compressorWorkletUrl from './compressor-worklet.ts?worker&url';
 
 /** One audible clip: where its sound comes from. */
 export interface AudioClip {
@@ -40,6 +46,61 @@ export function audibleClips(
       const url = urlFor(item);
       return url ? [{ item, url }] : [];
     });
+}
+
+const worklets = new WeakMap<BaseAudioContext, Promise<void>>();
+
+/** EQ biquads and compressors in order, ending at the destination; returns the chain's input. */
+async function buildChain(ctx: BaseAudioContext, effects: AudioEffect[]): Promise<AudioNode> {
+  const input = ctx.createGain();
+  let last: AudioNode = input;
+  const link = (node: AudioNode) => {
+    last.connect(node);
+    last = node;
+  };
+  for (const e of effects) {
+    if (e.kind === 'eq') {
+      // The same Audio-EQ-Cookbook filters as the export's highpass/lowshelf/equalizer/highshelf.
+      const biquad = (type: BiquadFilterType, frequency: number, gain = 0, Q?: number) => {
+        const f = ctx.createBiquadFilter();
+        f.type = type;
+        f.frequency.value = frequency;
+        f.gain.value = gain;
+        if (Q !== undefined) f.Q.value = Q;
+        link(f);
+      };
+      // Web Audio's high-pass Q is in dB: −3.0103 dB is Q 0.7071.
+      if (e.lowCut) biquad('highpass', EQ_LOW_CUT_HZ, 0, 20 * Math.log10(Math.SQRT1_2));
+      if (e.low) biquad('lowshelf', EQ_LOW_HZ, e.low);
+      if (e.mid) biquad('peaking', e.midFreq, e.mid, 1);
+      if (e.high) biquad('highshelf', EQ_HIGH_HZ, e.high);
+    } else {
+      let ready = worklets.get(ctx);
+      if (!ready) {
+        ready = ctx.audioWorklet.addModule(compressorWorkletUrl);
+        worklets.set(ctx, ready);
+      }
+      await ready;
+      link(
+        new AudioWorkletNode(ctx, 'recit-compressor', {
+          numberOfInputs: 1,
+          numberOfOutputs: 1,
+          outputChannelCount: [2],
+          channelCount: 2,
+          channelCountMode: 'explicit',
+          processorOptions: {
+            threshold: e.threshold,
+            ratio: e.ratio,
+            attack: e.attack,
+            release: e.release,
+            makeup: e.makeup,
+          },
+        }),
+      );
+    }
+  }
+  last.connect(ctx.destination);
+  return input;
 }
 
 interface Block {
@@ -126,6 +187,26 @@ export class AudioEngine {
     return s;
   }
 
+  /** Each clip's sound-effect chain (EQ, compressor), per audio context (ADR-042). */
+  private chains = new WeakMap<BaseAudioContext, Map<string, Promise<AudioNode>>>();
+
+  /** Where a clip's blocks connect: the destination, or the input of its effect chain. */
+  private chainFor(ctx: BaseAudioContext, item: TimelineItem): Promise<AudioNode> {
+    const effects = audioEffectsOf(item);
+    if (!effects.length) return Promise.resolve(ctx.destination);
+    let map = this.chains.get(ctx);
+    if (!map) {
+      map = new Map();
+      this.chains.set(ctx, map);
+    }
+    let chain = map.get(item.id);
+    if (!chain) {
+      chain = buildChain(ctx, effects);
+      map.set(item.id, chain);
+    }
+    return chain;
+  }
+
   private context(): AudioContext {
     this.ctx ??= new AudioContext({ sampleRate: 48000, latencyHint: 'interactive' });
     return this.ctx;
@@ -195,6 +276,11 @@ export class AudioEngine {
     }
     this.nodes = [];
     this.scheduled.clear();
+    if (this.ctx) {
+      for (const chain of this.chains.get(this.ctx)?.values() ?? [])
+        void chain.then((c) => c.disconnect()).catch(() => {});
+      this.chains.delete(this.ctx);
+    }
     if (this.running) this.seqStart = this.now();
     this.running = false;
   }
@@ -238,6 +324,8 @@ export class AudioEngine {
       ? await retimedBlock(source, item, a, b)
       : await plainBlock(source, item, a, b);
     if (!block || generation !== this.generation) return;
+    const target = await this.chainFor(ctx, item);
+    if (generation !== this.generation) return;
     const buffer = ctx.createBuffer(block.channels.length, block.channels[0]!.length, block.rate);
     block.channels.forEach((data, c) => buffer.copyToChannel(data as Float32Array<ArrayBuffer>, c));
     let when = this.ctxStart + (a - this.seqStart);
@@ -271,7 +359,7 @@ export class AudioEngine {
     } else {
       gain.gain.value = clip.item.volume;
     }
-    node.connect(gain).connect(ctx.destination);
+    node.connect(gain).connect(target);
     node.start(when, offset, duration);
     if (ctx instanceof AudioContext) this.nodes.push(node);
   }

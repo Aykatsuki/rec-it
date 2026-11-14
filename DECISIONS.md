@@ -45,6 +45,7 @@ Each record states the decision, why it was made and what else was considered. R
 | 039 | Speed, reverse and freeze frames | Accepted |
 | 040 | 3D LUTs (.cube) | Accepted |
 | 041 | Green screen (chroma key) | Accepted |
+| 042 | Sound effects: EQ, compressor, ducking | Accepted |
 
 ---
 
@@ -619,4 +620,25 @@ Each record states the decision, why it was made and what else was considered. R
   - Unit tests: order, one per clip, colour validation, key chroma for pure green and blue.
   - A real-FFmpeg test: a green still over a red clip shows red.
   - A golden-frame case: a green-screen clip keyed from the Inspector over colour bars (SSIM 0.994, mean colour within 3 levels).
+
+---
+
+## ADR-042 · Sound effects: EQ, compressor, ducking
+
+**Status.** Accepted (14 Nov 2026, Phase 6 seventh slice). Noise reduction, reverb, pitch shift and limiter presets are not done yet. They need either an FFmpeg filter the preview cannot reproduce (afftdn) or more work.
+
+**Decisions.**
+- **Effects on the clip's sound**, in the same per-clip stack as picture effects. They are allowed on any clip with sound, including the sound of video clips. They come after the clip's volume and fades in both preview and export (export: `volume`, tempo, `afade`, then the effects).
+- **EQ** (`eq`): a low cut (80 Hz), a bass shelf at 120 Hz, a mid bell (200 Hz–10 kHz, Q 1) and a treble shelf at 8 kHz, ±24 dB.
+  - Web Audio's `BiquadFilterNode` and FFmpeg's `highpass`/`lowshelf`/`equalizer`/`highshelf` both implement the Audio EQ Cookbook, with the parameters matched: shelves with slope 1; Q 1; a 2-pole high-pass at Q 0.7071, which Web Audio takes in dB as −3.01.
+- **Compressor** (`compressor`): threshold, ratio, attack, release and make-up, with acompressor's meaning (RMS detection, channels averaged, knee 2.83).
+  - Web Audio's `DynamicsCompressorNode` works differently, so the preview runs a line-for-line port of FFmpeg's algorithm in an AudioWorklet (`engine/compressor.ts`, bundled as a worklet file so the CSP needs nothing new). A test feeds the same signal through FFmpeg and the port: they agree to 1e-4.
+  - Each clip with sound effects gets its own chain (input → biquads → worklet → output) for the length of a playback, so the compressor's state runs across the one-second blocks. When playback starts mid-clip, the detector starts at rest, whereas the export's has been running since the clip began.
+- **Voice preset**: low cut, +3 dB at 3 kHz, +1.5 dB treble, and compression (−20 dB, 3:1, 10/200 ms, +4 dB), added as two ordinary editable effects.
+- **Ducking** ("Duck under voices" on any clip with sound): the clip, usually music, gets volume keyframes that bring it down to 25% while the other audible clips are loud. Loudness comes from the media's waveform files (10 ms resolution), with pauses under 0.6 s bridged, blips under 0.2 s ignored, and 0.25 s ramps. Because the result is plain volume keyframes, preview and export agree by construction, and it stays editable. It is one undo step, and it replaces any earlier volume animation. Pure logic is in `packages/core` (`loudRegions`, `duckingKeyframes`).
+- **Tests.**
+  - Unit tests: ducking regions and keyframes; the compressor port against FFmpeg, sample by sample.
+  - A render-plan filter test.
+  - The audio parity test now has an EQ'd clip and a compressed clip (r = 0.997, 0.15 dB).
+  - An end-to-end test: voice preset, ducking, undo.
 

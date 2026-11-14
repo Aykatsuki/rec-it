@@ -821,6 +821,25 @@ describe.skipIf(!bins)('export renders correct frames (real FFmpeg)', () => {
     expect(g).toBeLessThan(40);
   }, 60_000);
 
+  it('runs sound effects through the matching FFmpeg filters', async () => {
+    const { plan } = await render(({ v1 }) => [
+      { type: 'item.add', trackId: v1, assetId: 'red', start: 0, duration: s(1), id: 'r' },
+      { type: 'effect.add', itemId: 'r', kind: 'eq', id: 'e' },
+      {
+        type: 'effect.update',
+        itemId: 'r',
+        effectId: 'e',
+        lowCut: true,
+        params: { low: 3, mid: -6, midFreq: 1000, high: 2 },
+      },
+      { type: 'effect.add', itemId: 'r', kind: 'compressor', id: 'c' },
+    ]);
+    expect(plan.filterGraph).toContain(
+      'highpass=f=80:t=q:w=0.707107,lowshelf=f=120:t=s:w=1:g=3,equalizer=f=1000:t=q:w=1:g=-6,highshelf=f=8000:t=s:w=1:g=2,' +
+        'acompressor=threshold=0.125893:ratio=3:attack=20:release=250:makeup=1:knee=2.82843:link=average:detection=rms,',
+    );
+  }, 60_000);
+
   it('blurs a picture in proportion to its height on screen', async () => {
     const { out, plan } = await render(({ v1 }) => [
       {

@@ -2657,3 +2657,10 @@ button.statusbar__item:hover {
   font: inherit;
   font-size: 12px;
 }
+.effect__check {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 4px 0;
+  font-size: 12px;
+}

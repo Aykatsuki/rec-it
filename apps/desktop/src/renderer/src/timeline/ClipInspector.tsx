@@ -40,7 +40,13 @@ import { formatDuration } from '../format';
 import { useApp } from '../store';
 import { transformFor } from './TransformOverlay';
 import { AutoReframe } from './AutoReframe';
-import { ColourSection, FadesSection, SpeedSection, TransitionSection } from './EffectsInspector';
+import {
+  ColourSection,
+  FadesSection,
+  SoundSection,
+  SpeedSection,
+  TransitionSection,
+} from './EffectsInspector';
 import { Slider } from './Slider';
 
 export function ClipInspector({
@@ -241,6 +247,9 @@ export function ClipInspector({
         <FadesSection seq={seq} item={item} track={track} />
       )}
       <TransitionSection seq={seq} item={item} track={track} />
+      {(hasAudio || track.kind === 'audio') && !item.freeze && (
+        <SoundSection seq={seq} item={item} track={track} />
+      )}
       {asset && asset.kind !== 'image' && (
         <SpeedSection seq={seq} item={item} track={track} isVideo={asset.kind === 'video'} />
       )}
