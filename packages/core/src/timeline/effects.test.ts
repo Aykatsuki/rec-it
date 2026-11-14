@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { FRAME_RATES, secondsToFlicks as S } from '../time';
 import type { Command } from './commands';
 import { History } from './history';
-import { emptyDocument, eqCodes, fadeAt, pictureAt, type ColorEffect } from './model';
+import { emptyDocument, eqCodes, fadeAt, keyChroma, pictureAt, type ColorEffect } from './model';
 
 const lookup = (id: string) =>
   id === 'clip'
@@ -172,5 +172,29 @@ describe('fades and effects', () => {
     expect(pictureAt(items()[0]!, S(2)).lut).toEqual({ lutId: 'lut_b', strength: 1 });
     run({ type: 'effect.update', sequenceId: 's', itemId: 'c', effectId: 'l', enabled: false });
     expect(pictureAt(items()[0]!, S(2)).lut).toBeUndefined();
+  });
+
+  it('a chroma key goes first, one per clip, with BT.709 key chroma', () => {
+    const { run, items } = setup();
+    run({ type: 'effect.add', sequenceId: 's', itemId: 'c', kind: 'blur', id: 'b' });
+    run({ type: 'effect.add', sequenceId: 's', itemId: 'c', kind: 'chromaKey', id: 'k' });
+    expect(items()[0]!.effects!.map((e) => e.kind)).toEqual(['chromaKey', 'blur']);
+    expect(() =>
+      run({ type: 'effect.add', sequenceId: 's', itemId: 'c', kind: 'chromaKey' }),
+    ).toThrow(/one key/);
+    run({
+      type: 'effect.update',
+      sequenceId: 's',
+      itemId: 'c',
+      effectId: 'k',
+      color: '#00ff00',
+      params: { similarity: 0, blend: 2 },
+    });
+    // Pure green in BT.709 TV range: U = 42, V = 26.
+    expect(pictureAt(items()[0]!, S(2)).key).toEqual({ u: 42, v: 26, similarity: 0.01, blend: 1 });
+    expect(keyChroma('#0000FF')).toEqual({ y: 32, u: 240, v: 118 });
+    expect(() =>
+      run({ type: 'effect.update', sequenceId: 's', itemId: 'c', effectId: 'k', color: 'green' }),
+    ).toThrow(/RRGGBB/);
   });
 });

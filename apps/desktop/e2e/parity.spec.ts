@@ -1119,4 +1119,136 @@ test.describe('preview and export match', () => {
       await app.close();
     }
   });
+
+  test('golden frames: green screen (chroma key)', async () => {
+    const userData = tempUserData();
+    const shots = join(userData, 'shots');
+    mkdirSync(shots);
+    // A "presenter" (a moving yellow box and a white disc) in front of a green screen.
+    const screen = join(dir, 'green screen.mp4');
+    execFileSync(bins!.ffmpeg, [
+      '-v',
+      'error',
+      '-y',
+      '-f',
+      'lavfi',
+      '-i',
+      'color=c=0x00B140:s=1280x720:r=30:d=3',
+      '-f',
+      'lavfi',
+      '-i',
+      'color=c=0xf2c12e:s=220x220:r=30:d=3',
+      '-filter_complex',
+      "[0:v]drawbox=x=500:y=200:w=280:h=400:color=white:t=fill[bg];[bg][1:v]overlay=x='60+t*300':y=250[v]",
+      '-map',
+      '[v]',
+      '-c:v',
+      'libx264',
+      '-pix_fmt',
+      'yuv420p',
+      screen,
+    ]);
+    const { app, page } = await launch(userData, env());
+    try {
+      await createProject(page, 'Key parity');
+      await mockOpenDialog(app, [screen, fx.still]);
+      await page.getByRole('button', { name: 'Import footage' }).click();
+      await page.getByLabel(/I have the right/).check();
+      await page.getByRole('button', { name: 'Import 2 files' }).click();
+      await expect(page.locator('[data-testid=asset-card][data-status=ready]')).toHaveCount(2, {
+        timeout: 60_000,
+      });
+      // Bars on V1 (the new background), the green screen on V2 above them.
+      await page.locator('[data-testid=asset-card][data-name="bars.png"]').dblclick();
+      await expect(page.getByTestId('timeline-item')).toHaveCount(1);
+      await page.evaluate(async (S) => {
+        const call = async <T>(channel: string, input: unknown): Promise<T> => {
+          const r = (await window.recit.backend.invoke(channel as never, input as never)) as {
+            ok: boolean;
+            result?: unknown;
+            error?: { message: string };
+          };
+          if (!r.ok) throw new Error(r.error?.message);
+          return r.result as T;
+        };
+        const state = await call<{
+          doc: { sequences: { id: string; tracks: { id: string }[] }[] };
+        }>('doc.get', {});
+        const seq = state.doc.sequences[0]!;
+        const assets = await call<{ id: string; name: string }[]>('media.list', {});
+        const clip = assets.find((a) => a.name === 'green screen.mp4')!.id;
+        await call('doc.execute', {
+          command: {
+            type: 'item.add',
+            sequenceId: seq.id,
+            trackId: seq.tracks[0]!.id,
+            assetId: clip,
+            id: 'item_screen',
+            start: 0,
+            duration: 2 * S,
+          },
+        });
+      }, 705_600_000);
+      await page
+        .locator('[data-testid=timeline-item]')
+        .first()
+        .click({ position: { x: 20, y: 30 } });
+      await page.getByTestId('add-key').click();
+      await expect(page.getByTestId('key-effect')).toHaveCount(1);
+      await page.keyboard.press('Escape');
+
+      const t = 1;
+      await page.getByTestId('ruler').click({ position: { x: t * ZOOM, y: 10 } });
+      await expect(page.getByTestId('program-time')).toContainText('00:01.000');
+      await page.waitForFunction((at) => {
+        const c = document.querySelector<HTMLCanvasElement>('[data-testid=program-canvas]');
+        return !c || c.dataset.time === at;
+      }, '1.000');
+      await page.waitForTimeout(300);
+      const preview = join(shots, 'preview-key.png');
+      await page.locator('.program').screenshot({ path: preview });
+
+      const out = join(userData, 'key.mp4');
+      await page.getByTestId('export-button').click();
+      await page.getByRole('radio', { name: 'YouTube Short', exact: true }).click();
+      await setExportTarget(app, page, out);
+      await page
+        .getByTestId('export-dialog')
+        .getByRole('button', { name: /Export$/ })
+        .click();
+      await expect(page.getByTestId('export-status')).toHaveAttribute('data-state', 'done', {
+        timeout: 120_000,
+      });
+      const [w, h] = execFileSync(
+        bins!.ffprobe,
+        ['-v', 'error', '-show_entries', 'stream=width,height', '-of', 'csv=p=0', preview],
+        { encoding: 'utf8' },
+      )
+        .trim()
+        .split(',')
+        .map(Number);
+      const exported = join(shots, 'export-key.png');
+      execFileSync(bins!.ffmpeg, [
+        '-v',
+        'error',
+        '-y',
+        '-ss',
+        String(t),
+        '-i',
+        out,
+        '-frames:v',
+        '1',
+        '-vf',
+        `scale=${w}:${h}:flags=area`,
+        exported,
+      ]);
+      const score = ssim(bins!.ffmpeg, preview, exported);
+      const [a, b] = [meanColour(bins!.ffmpeg, preview), meanColour(bins!.ffmpeg, exported)];
+      console.info(`Key SSIM ${score}, mean colour preview ${a} export ${b}`);
+      expect(score).toBeGreaterThanOrEqual(MIN_SSIM);
+      for (let i = 0; i < 3; i++) expect(Math.abs(a[i]! - b[i]!), `channel ${i}`).toBeLessThan(6);
+    } finally {
+      await app.close();
+    }
+  });
 });

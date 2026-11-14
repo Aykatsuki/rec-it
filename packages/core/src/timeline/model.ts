@@ -118,7 +118,7 @@ export interface Transition {
 export type TintColor = 'black' | 'white';
 
 /** Effect kinds available so far; more arrive through Phase 6. */
-export const EFFECT_KINDS = ['color', 'blur', 'lut'] as const;
+export const EFFECT_KINDS = ['color', 'blur', 'lut', 'chromaKey'] as const;
 export type EffectKind = (typeof EFFECT_KINDS)[number];
 
 /**
@@ -157,7 +157,26 @@ export interface LutEffect {
   lutId: string;
   strength: number;
 }
-export type Effect = ColorEffect | BlurEffect | LutEffect;
+/**
+ * Green/blue screen (ADR-041): pixels whose colour (chroma) is near `color` become transparent.
+ * `similarity` (0.01–1) is how near counts; `blend` (0–1) softens the edge. Same meaning as
+ * FFmpeg's chromakey filter. One per clip; it applies before the other effects.
+ */
+export interface ChromaKeyEffect {
+  id: string;
+  kind: 'chromaKey';
+  enabled: boolean;
+  /** "#RRGGBB" */
+  color: string;
+  similarity: number;
+  blend: number;
+}
+export const DEFAULT_KEY: Omit<ChromaKeyEffect, 'id' | 'kind' | 'enabled'> = {
+  color: '#00B140',
+  similarity: 0.12,
+  blend: 0.08,
+};
+export type Effect = ColorEffect | BlurEffect | LutEffect | ChromaKeyEffect;
 
 /** How a clip's picture looks at a moment: alpha (opacity × fades) and combined colour. */
 export interface PictureState {
@@ -169,6 +188,8 @@ export interface PictureState {
   blur: number;
   /** The clip's LUT, if any (ADR-040). */
   lut?: { lutId: string; strength: number };
+  /** The clip's chroma key, if any (ADR-041): key chroma as BT.709 TV-range codes. */
+  key?: ChromaKey;
   brightness: number;
   contrast: number;
   saturation: number;
@@ -203,8 +224,10 @@ export function pictureAt(item: TimelineItem, time: number): PictureState {
   }
   const tint = item.tint ? 1 - fadeAt({ ...item, fade: item.tint }, time) : 0;
   const lut = lutOf(item);
+  const key = keyOf(item);
   return {
     ...(lut ? { lut } : {}),
+    ...(key ? { key } : {}),
     blur: blurOf(item),
     alpha: (item.opacity ?? 1) * fadeAt(item, time),
     tint,
@@ -213,6 +236,37 @@ export function pictureAt(item: TimelineItem, time: number): PictureState {
     contrast,
     saturation,
   };
+}
+
+export interface ChromaKey {
+  u: number;
+  v: number;
+  similarity: number;
+  blend: number;
+}
+
+/**
+ * The key colour's chroma (U, V) as 8-bit BT.709 TV-range codes, the same as the video's own
+ * pixels in preview and export (export passes them to chromakey with yuv=1).
+ */
+export function keyChroma(hex: string): { y: number; u: number; v: number } {
+  const m = /^#?([0-9a-f]{6})$/i.exec(hex);
+  const n = m ? parseInt(m[1]!, 16) : 0x00ff00;
+  const [r, g, b] = [(n >> 16) / 255, ((n >> 8) & 255) / 255, (n & 255) / 255];
+  const y = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+  return {
+    y: Math.round(16 + 219 * y),
+    u: Math.round(128 + (224 * (b - y)) / 1.8556),
+    v: Math.round(128 + (224 * (r - y)) / 1.5748),
+  };
+}
+
+/** The clip's chroma key, when one is switched on. */
+export function keyOf(item: TimelineItem): ChromaKey | undefined {
+  const e = item.effects?.find((x): x is ChromaKeyEffect => x.kind === 'chromaKey' && x.enabled);
+  if (!e) return undefined;
+  const { u, v } = keyChroma(e.color);
+  return { u, v, similarity: e.similarity, blend: e.blend };
 }
 
 /** The clip's LUT and its strength, when one is switched on. */

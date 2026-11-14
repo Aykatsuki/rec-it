@@ -2,6 +2,7 @@
 // and the integration tests render real files from it.
 import {
   blurOf,
+  keyOf,
   sourceSpan,
   combinedColor,
   presentSequence,
@@ -330,6 +331,7 @@ function animatedLayer(
     filters: [
       `scale=${wB}:${hB}:flags=bicubic:out_color_matrix=bt709:out_range=tv`,
       'setsar=1',
+      ...keyFilter(item),
       ...blurFilter(item, hB),
       'format=yuva420p',
       `pad=${Dw}:${Dh}:(ow-iw)/2:(oh-ih)/2:color=black@0`,
@@ -448,6 +450,22 @@ function lutFilters(item: TimelineItem, luts: Record<string, string> | undefined
     'format=gbrap',
     `lut3d=file=${file}:interp=trilinear`,
     'scale=out_color_matrix=bt709:out_range=tv',
+  ];
+}
+
+/**
+ * Chroma key (ADR-041) on the picture as laid out. The key colour is given as BT.709 TV-range
+ * YUV (`yuv=1`): chromakey would convert an RGB colour with BT.601, which does not match the
+ * picture's own chroma.
+ */
+function keyFilter(item: TimelineItem): string[] {
+  const k = keyOf(item);
+  if (!k) return [];
+  const hex = (n: number) => n.toString(16).padStart(2, '0');
+  const y = 16 + 219 * 0.5; // only U and V are used
+  return [
+    'format=yuva420p',
+    `chromakey=color=0x${hex(Math.round(y))}${hex(k.u)}${hex(k.v)}:similarity=${num(k.similarity)}:blend=${num(k.blend)}:yuv=1`,
   ];
 }
 
@@ -642,6 +660,7 @@ function buildGraph(
         // Converting to BT.709 here keeps colours the same as the preview for every source.
         `scale=${width}:${height}:flags=bicubic:out_color_matrix=bt709:out_range=tv`,
         'setsar=1',
+        ...keyFilter(item),
         ...blurFilter(item, height),
         ...colorFilter(item),
         ...lutFilters(item, options.luts),

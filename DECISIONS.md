@@ -44,6 +44,7 @@ Each record states the decision, why it was made and what else was considered. R
 | 038 | Blur and the blurred-background fit | Accepted |
 | 039 | Speed, reverse and freeze frames | Accepted |
 | 040 | 3D LUTs (.cube) | Accepted |
+| 041 | Green screen (chroma key) | Accepted |
 
 ---
 
@@ -603,4 +604,19 @@ Each record states the decision, why it was made and what else was considered. R
   - Unit tests: parsing (order, titles, comments, refusals), round trip, and blending equal to mixing results.
   - A real-FFmpeg test: a red↔blue swap at half strength gives purple.
   - A golden-frame case that imports a "warm look" through the UI at 70% strength: SSIM 0.996, mean colour within 4 levels.
+
+---
+
+## ADR-041 · Green screen (chroma key)
+
+**Status.** Accepted (14 Nov 2026, Phase 6 sixth slice). Spill suppression (removing the green tint at edges) and keyframed keys come later.
+
+**Decisions.**
+- **Effect.** A `chromaKey` effect has a key colour (`#RRGGBB`, default studio green #00B140), a similarity (how close a colour must be, 1–100%) and a blend (edge softness), with the same meaning as FFmpeg's `chromakey`. It is always first in the clip's stack, because it works on the original picture. One per clip.
+- **Exactly FFmpeg's maths in both places.** Alpha is computed as `chromakey` does it: the mean distance of the 3×3 neighbouring chroma samples from the key's chroma (4:2:0, so samples are 2 pixels apart; samples beyond the picture count as the key colour), then a step (no blend) or a ramp over the blend width, quantised to 8 bits. `chromakey` converts an RGB key colour with BT.601, which does not match the picture's BT.709 chroma. So the key is passed as YUV (`yuv=1`), with U and V computed in `packages/core` (`keyChroma`) by the same BT.709 TV-range formula the preview applies to each pixel. The export keys the picture right after scaling (`format=yuva420p,chromakey=…`); the GPU preview computes the same alpha in the layer shader. Opacity, fades and transitions multiply the keyed alpha as usual. On a clip that is also blurred, the preview keys the blurred picture; the export keys first. The compatible preview does not key.
+- **Editing.** **Green screen** in the Effects section adds a key. The card has a colour well, Green and Blue presets, a picker that takes a colour from anywhere on screen (the browser's EyeDropper, so it works on the preview), and Similarity and Edge softness sliders.
+- **Tests.**
+  - Unit tests: order, one per clip, colour validation, key chroma for pure green and blue.
+  - A real-FFmpeg test: a green still over a red clip shows red.
+  - A golden-frame case: a green-screen clip keyed from the Inspector over colour bars (SSIM 0.994, mean colour within 3 levels).
 
