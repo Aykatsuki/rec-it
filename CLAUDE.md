@@ -5,7 +5,7 @@ ARCHITECTURE.md, ROADMAP.md and DECISIONS.md before making design changes.
 
 ## Current phase
 
-Phases 0 (foundations) and 1 (media pipeline) are complete. Phase 3 (export, ADR-027) is built; manual checks on the reference PC remain. Phase 2 has five slices done (timeline, mouse transforms, context menus, linked clips, keyframes, GPU preview, Web Audio; ADR-025, 026, 028, 029, 030); what remains is measuring the exit criteria on the reference PC. Phase 4 slices A (transcription, text-based editing; ADR-031), B (word corrections, captions; ADR-032) and C (captions as clips on caption tracks; ADR-033) are done. Phase 5 slices A (crop, facecam + gameplay layout, safe zones; ADR-034) and B (automatic reframing; ADR-035) are done. Phase 6 slices A (fades, opacity, colour effects; ADR-036), B (transitions; ADR-037) C (blur, blurred background; ADR-038) D (speed, reverse, freeze frames; ADR-039) E (LUTs; ADR-040) F (green screen; ADR-041) G (sound effects; ADR-042) and H (wipe/slide/zoom transitions; ADR-043) are done. Phase 7 slice A (the MCP connector; ADR-044) is done; the rest of Phase 6 (speed ramps, noise reduction, presets, measurements) resumes later. Priority: a fully working editor
+Phases 0 (foundations) and 1 (media pipeline) are complete. Phase 3 (export, ADR-027) is built; manual checks on the reference PC remain. Phase 2 has five slices done (timeline, mouse transforms, context menus, linked clips, keyframes, GPU preview, Web Audio; ADR-025, 026, 028, 029, 030); what remains is measuring the exit criteria on the reference PC. Phase 4 slices A (transcription, text-based editing; ADR-031), B (word corrections, captions; ADR-032) and C (captions as clips on caption tracks; ADR-033) are done. Phase 5 slices A (crop, facecam + gameplay layout, safe zones; ADR-034) and B (automatic reframing; ADR-035) are done. Phase 6 slices A (fades, opacity, colour effects; ADR-036), B (transitions; ADR-037) C (blur, blurred background; ADR-038) D (speed, reverse, freeze frames; ADR-039) E (LUTs; ADR-040) F (green screen; ADR-041) G (sound effects; ADR-042) and H (wipe/slide/zoom transitions; ADR-043) are done. Phase 7 slices A (the MCP connector; ADR-044) and B (effect/animation tools, scenario evals; ADR-045) are done; the rest of Phase 6 (speed ramps, noise reduction, presets, measurements) resumes later. Priority: a fully working editor
 (Phases 0–6, Phase 6 = effects) before any Claude features (ADR-019). Reference machine: Windows 11 + RTX 3070 8 GB.
 
 ## Commands
@@ -14,6 +14,7 @@ Phases 0 (foundations) and 1 (media pipeline) are complete. Phase 3 (export, ADR
 - `pnpm check` — lint + typecheck + Vitest + pytest. Run before committing.
 - `pnpm test:e2e` — Playwright against the built app (includes the preview/export golden-frame parity suite). On Linux without a display use
   `CI=1 xvfb-run -a pnpm test:e2e` (CI=1 enables the container sandbox workaround).
+- `pnpm eval:claude [filter]` — live Claude evals through Claude Code (needs `claude` signed in).
 - `pnpm fetch-ffmpeg` — GPL FFmpeg into `resources/ffmpeg/<platform>-<arch>/`.
 
 ## Layout
@@ -64,6 +65,9 @@ Phases 0 (foundations) and 1 (media pipeline) are complete. Phase 3 (export, ADR
   the local link), backend `services/claude-service.ts` (pipe/socket endpoint + token in `mcp-endpoint.json`, change cards,
   confirmations, activity) and `claude-tools.ts` (runs the tools), `apps/mcp` (stdio bridge, esbuild bundle + `.mcpb`;
   `pnpm build:mcp`), renderer `claude/` (Claude tab, confirm dialog). History entries can carry an undo `group`.
+- Claude evals (ADR-045): `backend/claude-evals/` — `world.ts` (in-memory Rec-It), `scenarios.ts` (requests, recorded
+  scripts, outcome checks; replayed by `scenarios.test.ts`), `live.test.ts` via `pnpm eval:claude [filter]` (Claude Code,
+  uses the signed-in plan; not in CI). New tools need a scenario. Ducking maths is core `ducking.ts`.
 - Renderer `timeline/` — Timeline, SequenceSettings, ClipInspector, ProgramMonitor, TransformOverlay, ExportDialog, CropDialog,
   `menus.tsx` (right-click menus); edits go through `edit.ts`. `ui/ContextMenu.tsx` is the generic menu.
 - `packages/db` — `node:sqlite` (ADR-020), migrations, repositories.

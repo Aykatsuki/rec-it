@@ -284,6 +284,12 @@ export class MediaService {
     }
   }
 
+  /** The asset's measured loudness file (one byte per 10 ms), if it exists. */
+  waveformPath(assetId: string): string | null {
+    const path = join(this.assetDir(assetId), FILES.waveform);
+    return existsSync(path) ? path : null;
+  }
+
   private assetDir(assetId: string): string {
     return join(this.o.cacheDir, assetId);
   }

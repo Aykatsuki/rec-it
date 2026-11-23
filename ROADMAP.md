@@ -225,9 +225,19 @@ The roadmap is ordered so that each phase produces something that works and can 
 
 ---
 
-## Phase 7 · Claude connection (M) — 🟡 slice A done (14 Nov 2026)
+## Phase 7 · Claude connection (M) — 🟡 slices A–B done (23 Nov 2026)
 
-**Progress (14 Nov 2026).** Slice A (ADR-044): the MCP connector. A stdio bridge (`apps/mcp`, also packed as `rec-it.mcpb` for Claude Desktop, or `claude mcp add` for Claude Code) talks to the running app over a private, token-protected pipe/socket. There are 24 tools (read, edit, and confirm-in-Rec-It for export and transcription) and four prompts. Silence and filler removal is one `remove_ranges` call. Claude's edits are grouped into change cards with Undo all / Keep. Version checks stop Claude from editing over the user's changes. Rec-It has a Claude tab with the activity feed, confirmations and setup, a status chip, and the off switch. Next: tools for effects, keyframes and ducking, red-team transcript fixtures and the recorded tool-call scripts, then the live eval suite through Claude Code and the end-to-end check from Claude Desktop on the reference PC.
+**Progress (14 Nov 2026).** Slice A (ADR-044): the MCP connector. A stdio bridge (`apps/mcp`, also packed as `rec-it.mcpb` for Claude Desktop, or `claude mcp add` for Claude Code) talks to the running app over a private, token-protected pipe/socket. There are 24 tools (read, edit, and confirm-in-Rec-It for export and transcription) and four prompts. Silence and filler removal is one `remove_ranges` call. Claude's edits are grouped into change cards with Undo all / Keep. Version checks stop Claude from editing over the user's changes. Rec-It has a Claude tab with the activity feed, confirmations and setup, a status chip, and the off switch.
+
+**Progress (23 Nov 2026).** Slice B (ADR-045):
+- Five more tools (29 in all): effects by kind (colour, blur, LUT, green screen, EQ, compressor), keyframe animation, ducking music under speech, and freeze frames. Framing also takes opacity.
+- Ducking moved into core, so the menu command and Claude share it.
+- 47 scenarios, each with a request, a recorded script and an outcome check. CI replays every script and checks that Undo all restores the project exactly. Red-team tests plant instructions in transcripts, file names and captions.
+- `pnpm eval:claude` runs the same scenarios live through Claude Code.
+
+Next:
+- Run `pnpm eval:claude` on the reference PC (≥ 90%).
+- Do the end-to-end check from Claude Desktop.
 
 **Goal:** Claude can read and edit the project from your Claude app, using your existing plan.
 

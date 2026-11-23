@@ -8,6 +8,13 @@ import {
   FLICKS_PER_SECOND,
   applyTranscriptEdits,
   createId,
+  duckSources,
+  duckingCommands,
+  sourceTimeAt,
+  speechRegions,
+  timelineTimeAt,
+  type Effect,
+  type KeyframeProperty,
   sequenceDuration,
   sequenceWords,
   type Command,
@@ -46,6 +53,10 @@ export interface ToolContext {
   /** Where an export with this name would go (a free file name). */
   exportPath(fileName: string): string;
   startExport(seq: Sequence, path: string): void;
+  /** The project's imported LUTs. */
+  luts(): { id: string; name: string }[];
+  /** A media file's loudness (waveform file: one byte per 10 ms), if it has been measured. */
+  loudness(assetId: string): Promise<ArrayLike<number> | undefined>;
 }
 
 export class ToolError extends Error {
@@ -113,10 +124,12 @@ export function projectSummary(ctx: ToolContext): string {
         })),
     })),
   };
+  const luts = ctx.luts();
   return json({
     project: ctx.projectName(),
     version,
     media,
+    ...(luts.length ? { luts: luts.map((l) => ({ id: l.id, name: l.name })) } : {}),
     activeSequence: sequence ?? null,
     ...(clips > MAX_CLIPS
       ? {
@@ -168,17 +181,28 @@ function describeItem(track: Track, i: TimelineItem, names: Map<string, string>)
     ...(i.fade && (i.fade.in || i.fade.out)
       ? { fade: { in: sec(i.fade.in), out: sec(i.fade.out) } }
       : {}),
-    ...(i.effects?.length
-      ? { effects: i.effects.map((e) => (e.enabled ? e.kind : `${e.kind} (off)`)) }
-      : {}),
+    ...(i.effects?.length ? { effects: i.effects.map(effectSummary) } : {}),
     ...(i.transitionIn
       ? { transitionIn: { kind: i.transitionIn.kind, duration: sec(i.transitionIn.duration) } }
       : {}),
-    ...(i.keyframes && Object.keys(i.keyframes).length
-      ? { keyframed: Object.keys(i.keyframes) }
-      : {}),
+    ...(keyframesOf(i) ? { keyframes: keyframesOf(i) } : {}),
     ...(i.linkId ? { link: i.linkId } : {}),
   };
+}
+
+/** An effect's settings without its id (one per kind on a clip, as the tools manage them). */
+function effectSummary(e: Effect): Record<string, unknown> {
+  const { id: _id, enabled, ...rest } = e;
+  return enabled ? rest : { ...rest, enabled: false };
+}
+
+/** A clip's animation as [timeline seconds, value, easing] per property, or undefined. */
+function keyframesOf(i: TimelineItem): Record<string, [number, number, string][]> | undefined {
+  const out: Record<string, [number, number, string][]> = {};
+  for (const [p, keys] of Object.entries(i.keyframes ?? {})) {
+    if (keys?.length) out[p] = keys.map((k) => [sec(timelineTimeAt(i, k.t)), k.v, k.e]);
+  }
+  return Object.keys(out).length ? out : undefined;
 }
 
 /** Words the sequence plays (with the user's transcript corrections). */
@@ -235,6 +259,41 @@ function findClip(seq: Sequence, itemId: string): { track: Track; item: Timeline
   }
   throw new ToolError(`No clip with id ${itemId} in the active sequence (see get_sequence).`);
 }
+
+const EFFECT_PARAMS = [
+  'brightness',
+  'contrast',
+  'saturation',
+  'size',
+  'strength',
+  'similarity',
+  'blend',
+  'low',
+  'mid',
+  'midFreq',
+  'high',
+  'threshold',
+  'ratio',
+  'attack',
+  'release',
+  'makeup',
+] as const;
+const KIND_FIELDS: Record<Effect['kind'], readonly string[]> = {
+  color: ['brightness', 'contrast', 'saturation'],
+  blur: ['size'],
+  lut: ['lutId', 'strength'],
+  chromaKey: ['color', 'similarity', 'blend'],
+  eq: ['lowCut', 'low', 'mid', 'midFreq', 'high'],
+  compressor: ['threshold', 'ratio', 'attack', 'release', 'makeup'],
+};
+const EFFECT_NAMES: Record<Effect['kind'], string> = {
+  color: 'colour',
+  blur: 'blur',
+  lut: 'LUT',
+  chromaKey: 'green screen',
+  eq: 'EQ',
+  compressor: 'compressor',
+};
 
 const FPS = [24, 25, 30, 50, 60];
 function nearestFps(asset: MediaAsset | undefined): number {
@@ -548,10 +607,17 @@ async function run(name: ToolName, a: Record<string, any>, ctx: ToolContext): Pr
           .filter((k) => a[k] !== undefined)
           .map((k) => [k, a[k]]),
       );
-      if (!Object.keys(transform).length) throw new ToolError('Nothing to change.');
+      if (!Object.keys(transform).length && a.opacity === undefined)
+        throw new ToolError('Nothing to change.');
       const v = ctx.execute(
-        { type: 'item.update', sequenceId: seq.id, itemId: a.itemId, transform },
-        'Reframed a clip',
+        {
+          type: 'item.update',
+          sequenceId: seq.id,
+          itemId: a.itemId,
+          ...(Object.keys(transform).length ? { transform } : {}),
+          ...(a.opacity !== undefined ? { opacity: a.opacity } : {}),
+        },
+        Object.keys(transform).length ? 'Reframed a clip' : 'Changed a clip’s opacity',
       );
       return edited(ctx, v, 'Framing updated.');
     }
@@ -695,6 +761,195 @@ async function run(name: ToolName, a: Record<string, any>, ctx: ToolContext): Pr
         'Edited a caption',
       );
       return edited(ctx, v, 'Caption text updated.');
+    }
+
+    case 'set_effect': {
+      const { seq } = requireSequence(ctx);
+      const { item } = findClip(seq, a.itemId);
+      if (a.kind === 'lut') {
+        const luts = ctx.luts();
+        if (a.lutId && !luts.some((l) => l.id === a.lutId))
+          throw new ToolError(
+            luts.length
+              ? `No LUT with id ${a.lutId}. LUTs: ${luts.map((l) => `${l.id} (${l.name})`).join(', ')}.`
+              : 'The project has no LUTs. Ask the user to import a .cube file in Rec-It.',
+          );
+      }
+      const allowed = KIND_FIELDS[a.kind as Effect['kind']];
+      const stray = [...EFFECT_PARAMS, 'color', 'lowCut', 'lutId'].filter(
+        (k) => a[k] !== undefined && !allowed.includes(k),
+      );
+      if (stray.length)
+        throw new ToolError(
+          `${stray.join(', ')} do not apply to ${a.kind}. It takes: ${allowed.join(', ')}.`,
+        );
+      const params = Object.fromEntries(
+        EFFECT_PARAMS.filter((k) => a[k] !== undefined).map((k) => [k, a[k] as number]),
+      );
+      const existing = item.effects?.find((e) => e.kind === a.kind);
+      const fxId = existing?.id ?? createId('fx');
+      const update: Command = {
+        type: 'effect.update',
+        sequenceId: seq.id,
+        itemId: item.id,
+        effectId: fxId,
+        params,
+        ...(a.enabled !== undefined ? { enabled: a.enabled } : {}),
+        ...(a.color !== undefined ? { color: a.color } : {}),
+        ...(a.lowCut !== undefined ? { lowCut: a.lowCut } : {}),
+        ...(a.lutId !== undefined && existing ? { lutId: a.lutId } : {}),
+      };
+      if (!existing && a.kind === 'lut' && !a.lutId)
+        throw new ToolError('Give lutId (see get_project_summary).');
+      const v = ctx.execute(
+        existing
+          ? update
+          : {
+              type: 'batch',
+              commands: [
+                {
+                  type: 'effect.add',
+                  sequenceId: seq.id,
+                  itemId: item.id,
+                  kind: a.kind,
+                  id: fxId,
+                  ...(a.lutId ? { lutId: a.lutId } : {}),
+                },
+                update,
+              ],
+            },
+        `${existing ? 'Adjusted' : 'Added'} ${EFFECT_NAMES[a.kind as Effect['kind']]}`,
+      );
+      const fx = findClip(activeSequence(ctx.doc().doc)!, item.id).item.effects?.find(
+        (e) => e.id === fxId,
+      );
+      return edited(
+        ctx,
+        v,
+        `${EFFECT_NAMES[a.kind as Effect['kind']]} on clip ${item.id}: ${json(fx ? effectSummary(fx) : {})}.`,
+      );
+    }
+
+    case 'remove_effect': {
+      const { seq } = requireSequence(ctx);
+      const { item } = findClip(seq, a.itemId);
+      const fx = item.effects?.filter((e) => e.kind === a.kind) ?? [];
+      if (!fx.length) throw new ToolError(`Clip ${item.id} has no ${a.kind} effect.`);
+      const v = ctx.execute(
+        {
+          type: 'batch',
+          commands: fx.map((e) => ({
+            type: 'effect.remove' as const,
+            sequenceId: seq.id,
+            itemId: item.id,
+            effectId: e.id,
+          })),
+        },
+        `Removed ${EFFECT_NAMES[a.kind as Effect['kind']]}`,
+      );
+      return edited(ctx, v, `Removed the ${a.kind} effect.`);
+    }
+
+    case 'set_keyframes': {
+      const { seq } = requireSequence(ctx);
+      const { item } = findClip(seq, a.itemId);
+      if (item.caption) throw new ToolError('Captions cannot be animated.');
+      if (item.freeze) throw new ToolError('A freeze frame cannot be animated.');
+      const property = a.property as KeyframeProperty;
+      const keys = a.keyframes as { time: number; value: number; easing: 'linear' }[];
+      const startS = sec(item.start);
+      const endS = sec(itemEndF(item));
+      const outside = keys.find((k) => k.time < startS - 0.001 || k.time > endS + 0.001);
+      if (outside)
+        throw new ToolError(
+          `Keyframe at ${outside.time} s is outside the clip (${startS}–${endS} s).`,
+        );
+      const commands: Command[] = [];
+      if (item.keyframes?.[property]?.length)
+        commands.push({
+          type: 'keyframe.clear',
+          sequenceId: seq.id,
+          itemId: item.id,
+          property,
+          t: item.sourceIn,
+        });
+      for (const k of keys)
+        commands.push({
+          type: 'keyframe.set',
+          sequenceId: seq.id,
+          itemId: item.id,
+          property,
+          // Source time, as the model stores keyframes (they follow the media when trimmed).
+          t: sourceTimeAt(item, Math.min(itemEndF(item) - 1, fl(k.time))),
+          value: k.value,
+          easing: k.easing,
+        });
+      if (!commands.length) throw new ToolError(`Clip ${item.id} has no ${property} animation.`);
+      const v = ctx.execute(
+        { type: 'batch', commands },
+        keys.length
+          ? `Animated ${property} (${keys.length} keyframes)`
+          : `Removed ${property} animation`,
+      );
+      return edited(
+        ctx,
+        v,
+        keys.length
+          ? `${property} animated with ${keys.length} keyframe(s).`
+          : `${property} animation removed.`,
+      );
+    }
+
+    case 'duck_music': {
+      const { seq } = requireSequence(ctx);
+      const { item, track } = findClip(seq, a.itemId);
+      if (track.kind !== 'audio' && !ctx.media().find((m) => m.id === item.assetId)?.probe?.audio)
+        throw new ToolError('This clip has no sound.');
+      const names = new Map(ctx.media().map((m) => [m.id, m]));
+      const sources = [];
+      for (const other of duckSources(seq, item)) {
+        const asset = names.get(other.assetId);
+        if (!asset || !(asset.kind === 'audio' || asset.probe?.audio)) continue;
+        const peaks = await ctx.loudness(asset.id);
+        if (peaks) sources.push({ item: other, peaks });
+      }
+      if (!sources.length)
+        throw new ToolError(
+          'There is no other sound on the timeline to duck under (or its waveform is still being measured).',
+        );
+      const regions = speechRegions(item, sources);
+      if (!regions.length) throw new ToolError('No speech found while this clip plays.');
+      const v = ctx.execute(
+        duckingCommands(seq, item, regions, { level: a.level }),
+        `Ducked a clip under ${regions.length} stretch(es) of speech`,
+      );
+      return edited(
+        ctx,
+        v,
+        `Ducked to ${Math.round(a.level * 100)}% under ${regions.length} stretch(es) of speech.`,
+      );
+    }
+
+    case 'freeze_frame': {
+      const { seq } = requireSequence(ctx);
+      const { item } = findClip(seq, a.itemId);
+      const time = fl(a.time);
+      if (time < item.start || time > itemEndF(item))
+        throw new ToolError(
+          `${round(a.time)} s is outside the clip (${sec(item.start)}–${sec(itemEndF(item))} s).`,
+        );
+      const v = ctx.execute(
+        {
+          type: 'item.freeze',
+          sequenceId: seq.id,
+          itemId: item.id,
+          time,
+          sourceTime: sourceTimeAt(item, Math.min(time, itemEndF(item) - 1)),
+          duration: fl(a.duration),
+        },
+        `Froze a frame for ${round(a.duration)} s`,
+      );
+      return edited(ctx, v, `Froze the frame at ${round(a.time)} s for ${round(a.duration)} s.`);
     }
 
     case 'transcribe_asset': {

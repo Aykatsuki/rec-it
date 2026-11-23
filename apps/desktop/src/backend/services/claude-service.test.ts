@@ -30,6 +30,8 @@ function setup() {
       exportRunning: () => false,
       exportPath: (n) => n,
       startExport: () => {},
+      luts: () => [],
+      loudness: () => Promise.resolve(undefined),
     }),
     execute: (command, group) => {
       const before = history.version;

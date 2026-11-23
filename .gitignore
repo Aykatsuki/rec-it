@@ -24,3 +24,4 @@ playwright-report/
 
 .env
 .env.*
+apps/desktop/eval-results/

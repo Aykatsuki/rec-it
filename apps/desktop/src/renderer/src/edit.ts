@@ -15,8 +15,10 @@ import {
   type TimelineItem,
   type Track,
   type TransitionKind,
-  duckingKeyframes,
-  loudRegions,
+  duckSources,
+  linkedPartners as partnersOf,
+  duckingCommands,
+  speechRegions,
   isRetimed,
   timelineTimeAt,
   type Transform,
@@ -412,9 +414,7 @@ export function clipsAtPlayhead(seq: Sequence | null): string[] {
 
 /** Clips linked to any of `ids` (not including them). */
 export function linkedPartners(seq: Sequence | null, ids: string[]): string[] {
-  const all = (seq?.tracks ?? []).flatMap((t) => t.items);
-  const links = new Set(all.filter((i) => ids.includes(i.id) && i.linkId).map((i) => i.linkId));
-  return all.filter((i) => i.linkId && links.has(i.linkId) && !ids.includes(i.id)).map((i) => i.id);
+  return partnersOf(seq, ids);
 }
 
 /** True when the item has a linked partner on the timeline. */
@@ -1086,12 +1086,8 @@ export async function duckUnderVoices(itemId: string): Promise<void> {
   const found = findItem(seq, itemId);
   if (!seq || !found) return;
   const { item } = found;
-  const self = new Set([item.id, ...linkedPartners(seq, [item.id])]);
   const byId = new Map(state.assets.map((a) => [a.id, a]));
-  const others = seq.tracks
-    .filter((t) => !t.muted && t.kind !== 'caption')
-    .flatMap((t) => t.items)
-    .filter((i) => !self.has(i.id) && !i.muted && !i.freeze)
+  const others = duckSources(seq, item)
     .map((i) => ({ item: i, asset: byId.get(i.assetId) }))
     .filter((o) => o.asset?.urls.waveform && (o.asset.kind === 'audio' || o.asset.probe?.audio));
   if (!others.length) {
@@ -1099,53 +1095,16 @@ export async function duckUnderVoices(itemId: string): Promise<void> {
     return;
   }
   const peaks = await Promise.all(others.map((o) => waveform(o.asset!.urls.waveform!)));
-  // Loudness of everything else, every 10 ms across this clip.
-  const step = 0.01;
-  const from = toSeconds(item.start);
-  const n = Math.max(1, Math.round(toSeconds(item.duration) / step));
-  const loud = new Float32Array(n);
-  others.forEach((o, k) => {
-    const p = peaks[k]!;
-    for (let i = 0; i < n; i++) {
-      const t = toFlicks(from + i * step);
-      if (t < o.item.start || t >= o.item.start + o.item.duration) continue;
-      const src = sourceTimeAt(o.item, t) / FLICKS_PER_SECOND;
-      const v = ((p[Math.floor(src * 100)] ?? 0) / 255) * volumeAt(o.item, t);
-      if (v > loud[i]!) loud[i] = v;
-    }
-  });
-  const regions = loudRegions(loud, step).map(([a, b]) => [a + from, b + from] as [number, number]);
+  const regions = speechRegions(
+    item,
+    others.map((o, k) => ({ item: o.item, peaks: peaks[k]! })),
+  );
   if (!regions.length) {
     notify('No speech found under this clip.', 'info');
     return;
   }
-  const keys = duckingKeyframes(item, regions);
-  const t0 = item.sourceIn;
-  await edit({
-    type: 'batch',
-    commands: [
-      ...(item.keyframes?.volume?.length
-        ? [
-            {
-              type: 'keyframe.clear' as const,
-              sequenceId: seq.id,
-              itemId,
-              property: 'volume' as const,
-              t: t0,
-            },
-          ]
-        : []),
-      ...keys.map((k) => ({
-        type: 'keyframe.set' as const,
-        sequenceId: seq.id,
-        itemId,
-        property: 'volume' as const,
-        t: k.t,
-        value: k.v,
-        easing: 'linear' as const,
-      })),
-    ],
-  });
+  // A batch of keyframe commands, all of which the IPC contract accepts.
+  await edit(duckingCommands(seq, item, regions) as CommandInput);
   notify(
     `Ducked under ${regions.length} stretch${regions.length === 1 ? '' : 'es'} of speech.`,
     'info',

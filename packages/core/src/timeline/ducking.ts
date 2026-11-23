@@ -1,7 +1,15 @@
 // Ducking (ADR-042): music gets quieter while someone speaks, as ordinary volume keyframes, so
 // the preview and the export play it identically and it stays editable.
-import { secondsToFlicks } from '../time';
-import { itemEnd, sourceTimeAt, type Keyframe, type TimelineItem } from './model';
+import { FLICKS_PER_SECOND, secondsToFlicks } from '../time';
+import type { Command } from './commands';
+import {
+  itemEnd,
+  sourceTimeAt,
+  volumeAt,
+  type Keyframe,
+  type Sequence,
+  type TimelineItem,
+} from './model';
 
 export interface DuckOptions {
   /** Loudness (0–1 of full scale) above which the other clips count as speaking. */
@@ -90,4 +98,86 @@ export function duckingKeyframes(
     v: Math.round(v * 1000) / 1000,
     e: 'linear' as const,
   }));
+}
+
+/** Clips linked to any of `ids` (not including them). */
+export function linkedPartners(seq: Sequence | null | undefined, ids: readonly string[]): string[] {
+  const all = (seq?.tracks ?? []).flatMap((t) => t.items);
+  const links = new Set(all.filter((i) => ids.includes(i.id) && i.linkId).map((i) => i.linkId));
+  return all.filter((i) => i.linkId && links.has(i.linkId) && !ids.includes(i.id)).map((i) => i.id);
+}
+
+/** The audible clips `item` could duck under: not itself or its partners, not muted, not captions. */
+export function duckSources(seq: Sequence, item: TimelineItem): TimelineItem[] {
+  const self = new Set([item.id, ...linkedPartners(seq, [item.id])]);
+  return seq.tracks
+    .filter((t) => !t.muted && t.kind !== 'caption')
+    .flatMap((t) => t.items)
+    .filter((i) => !self.has(i.id) && !i.muted && !i.freeze && !i.caption);
+}
+
+/** A clip and its media's loudness: one byte (0–255) per 10 ms of source (the waveform file). */
+export interface DuckSource {
+  item: TimelineItem;
+  peaks: ArrayLike<number>;
+}
+
+/**
+ * Timeline ranges (seconds) where the other clips are loud — speech — while `item` plays.
+ * Loudness is the loudest of `sources` every 10 ms, after their volume and fades.
+ */
+export function speechRegions(
+  item: TimelineItem,
+  sources: readonly DuckSource[],
+  options: DuckOptions = {},
+): [number, number][] {
+  const step = 0.01;
+  const from = item.start / FLICKS_PER_SECOND;
+  const n = Math.max(1, Math.round(item.duration / FLICKS_PER_SECOND / step));
+  const loud = new Float32Array(n);
+  for (const o of sources) {
+    for (let i = 0; i < n; i++) {
+      const t = secondsToFlicks(from + i * step);
+      if (t < o.item.start || t >= o.item.start + o.item.duration) continue;
+      const src = sourceTimeAt(o.item, t) / FLICKS_PER_SECOND;
+      const v = ((o.peaks[Math.floor(src * 100)] ?? 0) / 255) * volumeAt(o.item, t);
+      if (v > loud[i]!) loud[i] = v;
+    }
+  }
+  return loudRegions(loud, step, options).map(([a, b]) => [a + from, b + from]);
+}
+
+/** Commands replacing `item`'s volume animation with ducking keyframes (one undo step). */
+export function duckingCommands(
+  seq: Sequence,
+  item: TimelineItem,
+  regions: readonly [number, number][],
+  options: DuckOptions = {},
+): Command {
+  const keys = duckingKeyframes(item, regions, options);
+  return {
+    type: 'batch',
+    commands: [
+      ...(item.keyframes?.volume?.length
+        ? [
+            {
+              type: 'keyframe.clear' as const,
+              sequenceId: seq.id,
+              itemId: item.id,
+              property: 'volume' as const,
+              t: item.sourceIn,
+            },
+          ]
+        : []),
+      ...keys.map((k) => ({
+        type: 'keyframe.set' as const,
+        sequenceId: seq.id,
+        itemId: item.id,
+        property: 'volume' as const,
+        t: k.t,
+        value: k.v,
+        easing: 'linear' as const,
+      })),
+    ],
+  };
 }

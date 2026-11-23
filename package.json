@@ -20,6 +20,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:e2e": "pnpm --filter @rec-it/desktop test:e2e",
+    "eval:claude": "pnpm build:mcp && node scripts/eval-claude.mjs",
     "test:py": "uv run --project services/media-ai pytest services/media-ai",
     "check": "pnpm lint && pnpm typecheck && pnpm test && pnpm test:py",
     "fetch-ffmpeg": "node scripts/fetch-ffmpeg.mjs"
