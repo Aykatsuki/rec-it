@@ -393,6 +393,11 @@ export class BackendApp {
         return path;
       },
       startExport: (seq, path) => void this.startExport(seq, path, DEFAULT_EXPORT_SETTINGS),
+      luts: () => this.projects.database().listLuts(),
+      loudness: async (assetId) => {
+        const path = this.projects.media().waveformPath(assetId);
+        return path ? new Uint8Array(await readFile(path)) : undefined;
+      },
     };
   }
 

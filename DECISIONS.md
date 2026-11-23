@@ -48,6 +48,7 @@ Each record states the decision, why it was made and what else was considered. R
 | 042 | Sound effects: EQ, compressor, ducking | Accepted |
 | 043 | Wipe, slide and zoom transitions | Accepted |
 | 044 | The Claude connector (MCP) | Accepted |
+| 045 | Claude tools for effects and animation; scenario evals | Accepted |
 
 ---
 
@@ -716,3 +717,35 @@ Each record states the decision, why it was made and what else was considered. R
     - invalid input and the off switch.
   - Core: `removeRanges` across linked and unlinked tracks, and grouped undo.
   - End to end: a real MCP client starts the built bridge against the running app. Claude's edits appear live, the change card undoes them in one click, and an export is declined in the dialog.
+
+## ADR-045 · Claude tools for effects and animation; scenario evals
+
+**Status:** Accepted (23 Nov 2026)
+
+**Context.** ADR-044 gave Claude the timeline edits but not the Phase 6 effects, keyframes or ducking, and Phase 7's exit criteria need an eval suite (≥ 40 scenarios, ≥ 90% live), recorded tool-call scripts in CI and red-team fixtures.
+
+**Decision.**
+- **Five more edit tools (29 in all).**
+  - `set_effect` adds an effect of a kind (colour, blur, LUT, green screen, EQ, compressor) or changes the one the clip already has. Claude manages effects by kind, not by id, which is how people ask for them. Settings that belong to another kind are refused with the list that applies, rather than silently ignored.
+  - `remove_effect` removes an effect by kind.
+  - `set_keyframes` replaces one property's animation (x, y, scale, rotation, volume). Times are timeline seconds and are stored as source time like every keyframe. An empty list removes the animation.
+  - `duck_music` and `freeze_frame`.
+  - `set_framing` also takes opacity.
+  - `get_sequence` now shows each effect's settings and each animation in timeline seconds; `get_project_summary` lists the project's LUTs.
+- **Ducking lives in core.** `duckSources`, `speechRegions` and `duckingCommands` (with `linkedPartners`) moved from the renderer into `core/timeline/ducking.ts`. The right-click "Duck under voices" and Claude's tool now run the same code. The backend reads the waveform files the media service already makes.
+- **Scenario world.** `backend/claude-evals/world.ts` is Rec-It in memory: the real tool runner, ClaudeService (change cards, confirmations, activity) and core history, with synthetic media, transcripts (a small script language for words and pauses) and loudness. A fixture says whether the user allows or declines confirmations.
+- **Scenarios.** `scenarios.ts` holds 47 scenarios:
+  - 8 clean-up, 8 structure, 10 look, 5 timing, 6 sound and 3 captions;
+  - 7 safety: instructions in transcripts, media names and captions, plus an export that is allowed, an export that is declined, and a transcription.
+  
+  Each has the user's request, a fixture, a recorded script of a good answer, and an outcome check that accepts any reasonable approach (for example, "no pause over 0.8 s and every word kept" rather than exact ranges).
+- **CI** (`scenarios.test.ts`, deterministic, no FFmpeg):
+  - every recorded script passes its check;
+  - every check fails when Claude does nothing, except the one read-only scenario, so the checks test something;
+  - "Undo all" on Claude's change card restores the document exactly;
+  - one scenario runs through the real bridge connection and socket.
+- **Red team.** An obedient Claude follows instructions planted in transcripts and file names, calling export twice and transcription once. Each call waits for the user's answer, nothing starts, and the activity feed shows three refusals. Destructive edits stay one Undo all away. Tools for the shell, files or network do not exist.
+- **Live evals.** `pnpm eval:claude [filter]` runs each scenario's request through Claude Code (`claude -p`, no built-in tools, only the Rec-It server, `--strict-mcp-config`). Claude Code reaches the in-memory world through the real bridge and endpoint. The run writes `apps/desktop/eval-results/*.json`, requires ≥ 90%, and stops at once if Claude Code cannot run (signed out, offline) rather than counting it as failures. It uses the plan Claude Code is signed in with, so it runs by hand before releases, not in CI.
+
+**Consequences.** Claude can now use everything Phases 5–6 added except crop, speed ramps and transitions' finer settings. The recorded scripts show the tools can do each job and keep undo exact. Whether Claude actually chooses them well is what the live run measures.
+
