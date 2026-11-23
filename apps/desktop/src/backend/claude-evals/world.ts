@@ -117,7 +117,12 @@ function asset(m: FakeMedia): MediaAsset {
       ...(audio ? { audio: { codec: 'aac', sampleRate: 48000, channels: 2 } } : {}),
     },
     rights: { source: 'own-recording', userAttested: true },
-    jobs: {},
+    jobs: {
+      probe: { state: 'done', progress: 1 },
+      proxy: { state: 'done', progress: 1 },
+      thumbnails: { state: 'done', progress: 1 },
+      waveform: { state: audio ? 'done' : 'skipped', progress: 1 },
+    },
     urls: {},
   };
 }
