@@ -42,6 +42,7 @@ describe.skipIf(!bins || !hasUv)('story template (backend, real sidecar, fake vo
   beforeAll(async () => {
     process.env.RECIT_FAKE_TTS = '1';
     process.env.RECIT_FAKE_IMAGES = '1';
+    process.env.RECIT_FAKE_TALK = '1';
     dir = mkdtempSync(join(tmpdir(), 'recit-tpl-'));
     fx = makeFixtures(bins!.ffmpeg, { longSeconds: 4 });
     app = new BackendApp({
@@ -76,6 +77,7 @@ describe.skipIf(!bins || !hasUv)('story template (backend, real sidecar, fake vo
     await app?.dispose();
     delete process.env.RECIT_FAKE_TTS;
     delete process.env.RECIT_FAKE_IMAGES;
+    delete process.env.RECIT_FAKE_TALK;
     rmSync(dir, { recursive: true, force: true, maxRetries: 3 });
     rmSync(fx.dir, { recursive: true, force: true, maxRetries: 3 });
   });
@@ -210,6 +212,36 @@ describe.skipIf(!bins || !hasUv)('story template (backend, real sidecar, fake vo
       expect(caps[0]!.caption!.words[0]!.text).toBe('Octopus');
     }, 180_000);
   }
+
+  it('makes a talking-character test shot', async () => {
+    await waitFor(() => app.animation.status().available !== null, 60_000);
+    await waitFor(() => app.images.status().available !== null, 60_000);
+    const jobId = app.templates.talkTest({
+      character: 'a cheerful orange fox in a green scarf',
+      line: 'Hello there, I am a fox.',
+      voice: 'af_heart',
+    });
+    const job = await waitFor(() => {
+      const j = app.templates.list().find((x) => x.id === jobId);
+      return j && j.state !== 'running' && j;
+    }, 120_000);
+    expect(job.error).toBeUndefined();
+    expect(job.kind).toBe('talk-test');
+    expect(job.stage).toMatch(/^Done in .+ to animate\.$/);
+    const { doc } = app.projects.document().state();
+    const seq = doc.sequences.find((s) => s.id === job.sequenceId)!;
+    const track = (name: string) => seq.tracks.find((t) => t.name === name)!.items;
+    const clip = app.projects.media().get(track('V1')[0]!.assetId);
+    expect(clip.kind).toBe('video');
+    expect(clip.originalPath).toMatch(/talking .+\.avi$/);
+    expect([clip.probe?.video?.width, clip.probe?.video?.height]).toEqual([480, 832]);
+    expect(app.projects.media().get(track('A1')[0]!.assetId).kind).toBe('audio');
+    // The clip covers the whole line, rounded up to whole latent frames (4n+1 at 16 fps).
+    const clipSec = sec(track('V1')[0]!.duration);
+    const lineSec = sec(track('A1')[0]!.duration);
+    expect(clipSec).toBeGreaterThanOrEqual(lineSec - 0.05);
+    expect(clipSec - lineSec).toBeLessThan(0.35);
+  }, 180_000);
 
   it('previews a voice as WAV', async () => {
     const wav = Buffer.from(await app.voice.preview('af_heart', 1, 'Hello there'), 'base64');

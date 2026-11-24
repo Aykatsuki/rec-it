@@ -160,7 +160,9 @@ export class AiClient {
     try {
       const ps = await this.fetch(`${root}/api/ps`, { method: 'GET', headers: this.headers() });
       if (!ps.ok) return [];
-      const loaded = ((JSON.parse(await ps.text()) as { models?: { name?: string }[] }).models ?? [])
+      const loaded = (
+        (JSON.parse(await ps.text()) as { models?: { name?: string }[] }).models ?? []
+      )
         .map((m) => m.name)
         .filter((n): n is string => !!n);
       for (const model of loaded) {

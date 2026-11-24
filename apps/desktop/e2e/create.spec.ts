@@ -189,4 +189,33 @@ test.describe('create a Short', () => {
       await app.close();
     }
   });
+  test('test a talking character: draw, voice and animate one shot', async () => {
+    const { app, page } = await launch(tempUserData(), {
+      ...(bins!.source === 'path' ? {} : { RECIT_FFMPEG_PATH: bins!.ffmpeg }),
+      RECIT_DISABLE_SIDECAR: '0',
+      RECIT_FAKE_TTS: '1',
+      RECIT_FAKE_IMAGES: '1',
+      RECIT_FAKE_TALK: '1',
+    });
+    try {
+      await createProject(page, 'Characters');
+      await page.getByTestId('create-button').click();
+      const dialog = page.getByTestId('create-dialog');
+      await dialog.getByRole('button', { name: /Talking characters/ }).click();
+      // The fake engines count as installed.
+      await expect(dialog.getByTestId('talk-create')).toBeEnabled({ timeout: 60_000 });
+      await expect(dialog.getByTestId('animation-engine')).toHaveCount(0);
+      await dialog.getByTestId('talk-character').fill('a sleepy blue owl');
+      await dialog.getByTestId('talk-line').fill('Who stayed up this late?');
+      await page.screenshot({ path: test.info().outputPath('talking-form.png') });
+      await dialog.getByTestId('talk-create').click();
+      await expect(dialog).toBeHidden({ timeout: 90_000 });
+      // The clip, the line and the character picture, on a new sequence.
+      await expect(page.locator('[data-testid=asset-card]')).toHaveCount(3);
+      await page.waitForTimeout(500);
+      await page.screenshot({ path: test.info().outputPath('talking-shot.png') });
+    } finally {
+      await app.close();
+    }
+  });
 });

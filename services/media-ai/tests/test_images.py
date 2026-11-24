@@ -1,4 +1,8 @@
+import sys
+import threading
 from pathlib import Path
+
+import pytest
 
 from recit_media_ai.images import failure_message
 
@@ -38,3 +42,60 @@ def test_running_out_of_system_ram_is_said_plainly() -> None:
         "[E] generate failed: line 59, column 14: diffusion output shape [] --- main.cpp:815",
     ]
     assert failure_message(errors, errors, 1, LOG).startswith("Your PC ran out of memory (RAM)")
+
+
+def test_frames_for_a_line() -> None:
+    from recit_media_ai.talking import frames_for
+
+    assert frames_for(2.5) == 41  # 40 frames rounded up to 4n+1
+    assert frames_for(0.1) == 17
+    assert frames_for(12) == 81  # one S2V chunk at most
+    assert all((frames_for(s / 10) - 1) % 4 == 0 for s in range(1, 120))
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="the stand-in engine is a shell script")
+def test_talking_command_and_step_progress(tmp_path, monkeypatch) -> None:
+    """A stand-in sd-cli: records its arguments, prints sampling progress, writes the clip."""
+    from recit_media_ai import talking
+
+    script = tmp_path / "sd-cli"
+    script.write_text(
+        "#!/bin/sh\n"
+        'echo "$@" > "$(dirname "$0")/args.txt"\n'
+        "printf '  |=====>   | 1/4 - 20.00s/it\\r  |==========>   | 2/4 - 20.00s/it\\n'\n"
+        'while [ "$1" != "-o" ]; do shift; done\n'
+        'printf "AVI" > "$2"\n'
+    )
+    script.chmod(0o755)
+    monkeypatch.setenv("RECIT_SD_CLI", str(script))
+    monkeypatch.delenv("RECIT_FAKE_TALK", raising=False)
+    models = str(tmp_path)
+    assert talking.status(models)["available"] is False
+    for name, _, _ in talking.TALK_FILES:
+        (talking.model_dir(models) / name).parent.mkdir(parents=True, exist_ok=True)
+        (talking.model_dir(models) / name).write_bytes(b"x")
+    talking.lora_dir(models).mkdir(parents=True)
+    (talking.lora_dir(models) / talking.LORA[0]).write_bytes(b"x")
+    assert talking.status(models)["available"] is True
+
+    seen: list[str] = []
+    r = talking.talk(
+        {
+            "modelsDir": models,
+            "image": str(tmp_path / "fox.png"),
+            "audio": str(tmp_path / "line.wav"),
+            "out": str(tmp_path / "o" / "shot.mp4"),
+            "seconds": 2.5,
+            "prompt": "a fox is talking",
+            "seed": 3,
+        },
+        lambda p, m=None: seen.append(m or ""),
+        threading.Event(),
+    )
+    args = (tmp_path / "args.txt").read_text()
+    assert "-M vid_gen" in args and "--video-frames 41" in args and "-W 480 -H 832" in args
+    assert "<lora:wan2.2_t2v_lightx2v_4steps_lora_v1.1_low_noise:1.0>" in args
+    assert "--steps 4" in args and "--cfg-scale 1.0" in args and "--mmap" in args
+    assert r["video"].endswith("shot.avi") and Path(r["video"]).read_bytes() == b"AVI"
+    assert r["frames"] == 41 and r["seconds"] == pytest.approx(41 / 16)
+    assert "Animating the character (step 2 of 4)…" in seen

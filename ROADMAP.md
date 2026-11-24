@@ -266,7 +266,7 @@ Next:
 
 ---
 
-## Phase 8 · AI Shorts studio (L) → **Milestone M3** — 🟡 slice A done (24 Nov 2026)
+## Phase 8 · AI Shorts studio (L) → **Milestone M3** — 🟡 slices A, B and talking-character test shot done (24 Nov 2026)
 
 **Priority (24 Nov 2026):** you asked to make Rec-It an AI Shorts maker like Crayo and OpusClip now, ahead of the rest of Phase 6 and the reference-PC checks of Phase 7. One-click AI runs on **Ollama** (on your PC, free) or **Kimi** (your Moonshot API key), and Claude keeps working through your Claude app. Faceless templates come first, then the clip finder ported from Clipalytics. See ADR-046 (which also records why OmniRoute is not used).
 
@@ -285,8 +285,11 @@ Next:
 
 **Progress (24 Nov 2026).** Slice B (ADR-047): generated visuals. The AI storyboards the script into scenes. Each scene gets an AI picture (Z-Image Turbo via stable-diffusion.cpp on your GPU, installed once) or a motion-graphics backdrop, animated with zooms, pans and dissolves to the voice. Topic and facts scripts are supported too.
 
+**Progress (24 Nov 2026).** Slice C, first part (ADR-048): talking characters. Wan 2.2 S2V on the same engine animates a Pixar-style character picture saying a line, with lip sync, all on your PC. First comes a **test shot** in Make a Short, to measure speed and quality on the reference PC.
+
 Next:
-- Slice C: the text-conversation and split-screen templates.
+- Talking-character Shorts: AI-written dialogue, several characters (one picture each), a shot per line, captions; then Pixar-style animated stories (scenes animated with Wan picture-to-video, speaking scenes with S2V).
+- The text-conversation and split-screen templates.
 - Slice D: the clip finder in the app. That means measuring with FFmpeg, a ranked moments panel, scoring with Ollama/Kimi, and one-click Shorts with reframe and captions.
 - Then voice tools (noise cleanup, vocal removal) and ideas and hooks.
 

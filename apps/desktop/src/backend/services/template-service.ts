@@ -6,7 +6,7 @@ import { mkdir } from 'node:fs/promises';
 import { basename, dirname, extname, join } from 'node:path';
 import { createId } from '@rec-it/core';
 import type { MediaAsset, TemplateJob } from '@rec-it/ipc-contract';
-import { storyShortSchema } from '@rec-it/ipc-contract';
+import { storyShortSchema, talkTestSchema } from '@rec-it/ipc-contract';
 import { PICTURE_STYLES, type ScenePlan } from '@rec-it/ai';
 import {
   fallbackScenes,
@@ -16,19 +16,25 @@ import {
   speakable,
   splitSentences,
   storyShort,
+  characterPrompt,
+  talkingPrompt,
+  talkingShot,
   type Scene,
 } from '@rec-it/templates';
+import type { AnimationService } from './animation-service';
 import type { ImageService } from './image-service';
 import type { z } from 'zod';
 import type { ProjectService } from './project-service';
 import type { VoiceService } from './voice-service';
 
 type StoryInput = z.output<typeof storyShortSchema>;
+type TalkInput = z.output<typeof talkTestSchema>;
 
 export interface TemplateDeps {
   projects: ProjectService;
   voice: VoiceService;
   images: ImageService;
+  animation: AnimationService;
   /** The AI's scene plan, or null when no AI is set up or it fails (a plain grouping is used). */
   planScenes: (title: string, sentences: string[], count: number) => Promise<ScenePlan | null>;
   /** Frees the graphics card (unloads Ollama's models) before the picture engine runs. */
@@ -289,6 +295,147 @@ export class TemplateService {
     }
   }
 
+  /**
+   * One talking-character shot (ADR-048), to measure speed and quality on this PC before longer
+   * Shorts: the character's picture, the line in an AI voice, the animation, then a sequence.
+   */
+  talkTest(raw: unknown): string {
+    const input = talkTestSchema.parse(raw);
+    if (!this.d.projects.info()) throw new Error('Open or create a project first.');
+    if (!this.d.images.status().available) throw new Error('Install the AI picture engine first.');
+    if (!this.d.animation.status().available)
+      throw new Error('Install the animation engine first.');
+    const id = createId('tpl');
+    this.jobs = [
+      ...this.jobs.filter((j) => j.state === 'running'),
+      {
+        id,
+        kind: 'talk-test',
+        title: input.character.slice(0, 80),
+        state: 'running',
+        stage: 'Starting…',
+        progress: 0,
+      },
+    ];
+    this.d.onChange(this.jobs);
+    const controller = new AbortController();
+    this.controllers.set(id, controller);
+    void this.runTalkTest(id, input, controller.signal).finally(() => this.controllers.delete(id));
+    return id;
+  }
+
+  private async runTalkTest(id: string, input: TalkInput, signal: AbortSignal): Promise<void> {
+    const started = Date.now();
+    try {
+      const projectId = this.d.projects.info()!.id;
+      const media = () => {
+        const p = this.d.projects.info();
+        if (!p || p.id !== projectId) throw new Error('The project was closed.');
+        return this.d.projects.media();
+      };
+      const check = () => {
+        if (signal.aborted) throw new Cancelled();
+      };
+      const folder = await this.generatedFolder();
+      const stamp = id.replace(/^tpl[_-]?/, '').slice(-10);
+      const line = speakable(input.line);
+      if (!line) throw new Error('The line needs some words.');
+
+      // 1. The voice first: its length decides the clip's length.
+      this.update(id, { stage: 'Recording the line…', progress: 0.02 });
+      const voicePath = join(folder, `line ${stamp}.wav`);
+      const spoken = await this.d.voice.speak([{ id: 'line', text: line }], {
+        voice: input.voice,
+        speed: 1,
+        out: voicePath,
+        signal,
+      });
+      check();
+      if (spoken.duration > 5.2)
+        throw new Error('One shot holds about 5 seconds of speech; shorten the line.');
+
+      // 2. The character's picture (frees the GPU from Ollama first).
+      this.update(id, { stage: 'Freeing the graphics card…', progress: 0.06 });
+      await this.d.releaseGpu?.().catch(() => undefined);
+      check();
+      const seed = Math.floor(Math.random() * 1_000_000);
+      const [picture] = await this.d.images.generate([characterPrompt(input.character)], {
+        outDir: join(folder, `character ${stamp}`),
+        seed,
+        signal,
+        onProgress: (p) =>
+          this.update(id, { stage: 'Drawing the character…', progress: 0.08 + 0.1 * p }),
+      });
+      check();
+
+      // 3. The animation: the slow part.
+      const animStart = Date.now();
+      const clip = await this.d.animation.talk({
+        image: picture!,
+        audio: voicePath,
+        out: join(folder, `talking ${stamp}.avi`),
+        seconds: spoken.duration,
+        prompt: talkingPrompt(input.character),
+        seed,
+        signal,
+        onProgress: (p, message) =>
+          this.update(id, {
+            progress: 0.2 + 0.7 * p,
+            ...(message ? { stage: `${message} ${elapsed(animStart)}` } : {}),
+          }),
+      });
+      const animSeconds = (Date.now() - animStart) / 1000;
+      check();
+
+      // 4. Import and build a small sequence.
+      this.update(id, { stage: 'Adding the shot to the project…', progress: 0.92 });
+      const paths = [clip.video, voicePath, picture!];
+      const existing = await Promise.all(paths.map((p) => media().findSame(p)));
+      const fresh = paths.filter((_, i) => !existing[i]);
+      const result = fresh.length
+        ? await media().import(fresh, {
+            source: 'made-in-rec-it',
+            notes:
+              'Talking character made by Rec-It: picture (Z-Image Turbo), voice (Kokoro-82M), animation (Wan 2.2 S2V).',
+            userAttested: true,
+          })
+        : { imported: [], skipped: [] };
+      if (result.skipped.length)
+        throw new Error(`Could not add the generated files: ${result.skipped[0]!.reason}`);
+      const queue = [...result.imported];
+      const ids = existing.map((x) => x ?? queue.shift()!);
+      const ready = await this.waitReady(media, ids, signal);
+      const [videoId, voiceId] = ids;
+      const sequenceId = createId('sequence');
+      this.d.projects.document().execute(
+        talkingShot({
+          sequenceId,
+          name: shortName(`Talking test: ${input.character}`),
+          video: {
+            assetId: videoId!,
+            duration: ready.get(videoId!)?.probe?.durationSec ?? clip.seconds,
+          },
+          voice: {
+            assetId: voiceId!,
+            duration: ready.get(voiceId!)?.probe?.durationSec ?? spoken.duration,
+          },
+          ids: { video: createId('item'), voice: createId('item') },
+        }),
+      );
+      this.update(id, {
+        state: 'done',
+        stage: `Done in ${duration((Date.now() - started) / 1000)}; the ${clip.seconds.toFixed(1)} s clip took ${duration(animSeconds)} to animate.`,
+        progress: 1,
+        sequenceId,
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (signal.aborted || error instanceof Cancelled || /cancel/i.test(message))
+        this.update(id, { state: 'cancelled', stage: 'Cancelled' });
+      else this.update(id, { state: 'failed', stage: 'Failed', error: message });
+    }
+  }
+
   private footage(input: StoryInput, voiceLength: number) {
     const bg = this.d.projects.media().get(input.backgroundAssetId!);
     const length = bg.probe?.durationSec ?? 0;
@@ -330,6 +477,17 @@ export class TemplateService {
       await new Promise((r) => setTimeout(r, this.d.pollMs ?? 100));
     }
   }
+}
+
+/** 312 → "5 min 12 s". */
+function duration(seconds: number): string {
+  const s = Math.max(0, Math.round(seconds));
+  return s < 60 ? `${s} s` : `${Math.floor(s / 60)} min ${s % 60} s`;
+}
+
+/** "(2 min 5 s so far)" since `start`. */
+function elapsed(start: number): string {
+  return `(${duration((Date.now() - start) / 1000)} so far)`;
 }
 
 /** "AITA for refusing to…" → a short sequence name. */

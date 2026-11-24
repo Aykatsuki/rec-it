@@ -24,6 +24,7 @@ import { claudeStateSchema } from './schemas/claude';
 import {
   aiStatusSchema,
   imageStatusSchema,
+  talkTestSchema,
   storyGenreSchema,
   storyShortSchema,
   storyTextSchema,
@@ -195,10 +196,16 @@ export const backendContract = defineContract({
     /** Downloads the AI picture engine and model (about 7 GB), once. */
     'images.install': { input: empty, output: ok },
     'images.cancelInstall': { input: empty, output: ok },
+    'animation.status': { input: empty, output: imageStatusSchema },
+    /** Downloads the talking-character models (about 17 GB), once. */
+    'animation.install': { input: empty, output: ok },
+    'animation.cancelInstall': { input: empty, output: ok },
     'templates.jobs': { input: empty, output: z.array(templateJobSchema) },
     /** Starts building a story Short; follow it with templates.changed. */
     'templates.story': { input: storyShortSchema, output: z.object({ jobId: z.string() }) },
     'templates.cancel': { input: z.object({ jobId: z.string() }).strict(), output: ok },
+    /** Starts one talking-character test shot; follow it with templates.changed. */
+    'templates.talkTest': { input: talkTestSchema, output: z.object({ jobId: z.string() }) },
 
     // 3D LUTs imported into the project (Phase 6e, ADR-040).
     'luts.list': { input: empty, output: z.array(lutInfoSchema) },
@@ -282,6 +289,7 @@ export const backendContract = defineContract({
     'claude.changed': claudeStateSchema,
     'voice.changed': voiceStatusSchema,
     'images.changed': imageStatusSchema,
+    'animation.changed': imageStatusSchema,
     'templates.changed': z.array(templateJobSchema),
   },
 });

@@ -4,7 +4,7 @@ import platform
 import time
 from typing import Any
 
-from . import __version__, card, faces, images, transcribe, tts
+from . import __version__, card, faces, images, talking, transcribe, tts
 from .rpc import INVALID_PARAMS, RpcError, Server, log
 from .system import cuda_status, query_gpus
 
@@ -110,6 +110,35 @@ def images_job(params: dict[str, Any], progress: Any, cancelled: Any) -> dict[st
         raise RpcError(-32800, "Cancelled") from e
 
 
+def talking_status(params: dict[str, Any]) -> dict[str, Any]:
+    if not isinstance(params.get("modelsDir"), str):
+        raise RpcError(INVALID_PARAMS, "modelsDir must be a folder")
+    return talking.status(params["modelsDir"])
+
+
+def talking_install_job(params: dict[str, Any], progress: Any, cancelled: Any) -> dict[str, Any]:
+    if not isinstance(params.get("modelsDir"), str):
+        raise RpcError(INVALID_PARAMS, "modelsDir must be a folder")
+    try:
+        return talking.install(params, progress, cancelled)
+    except talking.Cancelled as e:
+        raise RpcError(-32800, "Cancelled") from e
+
+
+def talk_job(params: dict[str, Any], progress: Any, cancelled: Any) -> dict[str, Any]:
+    for key in ("modelsDir", "image", "audio", "out", "ffmpeg"):
+        if not isinstance(params.get(key), str):
+            raise RpcError(INVALID_PARAMS, f"{key} must be a path")
+    if not isinstance(params.get("seconds"), (int, float)) or params["seconds"] <= 0:
+        raise RpcError(INVALID_PARAMS, "seconds must be positive")
+    if not talking.status(params["modelsDir"])["available"]:
+        raise RpcError(-32001, "The animation engine is not installed")
+    try:
+        return talking.talk(params, progress, cancelled)
+    except talking.Cancelled as e:
+        raise RpcError(-32800, "Cancelled") from e
+
+
 def backgrounds_render(params: dict[str, Any]) -> dict[str, Any]:
     items = params.get("items")
     if not isinstance(items, list) or not items:
@@ -133,6 +162,7 @@ HANDLERS = {
     "debug.sleep": debug_sleep,
     "card.render": card_render,
     "images.status": images_status,
+    "talking.status": talking_status,
     "backgrounds.render": backgrounds_render,
 }
 
@@ -147,6 +177,8 @@ def main() -> int:
             "tts": tts_job,
             "images": images_job,
             "images.install": images_install_job,
+            "talking.install": talking_install_job,
+            "talk": talk_job,
         },
     ).serve()
     log("stdin closed, exiting")

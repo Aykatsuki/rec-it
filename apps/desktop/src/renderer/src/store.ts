@@ -64,6 +64,8 @@ interface AppState {
   voice: VoiceStatus | null;
   /** AI picture engine (ADR-047). */
   images: ImageStatus | null;
+  /** Talking-character engine (ADR-048). */
+  animation: ImageStatus | null;
   templateJobs: TemplateJob[];
   /** Clips waiting for their media's face analysis, to be reframed when it finishes. */
   pendingReframe: Record<string, string[]>;
@@ -145,6 +147,7 @@ export const useApp = create<AppState>((set) => ({
   claude: null,
   voice: null,
   images: null,
+  animation: null,
   templateJobs: [],
   pendingReframe: {},
   safeZones: stored('recit.safeZones') === '1',
@@ -211,6 +214,7 @@ export function startBackendSync(): () => void {
     useApp.setState({
       voice: await backend.invoke('voice.status', {}).catch(() => null),
       images: await backend.invoke('images.status', {}).catch(() => null),
+      animation: await backend.invoke('animation.status', {}).catch(() => null),
       templateJobs: await backend.invoke('templates.jobs', {}).catch(() => []),
     });
   };
@@ -246,6 +250,7 @@ export function startBackendSync(): () => void {
     backend.on('luts.changed', (luts) => useApp.setState({ luts })),
     backend.on('voice.changed', (voice) => useApp.setState({ voice })),
     backend.on('images.changed', (images) => useApp.setState({ images })),
+    backend.on('animation.changed', (animation) => useApp.setState({ animation })),
     backend.on('templates.changed', (templateJobs) => useApp.setState({ templateJobs })),
     backend.on('claude.changed', (claude) => {
       const before = useApp.getState().claude;

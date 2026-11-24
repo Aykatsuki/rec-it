@@ -491,3 +491,69 @@ export function normaliseScenes(
 export function sceneCount(seconds: number): number {
   return Math.max(3, Math.min(24, Math.round(seconds / 4.5)));
 }
+
+/** What the talking-character test shot (ADR-048) needs: the clip and the line's voice. */
+export interface TalkingShotInput {
+  sequenceId: string;
+  name: string;
+  /** The animated clip (no sound) and the voice it was animated to, both starting at 0. */
+  video: { assetId: string; duration: number };
+  voice: { assetId: string; duration: number };
+  ids: { video: string; voice: string };
+}
+
+/** A sequence with the character clip filling the 9:16 frame and the voice under it. */
+export function talkingShot(input: TalkingShotInput): Command {
+  const { sequenceId: sid, ids } = input;
+  const track = (name: string) => `${sid}-${name}`;
+  return {
+    type: 'batch',
+    commands: [
+      {
+        type: 'sequence.create',
+        id: sid,
+        name: input.name,
+        width: 1080,
+        height: 1920,
+        fps: FPS,
+        trackIds: { V2: track('V2'), V1: track('V1'), A1: track('A1'), A2: track('A2') },
+      },
+      {
+        type: 'item.add',
+        sequenceId: sid,
+        trackId: track('V1'),
+        assetId: input.video.assetId,
+        id: ids.video,
+        start: 0,
+        duration: f(input.video.duration),
+        transform: { fit: 'fill' },
+      },
+      {
+        type: 'item.add',
+        sequenceId: sid,
+        trackId: track('A1'),
+        assetId: input.voice.assetId,
+        id: ids.voice,
+        start: 0,
+        duration: f(input.voice.duration),
+      },
+    ],
+  };
+}
+
+/** The picture prompt for a talking character: Pixar-like, facing the camera, room to talk. */
+export function characterPrompt(character: string): string {
+  return (
+    `${character.trim()}, Pixar-style 3D animated film character, waist-up portrait facing the ` +
+    'camera, mouth gently closed, expressive eyes, soft cinematic studio lighting, simple softly ' +
+    'blurred background, vertical 9:16 composition, no text'
+  );
+}
+
+/** The animation prompt for the same character speaking. */
+export function talkingPrompt(character: string): string {
+  return (
+    `${character.trim()} is talking to the camera, Pixar-style 3D animation, natural head ` +
+    'movement, expressive face, clear lip movement'
+  );
+}

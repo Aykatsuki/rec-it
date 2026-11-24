@@ -50,6 +50,8 @@ export const imageStatusSchema = z.object({
   }),
 });
 export type ImageStatus = z.output<typeof imageStatusSchema>;
+/** The animation engine for talking characters (Wan 2.2 S2V; ADR-048): same shape. */
+export type AnimationStatus = ImageStatus;
 
 export const storyTextSchema = z.object({
   title: z.string(),
@@ -104,9 +106,24 @@ export const storyShortSchema = z
   .strict();
 export type StoryShortInput = z.input<typeof storyShortSchema>;
 
+/**
+ * One talking-character shot (ADR-048): a Pixar-style picture of the character, the line in an
+ * AI voice, and the engine animating the character saying it. Builds a short test sequence.
+ */
+export const talkTestSchema = z
+  .object({
+    /** Who is talking, e.g. "a cheerful orange fox in a green scarf". */
+    character: z.string().trim().min(3).max(300),
+    /** What they say; one shot holds about 5 seconds of speech. */
+    line: z.string().trim().min(1).max(200),
+    voice: z.string().regex(/^[a-z]{2}_[a-z]+$/),
+  })
+  .strict();
+export type TalkTestInput = z.input<typeof talkTestSchema>;
+
 export const templateJobSchema = z.object({
   id: z.string(),
-  kind: z.literal('story'),
+  kind: z.enum(['story', 'talk-test']),
   title: z.string(),
   state: z.enum(['running', 'done', 'failed', 'cancelled']),
   /** What it is doing now, e.g. "Recording the voiceover…". */

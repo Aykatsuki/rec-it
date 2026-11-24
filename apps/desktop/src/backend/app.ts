@@ -43,6 +43,7 @@ import { AiService } from './services/ai-service';
 import { VoiceService } from './services/voice-service';
 import { TemplateService } from './services/template-service';
 import { ImageService } from './services/image-service';
+import { AnimationService } from './services/animation-service';
 import { importLut, writeLutFiles } from './services/lut-service';
 import { ProjectService } from './services/project-service';
 import type { Command, ProjectDocument, Sequence } from '@rec-it/core';
@@ -78,6 +79,7 @@ export class BackendApp {
   readonly voice: VoiceService;
   readonly templates: TemplateService;
   readonly images: ImageService;
+  readonly animation: AnimationService;
   readonly claude: ClaudeService;
   private lastProjectId: string | undefined;
   private secrets: Partial<Record<SecretName, string>> = {};
@@ -180,10 +182,17 @@ export class BackendApp {
       modelsDir: join(config.userDataDir, 'models'),
       onChange: (status) => this.emit('images.changed', status),
     });
+    this.animation = new AnimationService({
+      sidecar: this.sidecar,
+      modelsDir: join(config.userDataDir, 'models'),
+      ffmpeg: async () => (await this.toolchain()).bins.ffmpeg,
+      onChange: (status) => this.emit('animation.changed', status),
+    });
     this.templates = new TemplateService({
       projects: this.projects,
       voice: this.voice,
       images: this.images,
+      animation: this.animation,
       planScenes: (title, sentences, count) => this.ai.planScenes(title, sentences, count),
       releaseGpu: () => this.ai.releaseGpu(),
       onTranscript: () => this.transcripts.changed(),
@@ -338,8 +347,18 @@ export class BackendApp {
       this.images.cancelInstall();
       return { ok: true as const };
     },
+    'animation.status': () => this.animation.status(),
+    'animation.install': () => {
+      this.animation.startInstall();
+      return { ok: true as const };
+    },
+    'animation.cancelInstall': () => {
+      this.animation.cancelInstall();
+      return { ok: true as const };
+    },
     'templates.jobs': () => this.templates.list(),
     'templates.story': (input) => ({ jobId: this.templates.story(input) }),
+    'templates.talkTest': (input) => ({ jobId: this.templates.talkTest(input) }),
     'templates.cancel': ({ jobId }) => {
       this.templates.cancel(jobId);
       return { ok: true as const };
@@ -610,6 +629,7 @@ export class BackendApp {
           this.faces.refresh(),
           this.voice.refresh(),
           this.images.refresh(),
+          this.animation.refresh(),
         ]);
       });
       await Promise.all([ffmpegCheck, sidecarCheck]);

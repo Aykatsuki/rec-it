@@ -15,6 +15,8 @@ import {
   sceneCount,
   splitSentences,
   storyShort,
+  talkingShot,
+  characterPrompt,
   type StoryShortInput,
 } from './index';
 
@@ -249,5 +251,40 @@ describe('scenes', () => {
         expect(v1[i]!.start).toBe(v1[i - 1]!.start + v1[i - 1]!.duration);
     }
     lengths.voice = 20;
+  });
+});
+
+describe('talking shot', () => {
+  it('puts the character clip over the voice in a 9:16 sequence', () => {
+    const h = new History(emptyDocument());
+    const lookup: AssetLookup = (id) =>
+      id === 'clip'
+        ? {
+            kind: 'video',
+            duration: secondsToFlicks(2.5625),
+            hasAudio: false,
+            width: 480,
+            height: 832,
+          }
+        : id === 'line'
+          ? { kind: 'audio', duration: secondsToFlicks(2.4), hasAudio: true }
+          : undefined;
+    h.execute(
+      talkingShot({
+        sequenceId: 'talk1',
+        name: 'Fox test',
+        video: { assetId: 'clip', duration: 2.5625 },
+        voice: { assetId: 'line', duration: 2.4 },
+        ids: { video: 'v', voice: 'a' },
+      }),
+      lookup,
+    );
+    const seq = h.doc.sequences[0]!;
+    expect([seq.width, seq.height]).toEqual([1080, 1920]);
+    const v1 = seq.tracks.find((t) => t.name === 'V1')!.items;
+    const a1 = seq.tracks.find((t) => t.name === 'A1')!.items;
+    expect(v1.map((i) => [i.assetId, i.start, i.transform.fit])).toEqual([['clip', 0, 'fill']]);
+    expect(a1.map((i) => [i.assetId, s(i.duration)])).toEqual([['line', 2.4]]);
+    expect(characterPrompt(' a fox ')).toMatch(/^a fox, Pixar-style 3D/);
   });
 });

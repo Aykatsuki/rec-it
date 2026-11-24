@@ -848,3 +848,23 @@ Each record states the decision, why it was made and what else was considered. R
 
 **Not tested here:** the real engine and models. The cloud sandbox cannot reach Hugging Face and has no NVIDIA GPU, so the first real run happens on the reference PC. Expect about 10–20 s per picture there.
 
+## ADR-048 · Talking characters: Wan 2.2 S2V on the same engine, starting with a test shot
+
+**Status:** Accepted (24 Nov 2026, Phase 8 third slice, first part).
+
+**Context.** You want 3D animated characters that talk, and Pixar-style animated stories, made entirely on your PC; talking characters first. The reference PC has an RTX 3070 (8 GB) and 16 GB of RAM. The stable-diffusion.cpp release Rec-It already installs for AI pictures (ADR-047) runs **Wan 2.2 S2V**: one picture plus a speech recording becomes a clip of that character speaking, with lip sync. It also runs Wan's picture-to-video models, which the Pixar-style story will use later.
+
+**Decisions.**
+- **Same engine, a second download.** Talking characters reuse sd-cli; the "animation engine" install adds about 17 GB (checked against Hugging Face's published SHA-256, as before):
+  - `Wan2.2-S2V-14B-Q3_K_S.gguf` (QuantStack, 10.7 GB): the smallest usable size of the 14B model (Q2_K saves only 1.2 GB and loses quality);
+  - `umt5-xxl-encoder-Q5_K_M.gguf` (city96): the uploader recommends Q5_K_M or larger;
+  - `wav2vec2_large_english_fp16.safetensors` (audio encoder) and `wan_2.1_vae.safetensors` (Comfy-Org);
+  - the 4-step lightning LoRA, low-noise variant `wan2.2_t2v_lightx2v_4steps_lora_v1.1_low_noise.safetensors` (Comfy-Org); the high-noise one breaks S2V.
+- **Settings for 8 GB and 16 GB:** 480×832 (9:16), 4 steps, CFG 1, euler, flow shift 3, VAE tiling, and the memory settings from ADR-047 (auto-fit over VRAM, RAM and disk; `--mmap`; 0.5 GB of VRAM kept free). One generation is at most one S2V chunk: 81 frames at the model's fixed 16 fps (about 5 s). Frames are 4n+1, from 17, to cover the line.
+- **Consistent characters come from one picture.** The character is drawn once by Z-Image Turbo with a Pixar-style prompt (waist-up, facing the camera, mouth closed, simple background) and that picture drives every shot of them, so the face and outfit stay the same between shots.
+- **First deliverable: a test shot.** Make a Short → **Talking characters** → *Test one shot*: a character description, a line (up to about 5 s, 14 words) and a voice. Rec-It records the line (Kokoro), frees the GPU from Ollama, draws the character, animates it with step-by-step progress and elapsed time, imports the clip (MJPEG .avi, no sound), the line and the picture, and builds a 9:16 sequence. The result reports the time taken, which decides how long Shorts are planned. Full talking-character Shorts (several characters, a line per shot, AI-written dialogue) follow once speed and quality are known.
+- **Shared code.** `images.run_engine` (sd-cli runner: progress bars parsed into steps, readable errors, `last-error.log`) and `images.engine_plan`/`run_downloads` serve both engines; backend `EngineInstall` tracks status and installs for both. New channels `animation.status`, `animation.install`, `animation.cancelInstall`, `animation.changed`, `templates.talkTest`; template jobs gain kind `talk-test`.
+- **Tests.** `RECIT_FAKE_TALK=1` makes a still MJPEG clip from the picture with FFmpeg. pytest: frame counts, and a stand-in sd-cli checking the full command line and step progress. Unit: the shot sequence. Integration: the whole job through the real sidecar. End to end: the form, the job and the result.
+
+**Not tested here:** the real models (no GPU or Hugging Face in the cloud sandbox). The first real run is on the reference PC. With 16 GB of RAM the 14B model is at the edge of what fits; expect several minutes per 5-second shot. If it is too slow, the fallbacks are Q2_K, shorter or smaller shots, or more RAM.
+
