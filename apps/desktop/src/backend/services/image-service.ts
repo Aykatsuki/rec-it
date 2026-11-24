@@ -47,6 +47,9 @@ export class ImageService {
     o: {
       outDir: string;
       seed: number;
+      /** Picture size; the engine's default is 576×1024. */
+      width?: number;
+      height?: number;
       signal?: AbortSignal;
       onProgress?: (p: number, message?: string) => void;
     },
@@ -57,7 +60,13 @@ export class ImageService {
     this.d.sidecar.start();
     const r = await this.d.sidecar.job<{ images: string[] }>(
       'images',
-      { prompts, outDir: o.outDir, seed: o.seed, modelsDir: this.d.modelsDir },
+      {
+        prompts,
+        outDir: o.outDir,
+        seed: o.seed,
+        modelsDir: this.d.modelsDir,
+        ...(o.width && o.height ? { width: o.width, height: o.height } : {}),
+      },
       {
         ...(o.signal ? { signal: o.signal } : {}),
         ...(o.onProgress ? { onProgress: o.onProgress } : {}),

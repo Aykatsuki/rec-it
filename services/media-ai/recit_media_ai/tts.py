@@ -228,19 +228,34 @@ def _fake_segment(text: str, speed: float) -> tuple[list[float], list[dict]]:
     return audio, out
 
 
+def fake_sounds(words: list[dict]) -> list[dict]:
+    """Per-sound timings for the fake voice: each word's letters spread evenly over it."""
+    out: list[dict] = []
+    for w in words:
+        letters = [c for c in str(w["text"]).lower() if c.isalpha()] or ["a"]
+        step = (w["end"] - w["start"]) / len(letters)
+        for i, c in enumerate(letters):
+            out.append({"p": c, "start": w["start"] + i * step, "end": w["start"] + (i + 1) * step})
+        out.append({"p": " ", "start": w["end"], "end": w["end"]})
+    return out
+
+
 def lang_of(voice: str) -> str:
     """British voices (bf_, bm_) read with British pronunciation; the rest as American English."""
     return "en-gb" if voice.startswith("b") else "en-us"
 
 
-def _segment(engine: Any, text: str, voice: str, speed: float) -> tuple[Any, list[dict]]:
+def _segment(
+    engine: Any, text: str, voice: str, speed: float
+) -> tuple[Any, list[dict], list[dict]]:
     words = split_words(text)
     lang = lang_of(voice)
     audio, sr, timings = engine.create_timed(" ".join(words), voice=voice, speed=speed, lang=lang)
     assert sr == SAMPLE_RATE
     # How many spoken words each written word becomes, from phonemising it alone.
     counts = [spoken_count(engine.tokenizer.phonemize(w, lang)) for w in words]
-    return audio, align(words, spoken_spans(timings), counts)
+    sounds = [{"p": t.phoneme, "start": t.start, "end": t.end} for t in timings]
+    return audio, align(words, spoken_spans(timings), counts), sounds
 
 
 def run(
@@ -265,8 +280,9 @@ def run(
         text = str(seg["text"]).strip()
         if fake:
             audio, words = _fake_segment(text, speed)
+            sounds = fake_sounds(words)
         else:
-            audio, words = _segment(engine, text, voice, speed)
+            audio, words, sounds = _segment(engine, text, voice, speed)
         dur = len(audio) / SAMPLE_RATE
         result.append(
             {
@@ -280,6 +296,15 @@ def run(
                         "end": round(t + w["end"], 3),
                     }
                     for w in words
+                ],
+                # Per-sound timings (IPA symbols) for mouth shapes (ADR-049).
+                "sounds": [
+                    {
+                        "p": snd["p"],
+                        "start": round(t + snd["start"], 3),
+                        "end": round(t + snd["end"], 3),
+                    }
+                    for snd in sounds
                 ],
             }
         )

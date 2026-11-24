@@ -530,6 +530,25 @@ export function talkingShot(input: TalkingShotInput): Command {
         muted: true,
         transform: { fit: 'fill' },
       },
+      // A slow push in keeps a held shot alive (keyframes, so it stays editable).
+      {
+        type: 'keyframe.set',
+        sequenceId: sid,
+        itemId: ids.video,
+        property: 'scale',
+        t: 0,
+        value: 1,
+        easing: 'linear',
+      },
+      {
+        type: 'keyframe.set',
+        sequenceId: sid,
+        itemId: ids.video,
+        property: 'scale',
+        t: f(Math.max(0.05, input.video.duration - 0.04)),
+        value: 1.05,
+        easing: 'linear',
+      },
       {
         type: 'item.add',
         sequenceId: sid,

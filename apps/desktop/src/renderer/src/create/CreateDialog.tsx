@@ -49,7 +49,7 @@ const TEMPLATES: {
   {
     id: 'characters',
     title: 'Talking characters',
-    text: 'Pixar-style 3D characters that say your lines, animated on this PC. Start with a test shot.',
+    text: 'Pixar-style 3D characters that say your lines, lip-synced on this PC. Start with a test shot.',
     icon: <Clapperboard size={18} />,
     ready: true,
   },
@@ -648,7 +648,7 @@ function PictureEngine() {
   );
 }
 
-/** Status and install button for the talking-character engine (about 17 GB; ADR-048). */
+/** Status and install button for the mouth-shape engine (about 5.5 GB; ADR-049). */
 function AnimationEngine() {
   const status = useApp((s) => s.animation);
   return (
@@ -656,8 +656,8 @@ function AnimationEngine() {
       status={status}
       testId="animation-engine"
       what="Talking characters"
-      engine="the animation engine: Wan 2.2 S2V, run on your graphics card and memory (about 17 GB, downloaded once)"
-      button="Install animation engine"
+      engine="the mouth-shape engine: FLUX.2 Klein, run on your graphics card (about 5.5 GB, downloaded once)"
+      button="Install mouth-shape engine"
       install={() => void backend.invoke('animation.install', {})}
       cancel={() => void backend.invoke('animation.cancelInstall', {})}
     />
@@ -741,7 +741,7 @@ function CharactersForm({ onDone }: { onDone: () => void }) {
   const words = line.trim().split(/\s+/).filter(Boolean).length;
   const ready =
     voiceStatus?.available === true && !!imageStatus?.available && !!animationStatus?.available;
-  const canStart = ready && character.trim().length >= 3 && words > 0 && words <= 14 && !running;
+  const canStart = ready && character.trim().length >= 3 && words > 0 && words <= 80 && !running;
 
   const start = async () => {
     setError(null);
@@ -764,8 +764,9 @@ function CharactersForm({ onDone }: { onDone: () => void }) {
       <section className="create__section">
         <h3>Test one shot</h3>
         <p className="create__hint">
-          One character says one line (up to about 5 seconds). This shows how long a shot takes on
-          your PC and how it looks, before full talking-character Shorts.
+          One character says one line. Rec-It draws the character and its mouth shapes, then moves
+          the mouth in time with every sound of the voice. This shows how it looks on your PC before
+          full talking-character Shorts.
         </p>
         {!imageStatus?.available && <PictureEngine />}
         {!animationStatus?.available && <AnimationEngine />}
@@ -779,7 +780,7 @@ function CharactersForm({ onDone }: { onDone: () => void }) {
           />
         </label>
         <label>
-          Line ({words} of 14 words)
+          Line ({words} of 80 words)
           <TextField
             value={line}
             onChange={(e) => setLine(e.target.value)}
@@ -822,7 +823,7 @@ function CharactersForm({ onDone }: { onDone: () => void }) {
       )}
       <footer className="create__footer">
         <small>
-          The first shot is slow while the engine loads; on an 8 GB card expect several minutes.
+          Drawing a character and its mouth shapes takes a few minutes; saying lines is quick.
         </small>
         <Button type="submit" variant="primary" disabled={!canStart} data-testid="talk-create">
           {running ? 'Animating…' : 'Test one shot'}

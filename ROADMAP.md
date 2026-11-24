@@ -285,7 +285,7 @@ Next:
 
 **Progress (24 Nov 2026).** Slice B (ADR-047): generated visuals. The AI storyboards the script into scenes. Each scene gets an AI picture (Z-Image Turbo via stable-diffusion.cpp on your GPU, installed once) or a motion-graphics backdrop, animated with zooms, pans and dissolves to the voice. Topic and facts scripts are supported too.
 
-**Progress (24 Nov 2026).** Slice C, first part (ADR-048): talking characters. Wan 2.2 S2V on the same engine animates a Pixar-style character picture saying a line, with lip sync, all on your PC. First comes a **test shot** in Make a Short, to measure speed and quality on the reference PC.
+**Progress (24 Nov 2026).** Slice C, first part (ADR-048, ADR-049): talking characters, starting with a **test shot** in Make a Short. Wan 2.2 S2V (ADR-048) proved soft with poor lip sync at the speeds this PC allows, so characters now talk by mouth shapes (ADR-049): the character is drawn once, FLUX.2 Klein draws its mouth shapes and a blink, and the voice's per-sound timings switch between them. Lip sync is exact and the picture stays sharp.
 
 Next:
 - Talking-character Shorts: AI-written dialogue, several characters (one picture each), a shot per line, captions; then Pixar-style animated stories (scenes animated with Wan picture-to-video, speaking scenes with S2V).

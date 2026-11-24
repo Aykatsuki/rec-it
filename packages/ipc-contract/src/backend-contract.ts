@@ -197,7 +197,7 @@ export const backendContract = defineContract({
     'images.install': { input: empty, output: ok },
     'images.cancelInstall': { input: empty, output: ok },
     'animation.status': { input: empty, output: imageStatusSchema },
-    /** Downloads the talking-character models (about 17 GB), once. */
+    /** Downloads the mouth-shape engine for talking characters (about 5.5 GB), once. */
     'animation.install': { input: empty, output: ok },
     'animation.cancelInstall': { input: empty, output: ok },
     'templates.jobs': { input: empty, output: z.array(templateJobSchema) },

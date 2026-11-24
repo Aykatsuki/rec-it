@@ -267,7 +267,7 @@ def generate(
         out = out_dir / f"scene-{i + 1}.png"
         progress(i / len(prompts), f"Drawing picture {i + 1} of {len(prompts)}…")
         if _fake():
-            _gradient_png(str(out), prompt, 64, 112)
+            _gradient_png(str(out), prompt, max(64, width // 4), max(112, height // 4))
         else:
             _run_sd(models_dir, prompt, out, seed + i, width, height, cancelled)
         outputs.append(str(out))

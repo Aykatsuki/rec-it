@@ -50,7 +50,7 @@ export const imageStatusSchema = z.object({
   }),
 });
 export type ImageStatus = z.output<typeof imageStatusSchema>;
-/** The animation engine for talking characters (Wan 2.2 S2V; ADR-048): same shape. */
+/** The mouth-shape engine for talking characters (FLUX.2 Klein; ADR-049): same shape. */
 export type AnimationStatus = ImageStatus;
 
 export const storyTextSchema = z.object({
@@ -107,15 +107,15 @@ export const storyShortSchema = z
 export type StoryShortInput = z.input<typeof storyShortSchema>;
 
 /**
- * One talking-character shot (ADR-048): a Pixar-style picture of the character, the line in an
- * AI voice, and the engine animating the character saying it. Builds a short test sequence.
+ * One talking-character shot (ADR-048/049): a Pixar-style picture of the character, its mouth
+ * shapes, and the line in an AI voice with the mouth in time. Builds a short test sequence.
  */
 export const talkTestSchema = z
   .object({
     /** Who is talking, e.g. "a cheerful orange fox in a green scarf". */
     character: z.string().trim().min(3).max(300),
-    /** What they say; one shot holds about 5 seconds of speech. */
-    line: z.string().trim().min(1).max(200),
+    /** What they say. */
+    line: z.string().trim().min(1).max(600),
     voice: z.string().regex(/^[a-z]{2}_[a-z]+$/),
   })
   .strict();

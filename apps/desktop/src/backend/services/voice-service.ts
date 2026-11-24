@@ -12,6 +12,8 @@ export interface SpokenSegment {
   start: number;
   end: number;
   words: { text: string; start: number; end: number }[];
+  /** Per-sound timings (IPA symbols), for mouth shapes (ADR-049). */
+  sounds?: { p: string; start: number; end: number }[];
 }
 
 export interface VoiceDeps {

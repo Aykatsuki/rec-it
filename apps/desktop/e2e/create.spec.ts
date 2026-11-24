@@ -195,7 +195,7 @@ test.describe('create a Short', () => {
       RECIT_DISABLE_SIDECAR: '0',
       RECIT_FAKE_TTS: '1',
       RECIT_FAKE_IMAGES: '1',
-      RECIT_FAKE_TALK: '1',
+      RECIT_FAKE_LIPSYNC: '1',
     });
     try {
       await createProject(page, 'Characters');

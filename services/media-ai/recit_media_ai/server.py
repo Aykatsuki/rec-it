@@ -4,7 +4,7 @@ import platform
 import time
 from typing import Any
 
-from . import __version__, card, faces, images, talking, transcribe, tts
+from . import __version__, card, faces, images, lipsync, talking, transcribe, tts
 from .rpc import INVALID_PARAMS, RpcError, Server, log
 from .system import cuda_status, query_gpus
 
@@ -139,6 +139,49 @@ def talk_job(params: dict[str, Any], progress: Any, cancelled: Any) -> dict[str,
         raise RpcError(-32800, "Cancelled") from e
 
 
+def lipsync_status(params: dict[str, Any]) -> dict[str, Any]:
+    if not isinstance(params.get("modelsDir"), str):
+        raise RpcError(INVALID_PARAMS, "modelsDir must be a folder")
+    return lipsync.status(params["modelsDir"])
+
+
+def lipsync_install_job(params: dict[str, Any], progress: Any, cancelled: Any) -> dict[str, Any]:
+    if not isinstance(params.get("modelsDir"), str):
+        raise RpcError(INVALID_PARAMS, "modelsDir must be a folder")
+    try:
+        return lipsync.install(params, progress, cancelled)
+    except lipsync.Cancelled as e:
+        raise RpcError(-32800, "Cancelled") from e
+
+
+def lipsync_shapes_job(params: dict[str, Any], progress: Any, cancelled: Any) -> dict[str, Any]:
+    for key in ("modelsDir", "base", "outDir"):
+        if not isinstance(params.get(key), str):
+            raise RpcError(INVALID_PARAMS, f"{key} must be a path")
+    if not lipsync.status(params["modelsDir"])["available"]:
+        raise RpcError(-32001, "The mouth-shape engine is not installed")
+    try:
+        return lipsync.make_shapes(params, progress, cancelled)
+    except lipsync.Cancelled as e:
+        raise RpcError(-32800, "Cancelled") from e
+
+
+def lipsync_render_job(params: dict[str, Any], progress: Any, cancelled: Any) -> dict[str, Any]:
+    if not isinstance(params.get("shapes"), dict) or "rest" not in params["shapes"]:
+        raise RpcError(INVALID_PARAMS, "shapes must include rest")
+    if not isinstance(params.get("sounds"), list):
+        raise RpcError(INVALID_PARAMS, "sounds must be a list")
+    for key in ("out", "ffmpeg"):
+        if not isinstance(params.get(key), str):
+            raise RpcError(INVALID_PARAMS, f"{key} must be a path")
+    if not isinstance(params.get("duration"), (int, float)) or params["duration"] <= 0:
+        raise RpcError(INVALID_PARAMS, "duration must be positive")
+    try:
+        return lipsync.render(params, progress, cancelled)
+    except lipsync.Cancelled as e:
+        raise RpcError(-32800, "Cancelled") from e
+
+
 def backgrounds_render(params: dict[str, Any]) -> dict[str, Any]:
     items = params.get("items")
     if not isinstance(items, list) or not items:
@@ -163,6 +206,7 @@ HANDLERS = {
     "card.render": card_render,
     "images.status": images_status,
     "talking.status": talking_status,
+    "lipsync.status": lipsync_status,
     "backgrounds.render": backgrounds_render,
 }
 
@@ -179,6 +223,9 @@ def main() -> int:
             "images.install": images_install_job,
             "talking.install": talking_install_job,
             "talk": talk_job,
+            "lipsync.install": lipsync_install_job,
+            "lipsync.shapes": lipsync_shapes_job,
+            "lipsync.render": lipsync_render_job,
         },
     ).serve()
     log("stdin closed, exiting")

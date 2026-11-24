@@ -850,7 +850,7 @@ Each record states the decision, why it was made and what else was considered. R
 
 ## ADR-048 · Talking characters: Wan 2.2 S2V on the same engine, starting with a test shot
 
-**Status:** Accepted (24 Nov 2026, Phase 8 third slice, first part).
+**Status:** Accepted (24 Nov 2026, Phase 8 third slice, first part). The test shot now uses mouth shapes (ADR-049); S2V stays in the sidecar (`talking.py`) for a later slow, high-quality option.
 
 **Context.** You want 3D animated characters that talk, and Pixar-style animated stories, made entirely on your PC; talking characters first. The reference PC has an RTX 3070 (8 GB) and 16 GB of RAM. The stable-diffusion.cpp release Rec-It already installs for AI pictures (ADR-047) runs **Wan 2.2 S2V**: one picture plus a speech recording becomes a clip of that character speaking, with lip sync. It also runs Wan's picture-to-video models, which the Pixar-style story will use later.
 
@@ -869,4 +869,20 @@ Each record states the decision, why it was made and what else was considered. R
 - **Tests.** `RECIT_FAKE_TALK=1` makes a still MJPEG clip from the picture with FFmpeg. pytest: frame counts, and a stand-in sd-cli checking the full command line and step progress. Unit: the shot sequence. Integration: the whole job through the real sidecar. End to end: the form, the job and the result.
 
 **Not tested here:** the real models (no GPU or Hugging Face in the cloud sandbox). The first real run is on the reference PC. With 16 GB of RAM the 14B model is at the edge of what fits; expect several minutes per 5-second shot. If it is too slow, the fallbacks are Q2_K, shorter or smaller shots, or more RAM.
+
+## ADR-049 · Talking characters by mouth shapes timed to the voice
+
+**Status:** Accepted (24 Nov 2026, Phase 8 third slice).
+
+**Context.** The S2V test shots on the reference PC (ADR-048) were soft (448×784 at most, stretched to 1080×1920) and their lip sync was poor. Frame-by-frame measurement against the voice found only a weak match, with the best offset differing between shots and the mouth opening after the line ended. ComfyUI's S2V guide explains why: the 4-step Lightning LoRA was not trained for S2V, many of its keys do not match, and it costs a lot of motion and quality; the remedy is 20 steps at CFG 6, roughly ten times the work (about an hour per 3-second shot on this PC). Dedicated lip-sync models are either light but soft and hard to install on Windows (MuseTalk) or need about 18 GB of VRAM (LatentSync 1.6). You chose mouth shapes.
+
+**Decisions.**
+- **The character is drawn once** by Z-Image Turbo at 768×1344, mouth closed, Pixar-style prompt.
+- **Mouth shapes by editing that picture.** FLUX.2 Klein 4B (distilled, 4 steps, CFG 1), run by the same sd-cli with `-r`, redraws it as: open ("ah"), mid ("uh"), wide ("ee", teeth), round ("oo"), f/v (teeth on lip), and eyes closed (blink). Models (about 5.5 GB, Apache-2.0, ungated): `flux-2-klein-4b-Q4_K_M.gguf` (unsloth; known to run on stable-diffusion.cpp), `Qwen3-4B-Q4_K_M.gguf` (unsloth) and `flux2-vae.safetensors` (Comfy-Org).
+- **Only the change is kept (`cut_out`).** Each edit is compared with the original at quarter size, the overall drift (median) is removed, and a size-scaled blur fades thin redrawn outlines. The changed region containing the strongest change is the mouth (for the blink, every region with at least a third of its strength, so both eyes). A feathered ellipse around it, generous sideways so the old mouth's corners are covered, blends the edit onto the original. Everything else stays pixel-identical, so shapes switch without flicker. A large or tall change means the model redrew the character: that shape is skipped and its neighbour used (open/wide/round/fv → mid → closed). Checked on a real hard case: a drifting frame whose glasses were doubled and blurred gave a clean open mouth on the sharp original.
+- **The voice drives the mouth.** Kokoro's per-sound timings (IPA symbols) are now returned with each voice segment (`sounds`). `timeline`: stress marks belong to the next sound and length marks to the previous one; word gaps under 0.12 s keep the shape, while longer gaps and punctuation close the lips. The mouth leads the sound by 30 ms. Nothing lasts under two frames: subtle shapes fold into a neighbour, and distinctive ones (closed lips, f/v, round) borrow time so they are never lost.
+- **Rendering** is an FFmpeg concat list of the shape pictures with frame-quantised durations, with blinks every 2.5–5 s (0.13 s each), as 30 fps H.264 (CRF 16, no sound). A 1→1.05 push-in keyframe keeps the shot alive and editable. Lines can be up to 80 words; no length limit applies as it did with S2V's 5 s.
+- **Tests.** `RECIT_FAKE_LIPSYNC=1` draws mouths and closed eyes as dark shapes plus an overall tint; the cut-out and FFmpeg render run for real. pytest: the shape timeline on real Kokoro timings ("five" opens; its f shows teeth on lip; "p" closes; pauses close), symbol mapping, the cut-out (only the mouth changes; a moved picture is refused), and a rendered clip checked frame by frame (open mouth on "five", closed on "p", short blinks). Integration and end to end as before.
+
+**Not tested here:** the real Klein edits (no GPU or Hugging Face access in the sandbox). The result message reports how many of the six shapes were drawn, so a model that redraws too much shows up at once.
 

@@ -1,5 +1,6 @@
-// Talking characters (ADR-048): Wan 2.2 S2V through the sidecar's stable-diffusion.cpp engine.
-// A character picture plus a spoken line becomes a short clip of the character saying it.
+// Talking characters by mouth shapes (ADR-049): FLUX.2 Klein redraws a character's picture with
+// each mouth shape (and eyes closed), and the voice's per-sound timings switch between them.
+// Both steps run in the sidecar (stable-diffusion.cpp for the drawing, FFmpeg for the clip).
 import type { AnimationStatus } from '@rec-it/ipc-contract';
 import { EngineInstall } from './engine-install';
 import type { SidecarClient } from './sidecar';
@@ -7,19 +8,17 @@ import type { SidecarClient } from './sidecar';
 export interface AnimationDeps {
   sidecar: SidecarClient | null;
   modelsDir: string;
-  /** FFmpeg, for the test stand-in engine (RECIT_FAKE_TALK). */
   ffmpeg: () => Promise<string>;
   onChange: (status: AnimationStatus) => void;
 }
 
-export interface TalkResult {
-  /** The clip (.avi, 16 fps, no sound: the voice stays its own clip). */
-  video: string;
-  frames: number;
-  seconds: number;
-  /** The size it was animated at: the largest that fits the graphics card (ADR-048). */
-  width: number;
-  height: number;
+/** Shape name → picture path ("rest" is the original picture, lips closed). */
+export type MouthShapes = Record<string, string>;
+
+export interface Sound {
+  p: string;
+  start: number;
+  end: number;
 }
 
 export class AnimationService {
@@ -29,8 +28,8 @@ export class AnimationService {
     this.engine = new EngineInstall({
       sidecar: d.sidecar,
       modelsDir: d.modelsDir,
-      statusMethod: 'talking.status',
-      installJob: 'talking.install',
+      statusMethod: 'lipsync.status',
+      installJob: 'lipsync.install',
       what: 'talking characters',
       onChange: d.onChange,
     });
@@ -52,37 +51,53 @@ export class AnimationService {
     this.engine.cancel();
   }
 
-  /** Animates `image` saying the line in `audio` (`seconds` long; one shot holds about 5 s). */
-  async talk(o: {
-    image: string;
-    audio: string;
-    out: string;
-    seconds: number;
-    prompt: string;
+  private sidecar(): SidecarClient {
+    if (!this.d.sidecar)
+      throw new Error('Talking characters need the media-ai helper, which is off.');
+    this.d.sidecar.start();
+    return this.d.sidecar;
+  }
+
+  /** Draws the mouth shapes and the blink for a character picture (once per character). */
+  async shapes(o: {
+    base: string;
+    outDir: string;
     seed: number;
     signal?: AbortSignal;
     onProgress?: (p: number, message?: string) => void;
-  }): Promise<TalkResult> {
-    if (!this.d.sidecar)
-      throw new Error('Talking characters need the media-ai helper, which is off.');
-    if (!this.engine.available()) throw new Error('Install the animation engine first.');
-    this.d.sidecar.start();
-    return this.d.sidecar.job<TalkResult>(
-      'talk',
-      {
-        modelsDir: this.d.modelsDir,
-        image: o.image,
-        audio: o.audio,
-        out: o.out,
-        seconds: o.seconds,
-        prompt: o.prompt,
-        seed: o.seed,
-        ffmpeg: await this.d.ffmpeg(),
-      },
+  }): Promise<MouthShapes> {
+    if (!this.engine.available()) throw new Error('Install the mouth-shape engine first.');
+    const r = await this.sidecar().job<{ shapes: MouthShapes }>(
+      'lipsync.shapes',
+      { base: o.base, outDir: o.outDir, seed: o.seed, modelsDir: this.d.modelsDir },
       {
         ...(o.signal ? { signal: o.signal } : {}),
         ...(o.onProgress ? { onProgress: o.onProgress } : {}),
       },
+    );
+    return r.shapes;
+  }
+
+  /** Renders the character saying a line: an MP4 (30 fps, no sound) of the shapes in time. */
+  async render(o: {
+    shapes: MouthShapes;
+    sounds: Sound[];
+    duration: number;
+    out: string;
+    seed: number;
+    signal?: AbortSignal;
+  }): Promise<{ video: string; seconds: number }> {
+    return this.sidecar().job<{ video: string; seconds: number }>(
+      'lipsync.render',
+      {
+        shapes: o.shapes,
+        sounds: o.sounds,
+        duration: o.duration,
+        out: o.out,
+        seed: o.seed,
+        ffmpeg: await this.d.ffmpeg(),
+      },
+      o.signal ? { signal: o.signal } : {},
     );
   }
 }

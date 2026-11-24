@@ -1,7 +1,7 @@
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdtempSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, readdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { FLICKS_PER_SECOND } from '@rec-it/core';
 import { findTestFfmpeg, makeFixtures, type Fixtures } from '@rec-it/ffmpeg/testing';
@@ -42,7 +42,7 @@ describe.skipIf(!bins || !hasUv)('story template (backend, real sidecar, fake vo
   beforeAll(async () => {
     process.env.RECIT_FAKE_TTS = '1';
     process.env.RECIT_FAKE_IMAGES = '1';
-    process.env.RECIT_FAKE_TALK = '1';
+    process.env.RECIT_FAKE_LIPSYNC = '1';
     dir = mkdtempSync(join(tmpdir(), 'recit-tpl-'));
     fx = makeFixtures(bins!.ffmpeg, { longSeconds: 4 });
     app = new BackendApp({
@@ -77,7 +77,7 @@ describe.skipIf(!bins || !hasUv)('story template (backend, real sidecar, fake vo
     await app?.dispose();
     delete process.env.RECIT_FAKE_TTS;
     delete process.env.RECIT_FAKE_IMAGES;
-    delete process.env.RECIT_FAKE_TALK;
+    delete process.env.RECIT_FAKE_LIPSYNC;
     rmSync(dir, { recursive: true, force: true, maxRetries: 3 });
     rmSync(fx.dir, { recursive: true, force: true, maxRetries: 3 });
   });
@@ -227,23 +227,26 @@ describe.skipIf(!bins || !hasUv)('story template (backend, real sidecar, fake vo
     }, 120_000);
     expect(job.error).toBeUndefined();
     expect(job.kind).toBe('talk-test');
-    expect(job.stage).toMatch(/^Done in .+ to animate\.$/);
+    expect(job.stage).toMatch(/^Done in .+; the mouth shapes took .+ \(\d of 6 drawn\)\.$/);
     const { doc } = app.projects.document().state();
     const seq = doc.sequences.find((s) => s.id === job.sequenceId)!;
     const track = (name: string) => seq.tracks.find((t) => t.name === name)!.items;
     const clip = app.projects.media().get(track('V1')[0]!.assetId);
     expect(clip.kind).toBe('video');
-    expect(clip.originalPath).toMatch(/talking .+\.avi$/);
-    expect([clip.probe?.video?.width, clip.probe?.video?.height]).toEqual([480, 832]);
+    expect(clip.originalPath).toMatch(/talking .+\.mp4$/);
+    expect(clip.probe?.audioStreamCount).toBe(0);
     expect(app.projects.media().get(track('A1')[0]!.assetId).kind).toBe('audio');
-    // Like sd-cli, the clip carries the voice too; it is muted so the line is heard once.
-    expect(clip.probe?.audioStreamCount).toBe(1);
-    expect(track('V1')[0]!.muted).toBe(true);
-    // The clip covers the whole line, rounded up to whole latent frames (4n+1 at 16 fps).
-    const clipSec = sec(track('V1')[0]!.duration);
-    const lineSec = sec(track('A1')[0]!.duration);
-    expect(clipSec).toBeGreaterThanOrEqual(lineSec - 0.05);
-    expect(clipSec - lineSec).toBeLessThan(0.35);
+    // The clip lasts exactly as long as the line, and the mouth shapes were drawn next to the
+    // character picture.
+    expect(sec(track('V1')[0]!.duration)).toBeCloseTo(sec(track('A1')[0]!.duration), 1);
+    const shapesDir = join(
+      dirname(clip.originalPath),
+      readdirSync(dirname(clip.originalPath)).find((n) => n.startsWith('character '))!,
+      'shapes',
+    );
+    expect(readdirSync(shapesDir).filter((n) => n.endsWith('.png')).length).toBeGreaterThanOrEqual(
+      4,
+    );
   }, 180_000);
 
   it('previews a voice as WAV', async () => {

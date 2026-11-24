@@ -17,7 +17,6 @@ import {
   splitSentences,
   storyShort,
   characterPrompt,
-  talkingPrompt,
   talkingShot,
   type Scene,
 } from '@rec-it/templates';
@@ -304,7 +303,7 @@ export class TemplateService {
     if (!this.d.projects.info()) throw new Error('Open or create a project first.');
     if (!this.d.images.status().available) throw new Error('Install the AI picture engine first.');
     if (!this.d.animation.status().available)
-      throw new Error('Install the animation engine first.');
+      throw new Error('Install the mouth-shape engine first.');
     const id = createId('tpl');
     this.jobs = [
       ...this.jobs.filter((j) => j.state === 'running'),
@@ -341,7 +340,7 @@ export class TemplateService {
       const line = speakable(input.line);
       if (!line) throw new Error('The line needs some words.');
 
-      // 1. The voice first: its length decides the clip's length.
+      // 1. The voice, with a time for every sound: it drives the mouth.
       this.update(id, { stage: 'Recording the line…', progress: 0.02 });
       const voicePath = join(folder, `line ${stamp}.wav`);
       const spoken = await this.d.voice.speak([{ id: 'line', text: line }], {
@@ -351,44 +350,54 @@ export class TemplateService {
         signal,
       });
       check();
-      if (spoken.duration > 5.2)
-        throw new Error('One shot holds about 5 seconds of speech; shorten the line.');
+      const sounds = spoken.segments.flatMap((s) => s.sounds ?? []);
 
-      // 2. The character's picture (frees the GPU from Ollama first).
-      this.update(id, { stage: 'Freeing the graphics card…', progress: 0.06 });
+      // 2. The character, mouth closed (frees the GPU from Ollama first).
+      this.update(id, { stage: 'Freeing the graphics card…', progress: 0.05 });
       await this.d.releaseGpu?.().catch(() => undefined);
       check();
       const seed = Math.floor(Math.random() * 1_000_000);
+      const charDir = join(folder, `character ${stamp}`);
       const [picture] = await this.d.images.generate([characterPrompt(input.character)], {
-        outDir: join(folder, `character ${stamp}`),
+        outDir: charDir,
         seed,
+        ...CHARACTER_SIZE,
         signal,
         onProgress: (p) =>
-          this.update(id, { stage: 'Drawing the character…', progress: 0.08 + 0.1 * p }),
+          this.update(id, { stage: 'Drawing the character…', progress: 0.06 + 0.12 * p }),
       });
       check();
 
-      // 3. The animation: the slow part.
-      const animStart = Date.now();
-      const clip = await this.d.animation.talk({
-        image: picture!,
-        audio: voicePath,
-        out: join(folder, `talking ${stamp}.avi`),
-        seconds: spoken.duration,
-        prompt: talkingPrompt(input.character),
+      // 3. Its mouth shapes and blink (the slow part, once per character).
+      const shapesStart = Date.now();
+      const shapes = await this.d.animation.shapes({
+        base: picture!,
+        outDir: join(charDir, 'shapes'),
         seed,
         signal,
         onProgress: (p, message) =>
           this.update(id, {
-            progress: 0.2 + 0.7 * p,
-            ...(message ? { stage: `${message} ${elapsed(animStart)}` } : {}),
+            progress: 0.18 + 0.62 * p,
+            ...(message ? { stage: `${message} ${elapsed(shapesStart)}` } : {}),
           }),
       });
-      const animSeconds = (Date.now() - animStart) / 1000;
+      const shapesSeconds = (Date.now() - shapesStart) / 1000;
       check();
 
-      // 4. Import and build a small sequence.
-      this.update(id, { stage: 'Adding the shot to the project…', progress: 0.92 });
+      // 4. The mouth in time with the voice.
+      this.update(id, { stage: 'Animating the mouth…', progress: 0.82 });
+      const clip = await this.d.animation.render({
+        shapes,
+        sounds,
+        duration: spoken.duration,
+        out: join(folder, `talking ${stamp}.mp4`),
+        seed,
+        signal,
+      });
+      check();
+
+      // 5. Import and build a small sequence.
+      this.update(id, { stage: 'Adding the shot to the project…', progress: 0.9 });
       const paths = [clip.video, voicePath, picture!];
       const existing = await Promise.all(paths.map((p) => media().findSame(p)));
       const fresh = paths.filter((_, i) => !existing[i]);
@@ -396,7 +405,7 @@ export class TemplateService {
         ? await media().import(fresh, {
             source: 'made-in-rec-it',
             notes:
-              'Talking character made by Rec-It: picture (Z-Image Turbo), voice (Kokoro-82M), animation (Wan 2.2 S2V).',
+              'Talking character made by Rec-It: picture (Z-Image Turbo), mouth shapes (FLUX.2 Klein), voice (Kokoro-82M).',
             userAttested: true,
           })
         : { imported: [], skipped: [] };
@@ -422,9 +431,10 @@ export class TemplateService {
           ids: { video: createId('item'), voice: createId('item') },
         }),
       );
+      const drawn = Object.keys(shapes).filter((k) => k !== 'rest' && shapes[k] !== shapes.rest);
       this.update(id, {
         state: 'done',
-        stage: `Done in ${duration((Date.now() - started) / 1000)}; the ${clip.seconds.toFixed(1)} s clip (${clip.width}×${clip.height}) took ${duration(animSeconds)} to animate.`,
+        stage: `Done in ${duration((Date.now() - started) / 1000)}; the mouth shapes took ${duration(shapesSeconds)} (${new Set(drawn.map((k) => shapes[k])).size} of 6 drawn).`,
         progress: 1,
         sequenceId,
       });
@@ -478,6 +488,9 @@ export class TemplateService {
     }
   }
 }
+
+/** Characters are drawn larger than scene pictures: they fill the frame and must stay sharp. */
+const CHARACTER_SIZE = { width: 768, height: 1344 };
 
 /** 312 → "5 min 12 s". */
 function duration(seconds: number): string {
