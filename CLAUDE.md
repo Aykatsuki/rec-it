@@ -78,6 +78,8 @@ Phases 0 (foundations) and 1 (media pipeline) are complete. Phase 3 (export, ADR
   Talking characters (ADR-049): sidecar `lipsync.py` (Klein mouth-shape edits, `cut_out`, sound→shape `timeline`, FFmpeg
   render; `RECIT_FAKE_LIPSYNC=1`), voice segments carry per-sound `sounds`; backend `animation-service.ts` + shared
   `engine-install.ts`, `TemplateService.talkTest`, templates `talkingShot`/`characterPrompt`. S2V (`talking.py`, ADR-048) is parked.
+  Human-like voice (ADR-051): sidecar `voicehq.py` (own uv env in `<models>/chatterbox`, `chatterbox_worker.py`, Whisper
+  word timing, `RECIT_FAKE_VOICEHQ=1`), voice ids `hq:builtin`/`hq:<sample>` routed by `VoiceService`, samples in `<userData>/voices`.
 - Renderer `timeline/` — Timeline, SequenceSettings, ClipInspector, ProgramMonitor, TransformOverlay, ExportDialog, CropDialog,
   `menus.tsx` (right-click menus); edits go through `edit.ts`. `ui/ContextMenu.tsx` is the generic menu.
 - `packages/db` — `node:sqlite` (ADR-020), migrations, repositories.

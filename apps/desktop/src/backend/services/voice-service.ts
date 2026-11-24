@@ -1,9 +1,11 @@
 // AI voice (Kokoro) and title cards for faceless templates (ADR-046), run by the Python sidecar.
 // The voice is an optional extra installed on request, like transcription and face detection.
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { randomBytes } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import type { VoiceStatus } from '@rec-it/ipc-contract';
+import type { ImageStatus, VoiceSample, VoiceStatus } from '@rec-it/ipc-contract';
+import { EngineInstall } from './engine-install';
 import { installExtra, type InstallState } from './extras';
 import type { SidecarClient, SidecarCommand } from './sidecar';
 
@@ -24,7 +26,15 @@ export interface VoiceDeps {
   onChange: (status: VoiceStatus) => void;
   busyElsewhere?: () => boolean;
   onEngineChanged?: () => void;
+  /** Human-like voice (ADR-051): where your voice samples live, FFmpeg, and status changes. */
+  voicesDir?: string;
+  ffmpeg?: () => Promise<string>;
+  onHumanChange?: (status: ImageStatus) => void;
+  onSamplesChange?: (samples: VoiceSample[]) => void;
 }
+
+/** "hq:builtin" / "hq:<sample id>" are human-like voices; the rest are Kokoro's. */
+export const isHumanVoice = (voice: string) => voice.startsWith('hq:');
 
 export class VoiceService {
   private available: boolean | null = null;
@@ -33,7 +43,19 @@ export class VoiceService {
   private install: InstallState = { state: 'idle' };
   private running = 0;
 
-  constructor(private readonly d: VoiceDeps) {}
+  readonly human: EngineInstall;
+
+  constructor(private readonly d: VoiceDeps) {
+    this.human = new EngineInstall({
+      sidecar: d.sidecar,
+      modelsDir: d.modelsDir,
+      statusMethod: 'voicehq.status',
+      installJob: 'voicehq.install',
+      what: 'human-like voices',
+      installParams: () => ({ uv: d.sidecarCommand?.command ?? 'uv' }),
+      onChange: (status) => d.onHumanChange?.(status),
+    });
+  }
 
   status(): VoiceStatus {
     return {
@@ -53,6 +75,7 @@ export class VoiceService {
   }
 
   async refresh(): Promise<void> {
+    void this.human.refresh();
     if (!this.d.sidecar) {
       this.available = false;
       this.blocked = 'The media-ai helper is turned off, so the AI voice is unavailable.';
@@ -113,6 +136,7 @@ export class VoiceService {
       onProgress?: (p: number, message?: string) => void;
     },
   ): Promise<{ duration: number; segments: SpokenSegment[] }> {
+    if (isHumanVoice(o.voice)) return this.speakHuman(segments, o);
     const sidecar = this.ready();
     this.running++;
     try {
@@ -134,6 +158,97 @@ export class VoiceService {
     } finally {
       this.running--;
     }
+  }
+
+  /** The human-like voice: Chatterbox Turbo, built-in or cloned from one of your samples. */
+  private async speakHuman(
+    segments: { id: string; text: string }[],
+    o: {
+      voice: string;
+      out: string;
+      signal?: AbortSignal;
+      onProgress?: (p: number, message?: string) => void;
+    },
+  ): Promise<{ duration: number; segments: SpokenSegment[] }> {
+    if (!this.d.sidecar) throw new Error('The AI voice needs the media-ai helper, which is off.');
+    if (!this.human.available())
+      throw new Error('Install the human-like voice first (Make a Short → voice).');
+    const id = o.voice.slice(3);
+    let sample: string | undefined;
+    if (id !== 'builtin') {
+      const found = (await this.samples()).find((v) => v.id === id);
+      if (!found) throw new Error('That voice sample was removed; choose another voice.');
+      sample = this.samplePath(id);
+    }
+    this.d.sidecar.start();
+    this.running++;
+    try {
+      return await this.d.sidecar.job(
+        'voicehq.speak',
+        {
+          segments,
+          out: o.out,
+          modelsDir: this.d.modelsDir,
+          gap: 0.35,
+          ...(sample ? { sample } : {}),
+        },
+        {
+          ...(o.signal ? { signal: o.signal } : {}),
+          ...(o.onProgress ? { onProgress: o.onProgress } : {}),
+        },
+      );
+    } finally {
+      this.running--;
+    }
+  }
+
+  // ---- Voice samples (ADR-051) ----------------------------------------------------------------
+
+  private samplesDir(): string {
+    if (!this.d.voicesDir) throw new Error('Voice samples are not available here.');
+    return this.d.voicesDir;
+  }
+
+  private samplePath(id: string): string {
+    return join(this.samplesDir(), `${id}.wav`);
+  }
+
+  async samples(): Promise<VoiceSample[]> {
+    try {
+      const raw = await readFile(join(this.samplesDir(), 'voices.json'), 'utf8');
+      const list = JSON.parse(raw) as VoiceSample[];
+      return Array.isArray(list) ? list : [];
+    } catch {
+      return [];
+    }
+  }
+
+  private async saveSamples(list: VoiceSample[]): Promise<void> {
+    await mkdir(this.samplesDir(), { recursive: true });
+    await writeFile(join(this.samplesDir(), 'voices.json'), JSON.stringify(list, null, 2));
+    this.d.onSamplesChange?.(list);
+  }
+
+  /** Adds a recording you have the rights to as a voice (5–15 s of clear speech is used). */
+  async addSample(path: string, name: string): Promise<VoiceSample> {
+    if (!this.d.sidecar || !this.d.ffmpeg) throw new Error('The media-ai helper is off.');
+    const id = `v-${randomBytes(4).toString('hex')}`;
+    this.d.sidecar.start();
+    const r = await this.d.sidecar.request<{ out: string; seconds: number }>(
+      'voicehq.addSample',
+      { path, out: this.samplePath(id), ffmpeg: await this.d.ffmpeg() },
+      120_000,
+    );
+    const sample = { id, name: name.trim().slice(0, 60), seconds: r.seconds };
+    await this.saveSamples([...(await this.samples()), sample]);
+    return sample;
+  }
+
+  async removeSample(id: string): Promise<void> {
+    const list = await this.samples();
+    if (!list.some((v) => v.id === id)) return;
+    await rm(this.samplePath(id), { force: true });
+    await this.saveSamples(list.filter((v) => v.id !== id));
   }
 
   /** A short sample of a voice as base64 WAV (for the voice picker). */

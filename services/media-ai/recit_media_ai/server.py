@@ -4,7 +4,7 @@ import platform
 import time
 from typing import Any
 
-from . import __version__, card, faces, images, lipsync, talking, transcribe, tts
+from . import __version__, card, faces, images, lipsync, talking, transcribe, tts, voicehq
 from .rpc import INVALID_PARAMS, RpcError, Server, log
 from .system import cuda_status, query_gpus
 
@@ -182,6 +182,41 @@ def lipsync_render_job(params: dict[str, Any], progress: Any, cancelled: Any) ->
         raise RpcError(-32800, "Cancelled") from e
 
 
+def voicehq_status(params: dict[str, Any]) -> dict[str, Any]:
+    if not isinstance(params.get("modelsDir"), str):
+        raise RpcError(INVALID_PARAMS, "modelsDir must be a folder")
+    return voicehq.status(params["modelsDir"])
+
+
+def voicehq_install_job(params: dict[str, Any], progress: Any, cancelled: Any) -> dict[str, Any]:
+    if not isinstance(params.get("modelsDir"), str):
+        raise RpcError(INVALID_PARAMS, "modelsDir must be a folder")
+    try:
+        return voicehq.install(params, progress, cancelled)
+    except voicehq.Cancelled as e:
+        raise RpcError(-32800, "Cancelled") from e
+
+
+def voicehq_speak_job(params: dict[str, Any], progress: Any, cancelled: Any) -> dict[str, Any]:
+    segments = params.get("segments")
+    if not isinstance(segments, list) or not segments:
+        raise RpcError(INVALID_PARAMS, "segments must be a list")
+    for key in ("out", "modelsDir"):
+        if not isinstance(params.get(key), str):
+            raise RpcError(INVALID_PARAMS, f"{key} must be a path")
+    try:
+        return voicehq.run(params, progress, cancelled)
+    except voicehq.Cancelled as e:
+        raise RpcError(-32800, "Cancelled") from e
+
+
+def voicehq_add_sample(params: dict[str, Any]) -> dict[str, Any]:
+    for key in ("path", "out", "ffmpeg"):
+        if not isinstance(params.get(key), str):
+            raise RpcError(INVALID_PARAMS, f"{key} must be a path")
+    return voicehq.add_sample(params)
+
+
 def backgrounds_render(params: dict[str, Any]) -> dict[str, Any]:
     items = params.get("items")
     if not isinstance(items, list) or not items:
@@ -207,6 +242,8 @@ HANDLERS = {
     "images.status": images_status,
     "talking.status": talking_status,
     "lipsync.status": lipsync_status,
+    "voicehq.status": voicehq_status,
+    "voicehq.addSample": voicehq_add_sample,
     "backgrounds.render": backgrounds_render,
 }
 
@@ -226,6 +263,8 @@ def main() -> int:
             "lipsync.install": lipsync_install_job,
             "lipsync.shapes": lipsync_shapes_job,
             "lipsync.render": lipsync_render_job,
+            "voicehq.install": voicehq_install_job,
+            "voicehq.speak": voicehq_speak_job,
         },
     ).serve()
     log("stdin closed, exiting")

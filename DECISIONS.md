@@ -902,3 +902,19 @@ Each record states the decision, why it was made and what else was considered. R
 
 **Not tested here:** how well Z-Image Turbo follows the cartoon prompt; that is seen on the reference PC.
 
+## ADR-051 · Human-like voice: Chatterbox Turbo, built in or cloned from your samples
+
+**Status:** Accepted (24 Nov 2026).
+
+**Context.** Kokoro (ADR-046) is small and fast but sounds synthetic. Among local models, Chatterbox (Resemble AI, MIT, 0.5B) is the usual pick for natural speech with cloning: in Resemble's own blind test, listeners preferred Chatterbox Turbo over ElevenLabs. A third-party test reported about 1.8× real time on an RTX 3060, and it needs about 5 GB of VRAM, so it fits the reference PC. You chose the built-in voice plus voices cloned from your own samples, with Kokoro kept as the fast option.
+
+**Decisions.**
+- **A separate environment.** `chatterbox-tts==0.1.7` pins its own torch 2.6, transformers, gradio and more, which would clash with the sidecar's packages. The install makes its own environment with uv in `<models>/chatterbox` (Python 3.12; CUDA 12.4 PyTorch on Windows; every Windows dependency is a prebuilt wheel, checked) and downloads `ResembleAI/chatterbox-turbo` into its own Hugging Face cache, about 5 GB in all. `chatterbox_worker.py` runs there (imports only stdlib, torch and chatterbox) and talks to the sidecar through JSON lines. The sidecar never shares its stdin with it.
+- **Voices.** `hq:builtin` is Chatterbox's built-in voice. `hq:<id>` is cloned from a sample in `<userData>/voices`: any recording of 5 s or more, converted to mono 24 kHz and cut to 15 s. The picker asks you to use only your own voice or someone who agreed. Kokoro voice IDs are unchanged. `voiceIdSchema` accepts both kinds.
+- **Timings.** Chatterbox gives none, so long parts are said sentence by sentence (joined with 0.18 s pauses) and Whisper (already installed for transcription) times the words of each part. The words are matched to the script's own words (SequenceMatcher on normalised words), and misheard or missing words are interpolated between their neighbours. Without Whisper, words are spread by length over the detected speech. Each word's sounds (Kokoro's phonemiser, or letters) are spread over it for the mouth shapes. The result has the same shape as Kokoro's (`segments` with `words` and `sounds`), so templates and lip sync work unchanged.
+- **Interface.** One voice picker in both templates offers human-like voices (built in, your samples, "Add a voice sample…", "Remove sample") and fast voices. The human-like voice is the default once installed. New channels: `voicehq.status/install/cancelInstall` with event `voicehq.changed`, `voices.list/add/remove` with event `voices.changed`, and shell `dialog.chooseAudio`. Kokoro's extra stays required: it also brings Pillow (cards, mouth shapes) and the phonemiser.
+- **Watermark.** Chatterbox adds Resemble's imperceptible Perth watermark to everything it says.
+- **Tests.** `RECIT_FAKE_VOICEHQ=1` uses the fake voice's tones. pytest covers word matching (including a misheard name), timing by length, sounds, sentence splitting, the 5 s sample rule, and the real install and speak code paths run against a stand-in uv and a stand-in environment (command order, worker JSON protocol, marker). Integration covers samples added, refused and removed, and test shots with the built-in and a cloned voice. End to end covers the human-like voice as the default.
+
+**Not tested here:** the real install and model (the PyTorch index and Hugging Face are blocked in the sandbox); the first real run is on the reference PC.
+

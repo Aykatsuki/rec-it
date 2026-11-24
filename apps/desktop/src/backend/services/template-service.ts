@@ -219,8 +219,7 @@ export class TemplateService {
       const result = fresh.length
         ? await media().import(fresh, {
             source: 'made-in-rec-it',
-            notes:
-              'AI voice (Kokoro-82M), title card and scene pictures (Z-Image Turbo) or backdrops made by Rec-It.',
+            notes: `AI voice (${voiceEngine(input.voice)}), title card and scene pictures (Z-Image Turbo) or backdrops made by Rec-It.`,
             userAttested: true,
           })
         : { imported: [], skipped: [] };
@@ -413,8 +412,7 @@ export class TemplateService {
       const result = fresh.length
         ? await media().import(fresh, {
             source: 'made-in-rec-it',
-            notes:
-              'Talking character made by Rec-It: picture (Z-Image Turbo), mouth shapes (FLUX.2 Klein), voice (Kokoro-82M).',
+            notes: `Talking character made by Rec-It: picture (Z-Image Turbo), mouth shapes (FLUX.2 Klein), voice (${voiceEngine(input.voice)}).`,
             userAttested: true,
           })
         : { imported: [], skipped: [] };
@@ -500,6 +498,13 @@ export class TemplateService {
 
 /** Characters are drawn larger than scene pictures: they fill the frame and must stay sharp. */
 const CHARACTER_SIZE = { width: 768, height: 1344 };
+
+/** The engine behind a voice id, for the media notes. */
+function voiceEngine(voice: string): string {
+  if (voice === 'hq:builtin') return 'Chatterbox Turbo, built-in voice';
+  if (voice.startsWith('hq:')) return 'Chatterbox Turbo, cloned from your voice sample';
+  return 'Kokoro-82M';
+}
 
 /** 312 → "5 min 12 s". */
 function duration(seconds: number): string {

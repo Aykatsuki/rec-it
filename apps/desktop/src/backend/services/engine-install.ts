@@ -12,6 +12,8 @@ export interface EngineInstallOptions {
   installJob: string;
   /** What this engine makes, for messages ("AI pictures", "talking characters"). */
   what: string;
+  /** Extra parameters for the install job (e.g. the uv to use). */
+  installParams?: () => Record<string, unknown>;
   onChange: (status: ImageStatus) => void;
 }
 
@@ -77,7 +79,7 @@ export class EngineInstall {
     void sidecar
       .job(
         this.o.installJob,
-        { modelsDir: this.o.modelsDir },
+        { modelsDir: this.o.modelsDir, ...(this.o.installParams?.() ?? {}) },
         {
           signal: controller.signal,
           onProgress: (progress, message) => {

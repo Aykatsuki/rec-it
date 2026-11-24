@@ -25,6 +25,8 @@ import {
   aiStatusSchema,
   imageStatusSchema,
   talkTestSchema,
+  voiceIdSchema,
+  voiceSampleSchema,
   storyGenreSchema,
   storyShortSchema,
   storyTextSchema,
@@ -185,7 +187,7 @@ export const backendContract = defineContract({
     'voice.preview': {
       input: z
         .object({
-          voice: z.string().regex(/^[a-z]{2}_[a-z]+$/),
+          voice: voiceIdSchema,
           speed: z.number().min(0.7).max(1.5).default(1),
           text: z.string().max(300).optional(),
         })
@@ -196,6 +198,19 @@ export const backendContract = defineContract({
     /** Downloads the AI picture engine and model (about 7 GB), once. */
     'images.install': { input: empty, output: ok },
     'images.cancelInstall': { input: empty, output: ok },
+    /** The human-like voice (Chatterbox Turbo; ADR-051): status and one-time install (~5 GB). */
+    'voicehq.status': { input: empty, output: imageStatusSchema },
+    'voicehq.install': { input: empty, output: ok },
+    'voicehq.cancelInstall': { input: empty, output: ok },
+    /** Voice samples for cloning (recordings you have the rights to, 5–15 s used). */
+    'voices.list': { input: empty, output: z.array(voiceSampleSchema) },
+    'voices.add': {
+      input: z
+        .object({ path: z.string().min(1).max(4096), name: z.string().trim().min(1).max(60) })
+        .strict(),
+      output: voiceSampleSchema,
+    },
+    'voices.remove': { input: z.object({ id: z.string() }).strict(), output: ok },
     'animation.status': { input: empty, output: imageStatusSchema },
     /** Downloads the mouth-shape engine for talking characters (about 5.5 GB), once. */
     'animation.install': { input: empty, output: ok },
@@ -290,6 +305,8 @@ export const backendContract = defineContract({
     'voice.changed': voiceStatusSchema,
     'images.changed': imageStatusSchema,
     'animation.changed': imageStatusSchema,
+    'voicehq.changed': imageStatusSchema,
+    'voices.changed': z.array(voiceSampleSchema),
     'templates.changed': z.array(templateJobSchema),
   },
 });

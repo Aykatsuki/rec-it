@@ -43,6 +43,7 @@ describe.skipIf(!bins || !hasUv)('story template (backend, real sidecar, fake vo
     process.env.RECIT_FAKE_TTS = '1';
     process.env.RECIT_FAKE_IMAGES = '1';
     process.env.RECIT_FAKE_LIPSYNC = '1';
+    process.env.RECIT_FAKE_VOICEHQ = '1';
     dir = mkdtempSync(join(tmpdir(), 'recit-tpl-'));
     fx = makeFixtures(bins!.ffmpeg, { longSeconds: 4 });
     app = new BackendApp({
@@ -78,6 +79,7 @@ describe.skipIf(!bins || !hasUv)('story template (backend, real sidecar, fake vo
     delete process.env.RECIT_FAKE_TTS;
     delete process.env.RECIT_FAKE_IMAGES;
     delete process.env.RECIT_FAKE_LIPSYNC;
+    delete process.env.RECIT_FAKE_VOICEHQ;
     rmSync(dir, { recursive: true, force: true, maxRetries: 3 });
     rmSync(fx.dir, { recursive: true, force: true, maxRetries: 3 });
   });
@@ -248,6 +250,33 @@ describe.skipIf(!bins || !hasUv)('story template (backend, real sidecar, fake vo
       4,
     );
   }, 180_000);
+
+  it('speaks with the human-like voice, built in or cloned from a sample', async () => {
+    await waitFor(() => app.voice.human.status().available !== null, 60_000);
+    expect(app.voice.human.status()).toMatchObject({ available: true, engine: 'fake' });
+    // A sample: any recording of 5 s or more (shorter ones are refused).
+    const recording = join(dir, 'me.wav');
+    execFileSync(bins!.ffmpeg, ['-v', 'error', '-f', 'lavfi', '-i', 'sine=d=6', recording]);
+    await expect(app.voice.addSample(fx.h264, 'Too short')).rejects.toThrow(/at least 5 seconds/);
+    const sample = await app.voice.addSample(recording, 'Test voice');
+    expect(sample.seconds).toBeGreaterThanOrEqual(4);
+    expect((await app.voice.samples()).map((v) => v.name)).toContain('Test voice');
+    for (const voice of ['hq:builtin', `hq:${sample.id}`]) {
+      const jobId = app.templates.talkTest({
+        character: 'a tired samurai',
+        line: 'The rain never stopped that day.',
+        voice,
+      });
+      const job = await waitFor(() => {
+        const j = app.templates.list().find((x) => x.id === jobId);
+        return j && j.state !== 'running' && j;
+      }, 120_000);
+      expect(job.error).toBeUndefined();
+      expect(job.state).toBe('done');
+    }
+    await app.voice.removeSample(sample.id);
+    expect(await app.voice.samples()).toEqual([]);
+  }, 240_000);
 
   it('previews a voice as WAV', async () => {
     const wav = Buffer.from(await app.voice.preview('af_heart', 1, 'Hello there'), 'base64');

@@ -171,6 +171,10 @@ export class BackendApp {
       modelsDir: join(config.userDataDir, 'models'),
       fontsDir: config.fontsDir,
       onChange: (status) => this.emit('voice.changed', status),
+      voicesDir: join(config.userDataDir, 'voices'),
+      ffmpeg: async () => (await this.toolchain()).bins.ffmpeg,
+      onHumanChange: (status) => this.emit('voicehq.changed', status),
+      onSamplesChange: (samples) => this.emit('voices.changed', samples),
       busyElsewhere: () => this.transcripts.busy() || this.faces.busy(),
       onEngineChanged: () => {
         void this.transcripts.refresh();
@@ -345,6 +349,21 @@ export class BackendApp {
     },
     'images.cancelInstall': () => {
       this.images.cancelInstall();
+      return { ok: true as const };
+    },
+    'voicehq.status': () => this.voice.human.status(),
+    'voicehq.install': () => {
+      this.voice.human.start();
+      return { ok: true as const };
+    },
+    'voicehq.cancelInstall': () => {
+      this.voice.human.cancel();
+      return { ok: true as const };
+    },
+    'voices.list': () => this.voice.samples(),
+    'voices.add': ({ path, name }) => this.voice.addSample(path, name),
+    'voices.remove': async ({ id }) => {
+      await this.voice.removeSample(id);
       return { ok: true as const };
     },
     'animation.status': () => this.animation.status(),

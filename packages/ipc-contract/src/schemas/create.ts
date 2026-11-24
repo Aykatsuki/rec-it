@@ -54,6 +54,20 @@ export type ImageStatus = z.output<typeof imageStatusSchema>;
 /** The mouth-shape engine for talking characters (FLUX.2 Klein; ADR-049): same shape. */
 export type AnimationStatus = ImageStatus;
 
+/**
+ * A voice: a Kokoro voice ("af_heart", fast) or a human-like Chatterbox voice ("hq:builtin", or
+ * "hq:<id>" for a voice cloned from one of your samples; ADR-051).
+ */
+export const voiceIdSchema = z.string().regex(/^(?:[a-z]{2}_[a-z]+|hq:[a-z0-9-]{1,40})$/);
+
+/** A voice sample you added, cloned by the human-like voice. */
+export const voiceSampleSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  seconds: z.number(),
+});
+export type VoiceSample = z.output<typeof voiceSampleSchema>;
+
 export const storyTextSchema = z.object({
   title: z.string(),
   story: z.string(),
@@ -86,7 +100,7 @@ export const storyShortSchema = z
     story: z.string().trim().min(1).max(8000),
     community: z.string().max(40).default(''),
     username: z.string().max(40).default(''),
-    voice: z.string().regex(/^[a-z]{2}_[a-z]+$/),
+    voice: voiceIdSchema,
     speed: z.number().min(0.7).max(1.5).default(1.1),
     /** What is behind the captions: footage, AI pictures per scene, or motion graphics. */
     visuals: z.enum(['footage', 'pictures', 'graphics']).default('footage'),
@@ -127,7 +141,7 @@ export const talkTestSchema = z
     character: z.string().trim().min(3).max(300),
     /** What they say. */
     line: z.string().trim().min(1).max(600),
-    voice: z.string().regex(/^[a-z]{2}_[a-z]+$/),
+    voice: voiceIdSchema,
     /** 2D stick-figure cartoon (the default) or a Pixar-style 3D character. */
     style: z.enum(['cartoon', 'render3d']).default('cartoon'),
     /** Where they are, drawn as the background, e.g. "a muddy battlefield in the rain". */

@@ -29,7 +29,7 @@ import {
   type StoryShortInput,
 } from '@rec-it/ipc-contract';
 import { Button, Dialog, TextField } from '@rec-it/ui';
-import { backend, RecitError } from '../api';
+import { backend, RecitError, shell } from '../api';
 import { notify } from '../notifications';
 import { useApp } from '../store';
 
@@ -152,7 +152,7 @@ function StoryForm({ onDone }: { onDone: () => void }) {
   const [story, setStory] = useState('');
   const [community, setCommunity] = useState<string>(STORY_GENRES.aita.community);
   const [username, setUsername] = useState('');
-  const [voice, setVoice] = useState<string>(DEFAULT_VOICE);
+  const [voice, setVoice] = useState<string>(initialVoice);
   const [speed, setSpeed] = useState(1.1);
   const [chosenBackground, setBackground] = useState('');
   // The first video until the user picks one (media may finish importing while this is open).
@@ -260,7 +260,9 @@ function StoryForm({ onDone }: { onDone: () => void }) {
       setJobId(r.jobId);
     });
 
-  const voiceReady = voiceStatus?.available === true;
+  const voiceHq = useApp((s) => s.voiceHq);
+  const voiceReady =
+    voiceStatus?.available === true && (!voice.startsWith('hq:') || !!voiceHq?.available);
   const running = job?.state === 'running';
   const visualsReady =
     visuals === 'footage' ? !!background : visuals === 'pictures' ? !!imageStatus?.available : true;
@@ -411,18 +413,7 @@ function StoryForm({ onDone }: { onDone: () => void }) {
         <div className="create__row">
           <label className="create__grow">
             Voice
-            <select
-              className="ui-input"
-              value={voice}
-              onChange={(e) => setVoice(e.target.value)}
-              data-testid="story-voice"
-            >
-              {VOICES.map((v) => (
-                <option key={v.id} value={v.id}>
-                  {v.label} · {v.gender}, {v.accent} · {v.note}
-                </option>
-              ))}
-            </select>
+            <VoicePicker value={voice} onChange={setVoice} testId="story-voice" />
           </label>
           <label>
             Speed {speed.toFixed(2)}×
@@ -726,7 +717,7 @@ function CharactersForm({ onDone }: { onDone: () => void }) {
   const [setting, setSetting] = useState('a muddy battlefield in the rain');
   const [mood, setMood] = useState<CharacterMood>('serious');
   const [line, setLine] = useState('Hi! I was made on your own computer. Pretty cool, right?');
-  const [voice, setVoice] = useState<string>(DEFAULT_VOICE);
+  const [voice, setVoice] = useState<string>(initialVoice);
   const [error, setError] = useState<string | null>(null);
   const [jobId, setJobId] = useState<string | null>(null);
   const job = jobs.find((j) => j.id === jobId);
@@ -747,8 +738,12 @@ function CharactersForm({ onDone }: { onDone: () => void }) {
   }, [job?.state, job?.stage, onDone]);
 
   const words = line.trim().split(/\s+/).filter(Boolean).length;
+  const voiceHq = useApp((s) => s.voiceHq);
   const ready =
-    voiceStatus?.available === true && !!imageStatus?.available && !!animationStatus?.available;
+    voiceStatus?.available === true &&
+    (!voice.startsWith('hq:') || !!voiceHq?.available) &&
+    !!imageStatus?.available &&
+    !!animationStatus?.available;
   const canStart = ready && character.trim().length >= 3 && words > 0 && words <= 80 && !running;
 
   const start = async () => {
@@ -840,13 +835,7 @@ function CharactersForm({ onDone }: { onDone: () => void }) {
         </label>
         <label>
           Voice
-          <select className="ui-input" value={voice} onChange={(e) => setVoice(e.target.value)}>
-            {VOICES.map((v) => (
-              <option key={v.id} value={v.id}>
-                {v.label} · {v.gender}, {v.accent} · {v.note}
-              </option>
-            ))}
-          </select>
+          <VoicePicker value={voice} onChange={setVoice} testId="talk-voice" />
         </label>
       </section>
       {error && (
@@ -881,5 +870,100 @@ function CharactersForm({ onDone }: { onDone: () => void }) {
         </Button>
       </footer>
     </form>
+  );
+}
+
+/** Human-like by default once it is installed; the fast voice otherwise. */
+const initialVoice = (): string =>
+  useApp.getState().voiceHq?.available ? 'hq:builtin' : DEFAULT_VOICE;
+
+const ADD_SAMPLE = '__add-sample';
+
+/**
+ * Voices: human-like (Chatterbox: built-in, or cloned from your samples; ADR-051) and fast
+ * (Kokoro). Adding a sample picks a recording you have the rights to.
+ */
+function VoicePicker(p: { value: string; onChange: (voice: string) => void; testId: string }) {
+  const human = useApp((s) => s.voiceHq);
+  const samples = useApp((s) => s.voiceSamples);
+  const [adding, setAdding] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const sample = p.value.startsWith('hq:v-') ? p.value.slice(3) : null;
+
+  const add = async () => {
+    setError(null);
+    const { path } = await shell.invoke('dialog.chooseAudio', {});
+    if (!path) return;
+    setAdding(true);
+    try {
+      const name = (path.split(/[\\/]/).pop() ?? 'My voice').replace(/\.[^.]+$/, '');
+      const v = await backend.invoke('voices.add', { path, name });
+      p.onChange(`hq:${v.id}`);
+    } catch (e) {
+      setError(message(e));
+    } finally {
+      setAdding(false);
+    }
+  };
+
+  return (
+    <>
+      <select
+        className="ui-input"
+        value={p.value}
+        data-testid={p.testId}
+        onChange={(e) => (e.target.value === ADD_SAMPLE ? void add() : p.onChange(e.target.value))}
+      >
+        <optgroup label="Human-like (Chatterbox)">
+          <option value="hq:builtin">Built-in voice</option>
+          {samples.map((v) => (
+            <option key={v.id} value={`hq:${v.id}`}>
+              {v.name} (your sample)
+            </option>
+          ))}
+          <option value={ADD_SAMPLE}>{adding ? 'Adding…' : 'Add a voice sample…'}</option>
+        </optgroup>
+        <optgroup label="Fast (Kokoro)">
+          {VOICES.map((v) => (
+            <option key={v.id} value={v.id}>
+              {v.label} · {v.gender}, {v.accent} · {v.note}
+            </option>
+          ))}
+        </optgroup>
+      </select>
+      {p.value.startsWith('hq:') && !human?.available && <HumanVoiceEngine />}
+      {sample && (
+        <small className="create__hint">
+          Use only recordings of your own voice, or of someone who agreed to be cloned.{' '}
+          <Button
+            size="sm"
+            variant="ghost"
+            onClick={() => {
+              void backend.invoke('voices.remove', { id: sample });
+              p.onChange('hq:builtin');
+            }}
+          >
+            Remove sample
+          </Button>
+        </small>
+      )}
+      {error && <div className="create__error">{error}</div>}
+    </>
+  );
+}
+
+/** Status and install button for the human-like voice (about 5 GB; ADR-051). */
+function HumanVoiceEngine() {
+  const status = useApp((s) => s.voiceHq);
+  return (
+    <EngineNote
+      status={status}
+      testId="voicehq-engine"
+      what="Human-like voices"
+      engine="the human-like voice: Chatterbox Turbo by Resemble AI, run on your graphics card (about 5 GB, downloaded once)"
+      button="Install human-like voice"
+      install={() => void backend.invoke('voicehq.install', {})}
+      cancel={() => void backend.invoke('voicehq.cancelInstall', {})}
+    />
   );
 }

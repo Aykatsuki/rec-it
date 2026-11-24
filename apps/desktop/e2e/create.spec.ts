@@ -196,6 +196,7 @@ test.describe('create a Short', () => {
       RECIT_FAKE_TTS: '1',
       RECIT_FAKE_IMAGES: '1',
       RECIT_FAKE_LIPSYNC: '1',
+      RECIT_FAKE_VOICEHQ: '1',
     });
     try {
       await createProject(page, 'Characters');
@@ -207,6 +208,8 @@ test.describe('create a Short', () => {
       await expect(dialog.getByTestId('animation-engine')).toHaveCount(0);
       await dialog.getByTestId('talk-character').fill('a sleepy blue owl');
       await dialog.getByTestId('talk-line').fill('Who stayed up this late?');
+      // The human-like voice is the default once installed (the fake one counts).
+      await expect(dialog.getByTestId('talk-voice')).toHaveValue('hq:builtin');
       await page.screenshot({ path: test.info().outputPath('talking-form.png') });
       await dialog.getByTestId('talk-create').click();
       await expect(dialog).toBeHidden({ timeout: 90_000 });
