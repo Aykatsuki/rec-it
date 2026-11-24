@@ -261,7 +261,7 @@ describe.skipIf(!bins || !hasUv)('story template (backend, real sidecar, fake vo
     const sample = await app.voice.addSample(recording, 'Test voice');
     expect(sample.seconds).toBeGreaterThanOrEqual(4);
     expect((await app.voice.samples()).map((v) => v.name)).toContain('Test voice');
-    for (const voice of ['hq:builtin', `hq:${sample.id}`]) {
+    for (const voice of ['hq:builtin', `hq:${sample.id}`, 'hq:k-bm_lewis']) {
       const jobId = app.templates.talkTest({
         character: 'a tired samurai',
         line: 'The rain never stopped that day.',
@@ -274,6 +274,8 @@ describe.skipIf(!bins || !hasUv)('story template (backend, real sidecar, fake vo
       expect(job.error).toBeUndefined();
       expect(job.state).toBe('done');
     }
+    // The Lewis reference was read once by Kokoro and kept for next time.
+    expect(existsSync(join(dir, 'ud', 'voices', 'reference-bm_lewis.wav'))).toBe(true);
     await app.voice.removeSample(sample.id);
     expect(await app.voice.samples()).toEqual([]);
   }, 240_000);

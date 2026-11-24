@@ -55,10 +55,11 @@ export type ImageStatus = z.output<typeof imageStatusSchema>;
 export type AnimationStatus = ImageStatus;
 
 /**
- * A voice: a Kokoro voice ("af_heart", fast) or a human-like Chatterbox voice ("hq:builtin", or
- * "hq:<id>" for a voice cloned from one of your samples; ADR-051).
+ * A voice: a Kokoro voice ("af_heart", fast) or a human-like Chatterbox voice: "hq:builtin",
+ * "hq:<id>" for a voice cloned from one of your samples, or "hq:k-<kokoro voice>" for one cloned
+ * from a reference that Kokoro voice reads (ADR-051).
  */
-export const voiceIdSchema = z.string().regex(/^(?:[a-z]{2}_[a-z]+|hq:[a-z0-9-]{1,40})$/);
+export const voiceIdSchema = z.string().regex(/^(?:[a-z]{2}_[a-z]+|hq:[a-z0-9_-]{1,40})$/);
 
 /** A voice sample you added, cloned by the human-like voice. */
 export const voiceSampleSchema = z.object({

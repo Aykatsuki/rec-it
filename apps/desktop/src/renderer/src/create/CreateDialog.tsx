@@ -923,6 +923,15 @@ function VoicePicker(p: { value: string; onChange: (voice: string) => void; test
           ))}
           <option value={ADD_SAMPLE}>{adding ? 'Adding…' : 'Add a voice sample…'}</option>
         </optgroup>
+        <optgroup label="Human-like, in a fast voice's tone">
+          {[...VOICES]
+            .sort((a, b) => (a.gender === b.gender ? 0 : a.gender === 'male' ? -1 : 1))
+            .map((v) => (
+              <option key={`hq-${v.id}`} value={`hq:k-${v.id}`}>
+                {v.label} · {v.gender}, {v.accent} (human-like)
+              </option>
+            ))}
+        </optgroup>
         <optgroup label="Fast (Kokoro)">
           {VOICES.map((v) => (
             <option key={v.id} value={v.id}>

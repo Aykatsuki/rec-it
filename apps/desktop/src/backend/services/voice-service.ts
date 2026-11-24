@@ -33,6 +33,12 @@ export interface VoiceDeps {
   onSamplesChange?: (samples: VoiceSample[]) => void;
 }
 
+/** About 12 s of calm narration: what a Kokoro voice reads to become a cloning reference. */
+const REFERENCE_TEXT =
+  'The old road wound through the valley for miles. Travellers stopped at the inn by the river, ' +
+  'where the fire was warm and the stories were long. Nobody remembered who built the bridge, ' +
+  'but everyone agreed it had stood there for a very long time.';
+
 /** "hq:builtin" / "hq:<sample id>" are human-like voices; the rest are Kokoro's. */
 export const isHumanVoice = (voice: string) => voice.startsWith('hq:');
 
@@ -175,7 +181,9 @@ export class VoiceService {
       throw new Error('Install the human-like voice first (Make a Short → voice).');
     const id = o.voice.slice(3);
     let sample: string | undefined;
-    if (id !== 'builtin') {
+    if (id.startsWith('k-')) {
+      sample = await this.reference(id.slice(2));
+    } else if (id !== 'builtin') {
       const found = (await this.samples()).find((v) => v.id === id);
       if (!found) throw new Error('That voice sample was removed; choose another voice.');
       sample = this.samplePath(id);
@@ -199,6 +207,28 @@ export class VoiceService {
       );
     } finally {
       this.running--;
+    }
+  }
+
+  /**
+   * A reference for cloning a Kokoro voice into the human-like voice: the Kokoro voice reads a
+   * short neutral passage once (kept for next time), and Chatterbox speaks in that voice with
+   * its own delivery. Gives every fast voice, men's included, a human-like version.
+   */
+  private async reference(kokoroVoice: string): Promise<string> {
+    if (!/^[a-z]{2}_[a-z]+$/.test(kokoroVoice)) throw new Error('Unknown voice.');
+    const path = join(this.samplesDir(), `reference-${kokoroVoice}.wav`);
+    try {
+      await readFile(path);
+      return path;
+    } catch {
+      await mkdir(this.samplesDir(), { recursive: true });
+      await this.speak([{ id: 'reference', text: REFERENCE_TEXT }], {
+        voice: kokoroVoice,
+        speed: 1,
+        out: path,
+      });
+      return path;
     }
   }
 

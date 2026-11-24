@@ -239,3 +239,43 @@ def test_render_job_leaves_the_rpc_channel_alone(tmp_path, monkeypatch) -> None:
     finally:
         proc.stdin.close()
         proc.wait(timeout=10)
+
+
+def _speech_wav(path: Path, pattern: list[tuple[float, float]]) -> None:
+    """A WAV of (seconds, loudness) pieces; loud pieces carry 4 Hz syllable bumps."""
+    import math
+    import struct
+    import wave
+
+    rate = 24000
+    frames = []
+    t = 0.0
+    for seconds, amp in pattern:
+        for i in range(int(seconds * rate)):
+            bump = 0.55 + 0.45 * math.sin(2 * math.pi * 4 * (t + i / rate))
+            v = amp * bump * math.sin(2 * math.pi * 180 * i / rate)
+            frames.append(struct.pack("<h", int(v * 30000)))
+        t += seconds
+    with wave.open(str(path), "wb") as w:
+        w.setnchannels(1)
+        w.setsampwidth(2)
+        w.setframerate(rate)
+        w.writeframes(b"".join(frames))
+
+
+def test_mouth_follows_the_voice_loudness(tmp_path) -> None:
+    """Silence keeps the lips shut whatever the sound timings say; speech moves the mouth about
+    once per syllable, not on every sound; no shape is shorter than 0.1 s."""
+    wav = tmp_path / "v.wav"
+    _speech_wav(wav, [(0.5, 0.0), (1.5, 0.6), (0.8, 0.0), (1.0, 0.6), (0.4, 0.0)])
+    level = lipsync.loudness(wav)
+    duration = 4.2
+    # Sound timings that are wrong on purpose: "speech" during the silent 2.0-2.8 s.
+    wrong = [{"p": "a", "start": i * 0.05, "end": i * 0.05 + 0.05} for i in range(84)]
+    segs = lipsync.timeline_from_audio(level, wrong, duration)
+    assert all(s["shape"] == "rest" for s in segs if s["start"] >= 2.15 and s["end"] <= 2.75)
+    assert shape_at(segs, 0.2) == "rest" and shape_at(segs, 4.1) == "rest"
+    talking = [s for s in segs if 0.5 <= s["start"] < 2.0]
+    assert 3 <= len(talking) <= 12  # roughly syllable rate, not 8+ changes a second
+    assert all(s["end"] - s["start"] >= 0.1 - 1e-6 for s in segs[:-1])
+    assert {s["shape"] for s in talking} <= {"open", "mid", "wide", "round", "fv", "rest"}

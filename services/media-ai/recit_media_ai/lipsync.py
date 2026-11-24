@@ -243,6 +243,106 @@ def timeline(
     return [{"shape": s, "start": round(a, 4), "end": round(b, 4)} for s, a, b in merged]
 
 
+# ---- Mouth from the sound itself ---------------------------------------------------------------
+
+
+def loudness(wav_path: Path, fps: int = FPS) -> list[float]:
+    """The voice's loudness per video frame (RMS), scaled so ordinary speech is about 1."""
+    import wave
+
+    import numpy as np
+
+    with wave.open(str(wav_path), "rb") as w:
+        rate, channels = w.getframerate(), w.getnchannels()
+        data = np.frombuffer(w.readframes(w.getnframes()), dtype="<i2").astype(np.float32)
+    if channels > 1:
+        data = data.reshape(-1, channels).mean(axis=1)
+    hop = max(1, rate // fps)
+    n = len(data) // hop
+    if n == 0:
+        return []
+    rms = np.sqrt((data[: n * hop].reshape(n, hop) ** 2).mean(axis=1))
+    voiced = rms[rms > rms.max() * 0.05] if rms.max() > 0 else rms
+    ref = float(np.percentile(voiced, 80)) if len(voiced) else 1.0
+    return (rms / max(ref, 1e-6)).tolist()
+
+
+def timeline_from_audio(
+    level: list[float],
+    sounds: list[dict[str, Any]],
+    duration: float,
+    fps: int = FPS,
+    min_hold: int = 3,
+) -> list[dict[str, Any]]:
+    """Mouth shapes driven by how loud the voice is in each frame, so the mouth is shut when the
+    voice is silent and moves only as much as the sound does. The sound timings only choose the
+    vowel shape (round "oo", wide "ee", f/v) while there is sound. Shapes hold at least
+    `min_hold` frames (0.1 s), and the mouth leads the sound by one frame."""
+    vowel = timeline(sounds, duration, lead=0.0, min_hold=0.0) if sounds else []
+    frames = max(1, round(duration * fps))
+
+    def hinted(t: float) -> str | None:
+        for seg in vowel:
+            if seg["start"] <= t < seg["end"]:
+                return str(seg["shape"])
+        return None
+
+    # Light smoothing (the mouth cannot snap open and shut within a frame).
+    lv = [0.0] * frames
+    for i in range(frames):
+        window = [level[j] for j in (i - 1, i, i + 1) if 0 <= j < len(level)]
+        lv[i] = (sum(window) / len(window)) if window else 0.0
+    shapes: list[str] = []
+    for i in range(frames):
+        x = lv[min(len(lv) - 1, i + 1)]  # one frame of lead
+        hint = hinted((i + 1) / fps)
+        # Syllables: louder than the surrounding ~0.3 s opens the mouth, the dips between them
+        # relax it, so steady speech moves at a natural 4-5 syllables a second, not a held gape.
+        j = min(len(lv) - 1, i + 1)
+        around = lv[max(0, j - 4) : j + 5]
+        local = sum(around) / len(around)
+        if x < 0.18:
+            shapes.append("rest")
+        elif x < 0.45 or x < local * 0.97:
+            shapes.append("round" if hint == "round" else "fv" if hint == "fv" else "mid")
+        else:
+            shapes.append(hint if hint in ("open", "wide", "round") else "open")
+    # Runs shorter than min_hold join the previous run (or the next, at the start).
+    runs: list[list[Any]] = []
+    for sh in shapes:
+        if runs and runs[-1][0] == sh:
+            runs[-1][1] += 1
+        else:
+            runs.append([sh, 1])
+    changed = True
+    while changed:
+        changed = False
+        for k, run in enumerate(runs):
+            if run[1] >= min_hold or len(runs) == 1:
+                continue
+            target = runs[k - 1] if k > 0 else runs[k + 1]
+            target[1] += run[1]
+            runs.pop(k)
+            merged: list[list[Any]] = []
+            for r in runs:
+                if merged and merged[-1][0] == r[0]:
+                    merged[-1][1] += r[1]
+                else:
+                    merged.append(r)
+            runs = merged
+            changed = True
+            break
+    out, f = [], 0
+    for sh, n in runs:
+        out.append(
+            {"shape": sh, "start": round(f / fps, 4), "end": round(min(duration, (f + n) / fps), 4)}
+        )
+        f += n
+    if out:
+        out[-1]["end"] = round(duration, 4)
+    return out
+
+
 # ---- Drawing the shapes -----------------------------------------------------------------------
 
 
@@ -478,7 +578,12 @@ def render(
     work = out.parent / f".{out.stem}-frames"
     work.mkdir(parents=True, exist_ok=True)
     progress(0.05, "Timing the mouth to the voice…")
-    segs = timeline(sounds, duration)
+    audio = params.get("audio")
+    segs = (
+        timeline_from_audio(loudness(Path(str(audio))), sounds, duration)
+        if audio
+        else timeline(sounds, duration)
+    )
     blink_spans = blinks(duration, int(params.get("seed", 7))) if "blink" in shapes else []
 
     # Split the shape timeline at blinks; a blink frame is the shape with the eyes closed.

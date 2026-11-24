@@ -82,6 +82,8 @@ export class AnimationService {
   async render(o: {
     shapes: MouthShapes;
     sounds: Sound[];
+    /** The voice itself: its loudness opens and closes the mouth (the sounds only shape it). */
+    audio?: string;
     duration: number;
     out: string;
     seed: number;
@@ -92,6 +94,7 @@ export class AnimationService {
       {
         shapes: o.shapes,
         sounds: o.sounds,
+        ...(o.audio ? { audio: o.audio } : {}),
         duration: o.duration,
         out: o.out,
         seed: o.seed,

@@ -397,6 +397,7 @@ export class TemplateService {
       const clip = await this.d.animation.render({
         shapes,
         sounds,
+        audio: voicePath,
         duration: spoken.duration,
         out: join(folder, `talking ${stamp}.mp4`),
         seed,
@@ -502,6 +503,8 @@ const CHARACTER_SIZE = { width: 768, height: 1344 };
 /** The engine behind a voice id, for the media notes. */
 function voiceEngine(voice: string): string {
   if (voice === 'hq:builtin') return 'Chatterbox Turbo, built-in voice';
+  if (voice.startsWith('hq:k-'))
+    return `Chatterbox Turbo in the tone of Kokoro's ${voice.slice(5)}`;
   if (voice.startsWith('hq:')) return 'Chatterbox Turbo, cloned from your voice sample';
   return 'Kokoro-82M';
 }
