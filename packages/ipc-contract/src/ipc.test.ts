@@ -30,7 +30,7 @@ afterEach(() => {
   }
 });
 
-function setup(timeoutMs = 1000) {
+function setup(timeoutMs = 1000, channelTimeouts?: Record<string, number>) {
   const channel = new MessageChannel();
   channels.push(channel);
   const errors: unknown[] = [];
@@ -48,7 +48,10 @@ function setup(timeoutMs = 1000) {
     portTransport(channel.port1),
     { onError: (e) => errors.push(e) },
   );
-  const client = createIpcClient(contract, portTransport(channel.port2), { timeoutMs });
+  const client = createIpcClient(contract, portTransport(channel.port2), {
+    timeoutMs,
+    ...(channelTimeouts ? { channelTimeouts } : {}),
+  });
   return { server, client, errors, rawPort: channel.port2 };
 }
 
@@ -117,6 +120,14 @@ describe('IPC contract', () => {
     });
     await expect(client.invoke('math.broken', {})).rejects.toMatchObject({
       code: 'INVALID_OUTPUT',
+    });
+  });
+
+  it("uses a channel's own time limit when it has one", async () => {
+    const { client } = setup(5000, { 'math.slow': 30 });
+    await expect(client.invoke('math.slow', {})).rejects.toMatchObject({
+      code: 'TIMEOUT',
+      message: '"math.slow" timed out after 30 ms',
     });
   });
 

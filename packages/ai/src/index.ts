@@ -179,11 +179,18 @@ export class AiClient {
         temperature: o.temperature ?? 0.8,
         ...(o.maxTokens ? { max_tokens: o.maxTokens } : {}),
         ...(o.json ? { response_format: { type: 'json_object' } } : {}),
+        // Local reasoning models (Qwen 3, DeepSeek R1…) think at length before answering; stories,
+        // titles and scores do not need it, and it can take minutes on a home GPU.
+        ...(this.config.provider === 'ollama' ? { reasoning_effort: 'none' } : {}),
         stream: false,
       },
       o.signal,
-    )) as { choices?: { message?: { content?: string } }[] };
+    )) as { choices?: { message?: { content?: string; reasoning?: string } }[] };
     const content = r.choices?.[0]?.message?.content;
+    if (!content?.trim() && r.choices?.[0]?.message?.reasoning)
+      throw new AiError(
+        'The model only thought and gave no answer. Try again, or pick a non-thinking model in Settings → AI.',
+      );
     if (typeof content !== 'string' || !content.trim())
       throw new AiError('The AI sent an empty reply.');
     return stripThinking(content);

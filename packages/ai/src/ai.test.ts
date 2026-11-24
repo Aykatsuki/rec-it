@@ -72,6 +72,7 @@ describe('AiClient', () => {
     await ai.chat([{ role: 'user', content: 'hi' }]);
     expect(s.calls.at(-1)!.headers.authorization).toBe('Bearer sk-test');
     expect(s.calls.at(-1)!.body?.model).toBe('kimi-k3');
+    expect(s.calls.at(-1)!.body?.reasoning_effort).toBeUndefined();
   });
 
   it('sends a bad answer back once with the problem', async () => {
