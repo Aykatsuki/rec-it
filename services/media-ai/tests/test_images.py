@@ -29,3 +29,12 @@ def test_out_of_memory_is_said_plainly() -> None:
 def test_falls_back_to_the_last_line_or_exit_code() -> None:
     assert "something odd" in failure_message([], ["", "something odd", ""], 3, LOG)
     assert "exit code 3" in failure_message([], [], 3, LOG)
+
+
+def test_running_out_of_system_ram_is_said_plainly() -> None:
+    errors = [
+        "[E] RAM weight capacity exceeded. Requested 0 bytes, 0 bytes available, "
+        "3683325184 bytes resident --- model_manager.cpp:1359",
+        "[E] generate failed: line 59, column 14: diffusion output shape [] --- main.cpp:815",
+    ]
+    assert failure_message(errors, errors, 1, LOG).startswith("Your PC ran out of memory (RAM)")

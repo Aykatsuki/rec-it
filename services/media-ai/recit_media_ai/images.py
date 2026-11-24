@@ -283,9 +283,14 @@ def _run_sd(
         str(height),
         "-s",
         str(seed),
-        # 8 GB cards: keep weights in system memory between stages; flash attention saves memory.
-        "--offload-to-cpu",
-        "--diffusion-fa",
+        # Weights go where they fit (sd.cpp's auto-fit: GPU, then RAM, then disk); forcing them
+        # into RAM with --offload-to-cpu ran a 16 GB PC out of memory. Memory-mapped weights
+        # can be dropped and re-read instead of swapping; flash attention saves VRAM.
+        "--mmap",
+        "--max-vram",
+        "-0.5",
+        "--flash-attn",
+        "off,diffusion=on",
         "-o",
         str(out),
     ]
@@ -303,11 +308,15 @@ def _run_sd(
     def read() -> None:
         assert proc.stdout is not None
         for line in proc.stdout:
-            text = line.decode("utf-8", "replace").rstrip()
-            tail.append(text)
-            del tail[:-200]
-            if _is_error(text) and len(errors) < 50:
-                errors.append(text)
+            # Progress bars redraw with carriage returns and ANSI codes; keep only real lines.
+            for part in line.decode("utf-8", "replace").split("\r"):
+                text = _ANSI.sub("", part).rstrip()
+                if not text.strip() or _PROGRESS.match(text):
+                    continue
+                tail.append(text)
+                del tail[:-200]
+                if _is_error(text) and len(errors) < 50:
+                    errors.append(text)
 
     reader = threading.Thread(target=read, daemon=True)
     reader.start()
@@ -325,6 +334,9 @@ def _run_sd(
         raise RuntimeError(failure_message(errors, tail, proc.returncode, log_path))
 
 
+_ANSI = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]")
+_PROGRESS = re.compile(r"^\s*\|[=#> -]*\|")
+_RAM = re.compile(r"RAM (weight|graph) capacity exceeded", re.IGNORECASE)
 _ERROR = re.compile(r"\[(E|ERROR)\]|error|failed|out of memory", re.IGNORECASE)
 _OOM = re.compile(
     r"out of memory|cudaMalloc|failed to allocate|alloc.*buffer|CUDA error", re.IGNORECASE
@@ -338,6 +350,12 @@ def _is_error(line: str) -> bool:
 def failure_message(errors: list[str], tail: list[str], code: int | None, log_path: Path) -> str:
     """A readable reason from sd-cli's output: memory problems in plain words, otherwise the
     first error it logged (the last one is only "generate failed", which says nothing)."""
+    if any(_RAM.search(e) for e in errors):
+        return (
+            "Your PC ran out of memory (RAM) while drawing. Close other programs, especially "
+            "browsers and games, then try again. "
+            f"Details: {log_path}"
+        )
     if any(_OOM.search(e) for e in errors):
         return (
             "The graphics card ran out of memory while drawing. Close games, browsers with video "
