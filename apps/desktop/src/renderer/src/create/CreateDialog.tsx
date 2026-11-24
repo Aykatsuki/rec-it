@@ -49,7 +49,7 @@ const TEMPLATES: {
   {
     id: 'characters',
     title: 'Talking characters',
-    text: 'Pixar-style 3D characters that say your lines, lip-synced on this PC. Start with a test shot.',
+    text: '2D cartoon (or 3D) characters that say your lines, lip-synced on this PC. Start with a test shot.',
     icon: <Clapperboard size={18} />,
     ready: true,
   },
@@ -155,7 +155,7 @@ function StoryForm({ onDone }: { onDone: () => void }) {
   const [randomStart, setRandomStart] = useState(true);
   const [music, setMusic] = useState('');
   const [visuals, setVisuals] = useState<'footage' | 'pictures' | 'graphics'>('pictures');
-  const [pictureStyle, setPictureStyle] = useState<PictureStyle>('cinematic');
+  const [pictureStyle, setPictureStyle] = useState<PictureStyle>('cartoon');
   const [captionStyle, setCaptionStyle] =
     useState<NonNullable<StoryShortInput['captionStyle']>>('pop');
   const [card, setCard] = useState(true);
@@ -716,7 +716,8 @@ function CharactersForm({ onDone }: { onDone: () => void }) {
   const imageStatus = useApp((s) => s.images);
   const animationStatus = useApp((s) => s.animation);
   const jobs = useApp((s) => s.templateJobs);
-  const [character, setCharacter] = useState('a cheerful orange fox in a green scarf');
+  const [character, setCharacter] = useState('a samurai in dark armour with a horned helmet');
+  const [style, setStyle] = useState<'cartoon' | 'render3d'>('cartoon');
   const [line, setLine] = useState('Hi! I was made on your own computer. Pretty cool, right?');
   const [voice, setVoice] = useState<string>(DEFAULT_VOICE);
   const [error, setError] = useState<string | null>(null);
@@ -746,7 +747,7 @@ function CharactersForm({ onDone }: { onDone: () => void }) {
   const start = async () => {
     setError(null);
     try {
-      const r = await backend.invoke('templates.talkTest', { character, line, voice });
+      const r = await backend.invoke('templates.talkTest', { character, line, voice, style });
       setJobId(r.jobId);
     } catch (e) {
       setError(message(e));
@@ -778,6 +779,18 @@ function CharactersForm({ onDone }: { onDone: () => void }) {
             onChange={(e) => setCharacter(e.target.value)}
             data-testid="talk-character"
           />
+        </label>
+        <label>
+          Style
+          <select
+            className="ui-input"
+            value={style}
+            onChange={(e) => setStyle(e.target.value as 'cartoon' | 'render3d')}
+            data-testid="talk-style"
+          >
+            <option value="cartoon">2D stick-figure cartoon</option>
+            <option value="render3d">3D (Pixar-style)</option>
+          </select>
         </label>
         <label>
           Line ({words} of 80 words)

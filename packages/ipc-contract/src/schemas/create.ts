@@ -26,6 +26,7 @@ export const storyGenreSchema = z.enum([
 ]);
 
 export const pictureStyleSchema = z.enum([
+  'cartoon',
   'cinematic',
   'anime',
   'render3d',
@@ -89,7 +90,7 @@ export const storyShortSchema = z
     speed: z.number().min(0.7).max(1.5).default(1.1),
     /** What is behind the captions: footage, AI pictures per scene, or motion graphics. */
     visuals: z.enum(['footage', 'pictures', 'graphics']).default('footage'),
-    pictureStyle: pictureStyleSchema.default('cinematic'),
+    pictureStyle: pictureStyleSchema.default('cartoon'),
     /** Footage for `visuals: footage`. */
     backgroundAssetId: z.string().min(1).max(100).nullable().default(null),
     /** Seconds into the background footage; null picks a random start. */
@@ -117,6 +118,8 @@ export const talkTestSchema = z
     /** What they say. */
     line: z.string().trim().min(1).max(600),
     voice: z.string().regex(/^[a-z]{2}_[a-z]+$/),
+    /** 2D stick-figure cartoon (the default) or a Pixar-style 3D character. */
+    style: z.enum(['cartoon', 'render3d']).default('cartoon'),
   })
   .strict();
 export type TalkTestInput = z.input<typeof talkTestSchema>;

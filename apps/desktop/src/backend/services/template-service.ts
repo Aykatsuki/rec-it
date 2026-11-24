@@ -358,14 +358,17 @@ export class TemplateService {
       check();
       const seed = Math.floor(Math.random() * 1_000_000);
       const charDir = join(folder, `character ${stamp}`);
-      const [picture] = await this.d.images.generate([characterPrompt(input.character)], {
-        outDir: charDir,
-        seed,
-        ...CHARACTER_SIZE,
-        signal,
-        onProgress: (p) =>
-          this.update(id, { stage: 'Drawing the character…', progress: 0.06 + 0.12 * p }),
-      });
+      const [picture] = await this.d.images.generate(
+        [characterPrompt(input.character, input.style)],
+        {
+          outDir: charDir,
+          seed,
+          ...CHARACTER_SIZE,
+          signal,
+          onProgress: (p) =>
+            this.update(id, { stage: 'Drawing the character…', progress: 0.06 + 0.12 * p }),
+        },
+      );
       check();
 
       // 3. Its mouth shapes and blink (the slow part, once per character).

@@ -562,12 +562,25 @@ export function talkingShot(input: TalkingShotInput): Command {
   };
 }
 
-/** The picture prompt for a talking character: Pixar-like, facing the camera, room to talk. */
-export function characterPrompt(character: string): string {
+/**
+ * The picture prompt for a talking character, facing the camera with the mouth closed and room
+ * to talk: a 2D stick-figure cartoon (the default) or a Pixar-like 3D character.
+ */
+export function characterPrompt(
+  character: string,
+  style: 'cartoon' | 'render3d' = 'cartoon',
+): string {
+  if (style === 'render3d')
+    return (
+      `${character.trim()}, Pixar-style 3D animated film character, waist-up portrait facing the ` +
+      'camera, mouth closed with lips together, neutral expression, eyes open, soft cinematic ' +
+      'studio lighting, simple softly blurred background, vertical 9:16 composition, no text'
+    );
   return (
-    `${character.trim()}, Pixar-style 3D animated film character, waist-up portrait facing the ` +
-    'camera, mouth closed with lips together, neutral expression, eyes open, soft cinematic ' +
-    'studio lighting, simple softly blurred background, vertical 9:16 composition, no text'
+    `${character.trim()}, 2D cartoon stick-figure character with a round plain white head, simple ` +
+    'face with dot eyes and the mouth closed as a small line, bold clean black outlines, flat ' +
+    'muted colours, upper body facing the camera, simple hand-drawn background, webcomic ' +
+    'explainer style, vertical 9:16 composition, no text'
   );
 }
 

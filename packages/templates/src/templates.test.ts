@@ -288,6 +288,7 @@ describe('talking shot', () => {
     expect(v1[0]!.muted).toBe(true);
     expect(v1[0]!.keyframes?.scale?.map((k) => k.v)).toEqual([1, 1.05]);
     expect(a1.map((i) => [i.assetId, s(i.duration)])).toEqual([['line', 2.4]]);
-    expect(characterPrompt(' a fox ')).toMatch(/^a fox, Pixar-style 3D/);
+    expect(characterPrompt(' a fox ')).toMatch(/^a fox, 2D cartoon stick-figure/);
+    expect(characterPrompt('a fox', 'render3d')).toMatch(/^a fox, Pixar-style 3D/);
   });
 });

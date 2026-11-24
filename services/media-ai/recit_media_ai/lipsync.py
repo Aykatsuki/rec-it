@@ -49,7 +49,7 @@ FOLDER = "flux2-klein-4b"
 
 KEEP = (
     " Keep everything else exactly the same: the same character, face, eyes, pose, framing, "
-    "lighting, colours and background."
+    "drawing style, lighting, colours and background."
 )
 #: Mouth shapes (a classic limited-animation set) and the edit that draws each one.
 SHAPES: dict[str, str] = {

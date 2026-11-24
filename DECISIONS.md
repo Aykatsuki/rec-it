@@ -888,3 +888,16 @@ Each record states the decision, why it was made and what else was considered. R
 
 **Not tested here:** the real Klein edits (no GPU or Hugging Face access in the sandbox). The result message reports how many of the six shapes were drawn, so a model that redraws too much shows up at once.
 
+## ADR-050 · 2D stick-figure cartoon as the default look
+
+**Status:** Accepted (24 Nov 2026).
+
+**Context.** Your first mouth-shape character (a Pixar-style 3D mango) worked technically but looked creepy: realistic 3D faces fall into the uncanny valley when only the mouth moves. You pointed to hand-drawn history and explainer channels instead: simple stick figures with round white heads and dot eyes, bold clean black outlines, flat muted colours and detailed hand-drawn backgrounds.
+
+**Decisions.**
+- **New picture style, `cartoon` ("Stick-figure cartoon")**, first in the list and the default for Story or topic videos (schema and dialog). Every scene picture gets the look; the AI storyboard's picture descriptions stay the same.
+- **Talking characters get a style choice:** `cartoon` (default) or `render3d` (Pixar-style). In the cartoon prompt the character faces the camera with the mouth closed as a small line; mouth edits ask Klein to keep the drawing style too. Simple drawn faces suit swapped mouth shapes, which is how hand-drawn animation has always done lip sync.
+- **Speed is unchanged:** Z-Image takes the same steps whatever the style. The gain is the look, and cleaner mouth shapes.
+
+**Not tested here:** how well Z-Image Turbo follows the cartoon prompt; that is seen on the reference PC.
+

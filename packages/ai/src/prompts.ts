@@ -96,6 +96,15 @@ export function estimateSeconds(text: string, speed = 1): number {
 // ---- Scenes (ADR-047) -----------------------------------------------------------------------
 
 export const PICTURE_STYLES = {
+  // The look of hand-drawn history and explainer channels: simple stick figures with round white
+  // heads in detailed, muted, hand-drawn scenes.
+  cartoon: {
+    label: 'Stick-figure cartoon',
+    prompt:
+      '2D cartoon illustration, simple stick-figure people with round plain white heads, dot eyes ' +
+      'and simple expressive faces, bold clean black outlines, flat muted colours with soft ' +
+      'shading, detailed hand-drawn background, webcomic explainer style',
+  },
   cinematic: {
     label: 'Cinematic photo',
     prompt:
