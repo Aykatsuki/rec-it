@@ -424,7 +424,7 @@ export class TemplateService {
       );
       this.update(id, {
         state: 'done',
-        stage: `Done in ${duration((Date.now() - started) / 1000)}; the ${clip.seconds.toFixed(1)} s clip took ${duration(animSeconds)} to animate.`,
+        stage: `Done in ${duration((Date.now() - started) / 1000)}; the ${clip.seconds.toFixed(1)} s clip (${clip.width}×${clip.height}) took ${duration(animSeconds)} to animate.`,
         progress: 1,
         sequenceId,
       });

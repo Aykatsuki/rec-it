@@ -11,8 +11,10 @@ RECIT_FAKE_TALK=1 makes a still clip from the picture and the line with FFmpeg (
 
 from __future__ import annotations
 
+import json
 import math
 import os
+import re
 import subprocess
 import sys
 import threading
@@ -62,6 +64,13 @@ LORA = (
 )
 FOLDER = "wan2.2-s2v"
 WIDTH, HEIGHT = 480, 832
+#: 9:16 sizes (multiples of 16), largest first. The engine's working memory for one model block
+#: grows with width x height x length; on an 8 GB card under Windows 480x832 needs about 6.8 GB
+#: for 4 s, more than is free, so Rec-It steps down to a size that fits.
+SIZES = [(480, 832), (448, 784), (432, 768), (400, 704), (384, 672), (352, 624), (320, 560)]
+_NEED = re.compile(
+    r"need ([\d.]+) MB device / ([\d.]+) MB budget, available ([\d.]+) MB device / ([\d.]+) MB"
+)
 FPS = 16
 MAX_FRAMES = 81
 STEPS = 4
@@ -140,6 +149,48 @@ def frames_for(seconds: float) -> int:
     return min(MAX_FRAMES, max(17, 4 * n + 1))
 
 
+def tokens(width: int, height: int, frames: int) -> int:
+    """Model tokens for a clip: 16x16-pixel patches per latent frame (4 video frames each)."""
+    return (width // 16) * (height // 16) * ((frames - 1) // 4 + 1)
+
+
+def _fit_path(models_dir: str) -> Path:
+    return model_dir(models_dir) / "fit.json"
+
+
+def token_limit(models_dir: str) -> int | None:
+    """The most tokens known to fit this PC's graphics card (learnt from a memory failure)."""
+    try:
+        return int(json.loads(_fit_path(models_dir).read_text())["maxTokens"])
+    except (OSError, ValueError, KeyError, TypeError):
+        return None
+
+
+def _save_limit(models_dir: str, limit: int) -> None:
+    try:
+        _fit_path(models_dir).write_text(json.dumps({"maxTokens": limit}))
+    except OSError:
+        pass
+
+
+def size_for(frames: int, limit: int | None) -> tuple[int, int] | None:
+    """The largest size whose tokens stay within `limit` (all sizes without a limit)."""
+    for w, h in SIZES:
+        if limit is None or tokens(w, h, frames) <= limit:
+            return (w, h)
+    return None
+
+
+def memory_shortfall(lines: list[str]) -> float | None:
+    """From the engine's "need X MB … available Y MB" line: the share of the need that fits."""
+    for line in lines:
+        m = _NEED.search(line)
+        if m:
+            need_dev, need_budget, have_dev, have_budget = (float(g) for g in m.groups())
+            return min(have_dev / need_dev, have_budget / need_budget)
+    return None
+
+
 def talk(
     params: dict[str, Any], progress: Callable[..., None], cancelled: threading.Event
 ) -> dict[str, Any]:
@@ -155,11 +206,48 @@ def talk(
     frames = frames_for(seconds)
     out.parent.mkdir(parents=True, exist_ok=True)
     progress(0.02, "Animating the character…")
+    width, height = WIDTH, HEIGHT
     if _fake():
         _fake_clip(str(params["ffmpeg"]), image, out, frames / FPS)
     else:
-        lora = Path(LORA[0]).stem
-        m = model_dir(models_dir)
+        width, height = _animate(
+            models_dir, image, audio, out, prompt, seed, frames, progress, cancelled
+        )
+    progress(1.0, "Clip ready")
+    return {
+        "video": str(out),
+        "frames": frames,
+        "seconds": frames / FPS,
+        "width": width,
+        "height": height,
+    }
+
+
+def _animate(
+    models_dir: str,
+    image: Path,
+    audio: Path,
+    out: Path,
+    prompt: str,
+    seed: int,
+    frames: int,
+    progress: Callable[..., None],
+    cancelled: threading.Event,
+) -> tuple[int, int]:
+    """Runs S2V at the largest size known to fit; on a graphics-memory shortfall, learns the limit
+    from the engine's report and tries again smaller (the failure comes at the first step, so a
+    retry costs only the model loading)."""
+    lora = Path(LORA[0]).stem
+    m = model_dir(models_dir)
+    limit = token_limit(models_dir)
+    for _attempt in range(4):
+        size = size_for(frames, limit)
+        if size is None:
+            raise RuntimeError(
+                "The graphics card does not have enough free memory even for the smallest size. "
+                "Close games and other GPU programs, or use a shorter line."
+            )
+        width, height = size
         args = [
             "-M",
             "vid_gen",
@@ -190,9 +278,9 @@ def talk(
             "--flow-shift",
             "3.0",
             "-W",
-            str(WIDTH),
+            str(width),
             "-H",
-            str(HEIGHT),
+            str(height),
             "--video-frames",
             str(frames),
             "-s",
@@ -202,19 +290,30 @@ def talk(
             "-o",
             str(out),
         ]
+        label = f"{width}×{height}"
+        progress(0.05, f"Animating the character at {label}…")
 
-        def step(done: int, total: int) -> None:
+        def step(done: int, total: int, label: str = label) -> None:
             progress(
                 0.05 + 0.9 * done / max(1, total),
-                f"Animating the character (step {done} of {total})…",
+                f"Animating the character at {label} (step {done} of {total})…",
             )
 
         try:
             images.run_engine(models_dir, args, out, cancelled, step, "The animation engine")
+            return width, height
         except images.Cancelled as e:
             raise Cancelled() from e
-    progress(1.0, "Clip ready")
-    return {"video": str(out), "frames": frames, "seconds": frames / FPS}
+        except images.EngineFailed as e:
+            share = memory_shortfall(e.lines)
+            if share is None:
+                raise
+            # Aim a little under what was available; never above what just failed.
+            used = tokens(width, height, frames)
+            limit = min(used - 1, int(used * share * 0.9))
+            _save_limit(models_dir, limit)
+            progress(0.04, "Not enough graphics memory at that size; trying smaller…")
+    raise RuntimeError("The animation engine could not find a size that fits the graphics card.")
 
 
 def _fake_clip(ffmpeg: str, image: Path, out: Path, seconds: float) -> None:

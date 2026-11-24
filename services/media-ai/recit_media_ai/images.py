@@ -72,6 +72,14 @@ class Cancelled(Exception):
     pass
 
 
+class EngineFailed(RuntimeError):
+    """sd-cli failed; `lines` is its cleaned output, for callers that can recover."""
+
+    def __init__(self, message: str, lines: list[str]) -> None:
+        super().__init__(message)
+        self.lines = lines
+
+
 def _fake() -> bool:
     return os.environ.get("RECIT_FAKE_IMAGES") == "1"
 
@@ -353,7 +361,7 @@ def run_engine(
                     continue
                 tail.append(text)
                 del tail[:-200]
-                if _is_error(text) and len(errors) < 50:
+                if (_is_error(text) or "enough memory" in text) and len(errors) < 50:
                     errors.append(text)
 
     reader = threading.Thread(target=read, daemon=True)
@@ -369,7 +377,7 @@ def run_engine(
             log_path.write_text("\n".join([str(exe) + " …", *tail]), encoding="utf-8")
         except OSError:
             pass
-        raise RuntimeError(failure_message(errors, tail, proc.returncode, log_path, what))
+        raise EngineFailed(failure_message(errors, tail, proc.returncode, log_path, what), tail)
 
 
 _ANSI = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]")
@@ -377,7 +385,9 @@ _PROGRESS = re.compile(r"^\s*\|[=#> -]*\|")
 _RAM = re.compile(r"RAM (weight|graph) capacity exceeded", re.IGNORECASE)
 _ERROR = re.compile(r"\[(E|ERROR)\]|error|failed|out of memory", re.IGNORECASE)
 _OOM = re.compile(
-    r"out of memory|cudaMalloc|failed to allocate|alloc.*buffer|CUDA error", re.IGNORECASE
+    r"out of memory|cudaMalloc|failed to allocate|alloc.*buffer|CUDA error"
+    r"|cannot make enough memory available",
+    re.IGNORECASE,
 )
 
 

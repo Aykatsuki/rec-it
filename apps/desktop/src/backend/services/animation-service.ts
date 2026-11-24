@@ -17,6 +17,9 @@ export interface TalkResult {
   video: string;
   frames: number;
   seconds: number;
+  /** The size it was animated at: the largest that fits the graphics card (ADR-048). */
+  width: number;
+  height: number;
 }
 
 export class AnimationService {
