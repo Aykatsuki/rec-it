@@ -827,6 +827,7 @@ Each record states the decision, why it was made and what else was considered. R
   - Engine: the Windows CUDA 12 build and its CUDA runtime, pinned to release master-1122-3b12781 with SHA-256 hashes (about 1 GB).
   - Models (about 6.5 GB, all Apache-2.0): `z_image_turbo-Q4_0.gguf` (leejet), `Qwen3-4B-Instruct-2507-Q4_K_M.gguf` (unsloth), and the FLUX VAE `ae.safetensors` (Comfy-Org). Each is checked against the SHA-256 Hugging Face publishes for it on the download's redirect.
   - Settings: 576×1024 (9:16), 8 steps, CFG 1, `--offload-to-cpu --diffusion-fa` so it fits 8 GB, and a random base seed per Short.
+  - Ollama keeps its chat model in VRAM for minutes after the scene plan, which left too little for the text encoder ("prompt encoding failed"). Before drawing, Rec-It unloads every loaded Ollama model (`/api/ps`, then `keep_alive: 0`); errors show sd-cli's first error line, memory failures in plain words, and the full output in `last-error.log` in the engine folder.
   - Installed from Make a Short (progress, cancel) into the models folder.
   - `RECIT_SD_CLI` uses another sd-cli build (Linux, macOS, or newer). `RECIT_FAKE_IMAGES=1` draws a gradient per prompt, for tests.
   - Seven picture styles (cinematic, anime, 3D render, comic, watercolour, dark and moody, historical painting) are appended to every prompt, with "vertical 9:16 composition, no text".

@@ -31,6 +31,8 @@ export interface TemplateDeps {
   images: ImageService;
   /** The AI's scene plan, or null when no AI is set up or it fails (a plain grouping is used). */
   planScenes: (title: string, sentences: string[], count: number) => Promise<ScenePlan | null>;
+  /** Frees the graphics card (unloads Ollama's models) before the picture engine runs. */
+  releaseGpu?: () => Promise<unknown>;
   /** A transcript was stored outside transcription (the voiceover's). */
   onTranscript: () => void;
   onChange: (jobs: TemplateJob[]) => void;
@@ -158,6 +160,9 @@ export class TemplateService {
       let scenePaths: string[] = [];
       if (input.visuals === 'pictures') {
         const style = PICTURE_STYLES[input.pictureStyle].prompt;
+        this.update(id, { stage: 'Freeing the graphics card…', progress: 0.36 });
+        await this.d.releaseGpu?.().catch(() => undefined);
+        check();
         scenePaths = await this.d.images.generate(
           scenes.map((sc) => `${sc.picture}. ${style}, vertical 9:16 composition, no text`),
           {

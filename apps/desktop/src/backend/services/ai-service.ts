@@ -78,6 +78,11 @@ export class AiService {
     });
   }
 
+  /** Unloads local models so the picture engine has the graphics card (ADR-047). */
+  releaseGpu(): Promise<string[]> {
+    return this.client().release();
+  }
+
   narrate(title: string, text: string, seconds: number) {
     return this.client().json(
       storySchema.omit({ username: true }),

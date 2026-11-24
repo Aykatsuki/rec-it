@@ -298,12 +298,16 @@ def _run_sd(
         creationflags=flags,
     )
     tail: list[str] = []
+    errors: list[str] = []
 
     def read() -> None:
         assert proc.stdout is not None
         for line in proc.stdout:
-            tail.append(line.decode("utf-8", "replace").rstrip())
-            del tail[:-20]
+            text = line.decode("utf-8", "replace").rstrip()
+            tail.append(text)
+            del tail[:-200]
+            if _is_error(text) and len(errors) < 50:
+                errors.append(text)
 
     reader = threading.Thread(target=read, daemon=True)
     reader.start()
@@ -313,8 +317,37 @@ def _run_sd(
             raise Cancelled()
     reader.join(timeout=2)
     if proc.returncode != 0 or not out.is_file():
-        detail = next((t for t in reversed(tail) if t.strip()), f"exit code {proc.returncode}")
-        raise RuntimeError(f"The picture engine failed: {detail[:300]}")
+        log_path = engine_dir(models_dir) / "last-error.log"
+        try:
+            log_path.write_text("\n".join([" ".join(args[:1] + ["…"]), *tail]), encoding="utf-8")
+        except OSError:
+            pass
+        raise RuntimeError(failure_message(errors, tail, proc.returncode, log_path))
+
+
+_ERROR = re.compile(r"\[(E|ERROR)\]|error|failed|out of memory", re.IGNORECASE)
+_OOM = re.compile(
+    r"out of memory|cudaMalloc|failed to allocate|alloc.*buffer|CUDA error", re.IGNORECASE
+)
+
+
+def _is_error(line: str) -> bool:
+    return bool(_ERROR.search(line))
+
+
+def failure_message(errors: list[str], tail: list[str], code: int | None, log_path: Path) -> str:
+    """A readable reason from sd-cli's output: memory problems in plain words, otherwise the
+    first error it logged (the last one is only "generate failed", which says nothing)."""
+    if any(_OOM.search(e) for e in errors):
+        return (
+            "The graphics card ran out of memory while drawing. Close games, browsers with video "
+            "and other AI apps (Ollama is closed for you), then try again. "
+            f"Details: {log_path}"
+        )
+    useful = [e for e in errors if "generate failed" not in e] or errors
+    detail = useful[0] if useful else next((t for t in reversed(tail) if t.strip()), "")
+    detail = re.sub(r"^\[[A-Z]+\]\s*", "", detail.strip()) or f"exit code {code}"
+    return f"The picture engine failed: {detail[:300]} (full log: {log_path})"
 
 
 def remove(models_dir: str) -> None:

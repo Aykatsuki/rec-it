@@ -185,6 +185,7 @@ export class BackendApp {
       voice: this.voice,
       images: this.images,
       planScenes: (title, sentences, count) => this.ai.planScenes(title, sentences, count),
+      releaseGpu: () => this.ai.releaseGpu(),
       onTranscript: () => this.transcripts.changed(),
       onChange: (jobs) => this.emit('templates.changed', jobs),
     });
