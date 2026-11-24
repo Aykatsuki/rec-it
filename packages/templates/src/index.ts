@@ -562,25 +562,37 @@ export function talkingShot(input: TalkingShotInput): Command {
   };
 }
 
+/** How a talking character looks and where it is (ADR-050). */
+export interface CharacterLook {
+  style?: 'cartoon' | 'render3d';
+  /** The background scene, e.g. "a muddy battlefield in the rain"; empty for a plain one. */
+  setting?: string;
+  /** The expression kept while talking: understated, since only the mouth moves. */
+  mood?: string;
+}
+
 /**
- * The picture prompt for a talking character, facing the camera with the mouth closed and room
- * to talk: a 2D stick-figure cartoon (the default) or a Pixar-like 3D character.
+ * The picture prompt for a talking character facing the camera with the mouth closed, an
+ * understated expression and room to talk: a 2D stick-figure cartoon (the default) or a
+ * Pixar-like 3D character, in its setting.
  */
-export function characterPrompt(
-  character: string,
-  style: 'cartoon' | 'render3d' = 'cartoon',
-): string {
-  if (style === 'render3d')
+export function characterPrompt(character: string, look: CharacterLook = {}): string {
+  const mood = look.mood ?? 'serious';
+  const setting = look.setting?.trim();
+  const face = `a subtle, understated ${mood} expression, mouth closed`;
+  if (look.style === 'render3d')
     return (
       `${character.trim()}, Pixar-style 3D animated film character, waist-up portrait facing the ` +
-      'camera, mouth closed with lips together, neutral expression, eyes open, soft cinematic ' +
-      'studio lighting, simple softly blurred background, vertical 9:16 composition, no text'
+      `camera, ${face}, eyes open, soft cinematic lighting, ` +
+      (setting ? `in ${setting}, detailed background` : 'simple softly blurred background') +
+      ', vertical 9:16 composition, no text'
     );
   return (
-    `${character.trim()}, 2D cartoon stick-figure character with a round plain white head, simple ` +
-    'face with dot eyes and the mouth closed as a small line, bold clean black outlines, flat ' +
-    'muted colours, upper body facing the camera, simple hand-drawn background, webcomic ' +
-    'explainer style, vertical 9:16 composition, no text'
+    `${character.trim()}, 2D cartoon stick-figure character with a round plain white head, dot ` +
+    `eyes, ${face} as a small line, bold clean black outlines, flat muted colours, upper body ` +
+    'facing the camera, ' +
+    (setting ? `in ${setting}, detailed hand-drawn background` : 'simple hand-drawn background') +
+    ', webcomic explainer style, vertical 9:16 composition, no text'
   );
 }
 

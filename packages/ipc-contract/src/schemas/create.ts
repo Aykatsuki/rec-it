@@ -107,6 +107,16 @@ export const storyShortSchema = z
   .strict();
 export type StoryShortInput = z.input<typeof storyShortSchema>;
 
+export const CHARACTER_MOODS = [
+  'serious',
+  'neutral',
+  'determined',
+  'worried',
+  'sad',
+  'happy',
+] as const;
+export type CharacterMood = (typeof CHARACTER_MOODS)[number];
+
 /**
  * One talking-character shot (ADR-048/049): a Pixar-style picture of the character, its mouth
  * shapes, and the line in an AI voice with the mouth in time. Builds a short test sequence.
@@ -120,6 +130,10 @@ export const talkTestSchema = z
     voice: z.string().regex(/^[a-z]{2}_[a-z]+$/),
     /** 2D stick-figure cartoon (the default) or a Pixar-style 3D character. */
     style: z.enum(['cartoon', 'render3d']).default('cartoon'),
+    /** Where they are, drawn as the background, e.g. "a muddy battlefield in the rain". */
+    setting: z.string().trim().max(300).default(''),
+    /** The face they keep while talking (only the mouth moves). */
+    mood: z.enum(CHARACTER_MOODS).default('serious'),
   })
   .strict();
 export type TalkTestInput = z.input<typeof talkTestSchema>;

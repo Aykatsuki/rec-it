@@ -48,21 +48,23 @@ KLEIN_FILES = [
 FOLDER = "flux2-klein-4b"
 
 KEEP = (
-    " Keep everything else exactly the same: the same character, face, eyes, pose, framing, "
-    "drawing style, lighting, colours and background."
+    " Small and natural, not exaggerated. Keep everything else exactly the same: the same "
+    "character, facial expression and mood, eyes, eyebrows, pose, framing, drawing style, "
+    "lighting, colours and background."
 )
-#: Mouth shapes (a classic limited-animation set) and the edit that draws each one.
+#: Mouth shapes (a classic limited-animation set) and the edit that draws each one. Kept subtle:
+#: speech moves the lips a little; it does not grin or stick out the tongue.
 SHAPES: dict[str, str] = {
     # Pictures often come back with the mouth open whatever the prompt says, so closed lips
     # (m, b, p and silence) are drawn too, and stand in for the original when they come out.
-    "rest": "Close the character's mouth: lips gently together, relaxed, neutral." + KEEP,
-    "open": "Open the character's mouth wide, as when saying 'ah', showing the tongue." + KEEP,
-    "mid": "Open the character's mouth slightly and relaxed, as when saying 'uh'." + KEEP,
-    "wide": "Stretch the character's mouth into a wide smile showing the teeth, as when saying "
-    "'ee'." + KEEP,
-    "round": "Push the character's lips forward into a small round 'o' shape, as when saying "
-    "'oo'." + KEEP,
-    "fv": "Rest the character's upper teeth on the lower lip, as when saying 'f'." + KEEP,
+    "rest": "Close the character's mouth: lips together, relaxed." + KEEP,
+    "open": "Open the character's mouth a little, as when saying 'ah'." + KEEP,
+    "mid": "Part the character's lips slightly, as when saying 'uh'." + KEEP,
+    "wide": "Stretch the character's lips a little sideways with the mouth slightly open, as when "
+    "saying 'ee'; not a smile." + KEEP,
+    "round": "Purse the character's lips into a small round shape, as when saying 'oo'." + KEEP,
+    "fv": "Tuck the character's lower lip lightly under the upper teeth, as when saying 'f'."
+    + KEEP,
     "blink": "Close both of the character's eyes, relaxed eyelids." + KEEP,
 }
 #: When a shape could not be drawn, the nearest one that was.

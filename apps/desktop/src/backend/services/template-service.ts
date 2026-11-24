@@ -359,7 +359,13 @@ export class TemplateService {
       const seed = Math.floor(Math.random() * 1_000_000);
       const charDir = join(folder, `character ${stamp}`);
       const [picture] = await this.d.images.generate(
-        [characterPrompt(input.character, input.style)],
+        [
+          characterPrompt(input.character, {
+            style: input.style,
+            setting: input.setting,
+            mood: input.mood,
+          }),
+        ],
         {
           outDir: charDir,
           seed,

@@ -22,7 +22,12 @@ import {
   type StoryGenre,
 } from '@rec-it/ai';
 import { DEFAULT_VOICE, VOICES } from '@rec-it/templates';
-import type { ImageStatus, StoryShortInput } from '@rec-it/ipc-contract';
+import {
+  CHARACTER_MOODS,
+  type CharacterMood,
+  type ImageStatus,
+  type StoryShortInput,
+} from '@rec-it/ipc-contract';
 import { Button, Dialog, TextField } from '@rec-it/ui';
 import { backend, RecitError } from '../api';
 import { notify } from '../notifications';
@@ -718,6 +723,8 @@ function CharactersForm({ onDone }: { onDone: () => void }) {
   const jobs = useApp((s) => s.templateJobs);
   const [character, setCharacter] = useState('a samurai in dark armour with a horned helmet');
   const [style, setStyle] = useState<'cartoon' | 'render3d'>('cartoon');
+  const [setting, setSetting] = useState('a muddy battlefield in the rain');
+  const [mood, setMood] = useState<CharacterMood>('serious');
   const [line, setLine] = useState('Hi! I was made on your own computer. Pretty cool, right?');
   const [voice, setVoice] = useState<string>(DEFAULT_VOICE);
   const [error, setError] = useState<string | null>(null);
@@ -747,7 +754,14 @@ function CharactersForm({ onDone }: { onDone: () => void }) {
   const start = async () => {
     setError(null);
     try {
-      const r = await backend.invoke('templates.talkTest', { character, line, voice, style });
+      const r = await backend.invoke('templates.talkTest', {
+        character,
+        line,
+        voice,
+        style,
+        setting,
+        mood,
+      });
       setJobId(r.jobId);
     } catch (e) {
       setError(message(e));
@@ -779,6 +793,30 @@ function CharactersForm({ onDone }: { onDone: () => void }) {
             onChange={(e) => setCharacter(e.target.value)}
             data-testid="talk-character"
           />
+        </label>
+        <label>
+          Setting (the background)
+          <TextField
+            value={setting}
+            placeholder="e.g. a misty forest clearing at dawn"
+            onChange={(e) => setSetting(e.target.value)}
+            data-testid="talk-setting"
+          />
+        </label>
+        <label>
+          Mood
+          <select
+            className="ui-input"
+            value={mood}
+            onChange={(e) => setMood(e.target.value as CharacterMood)}
+            data-testid="talk-mood"
+          >
+            {CHARACTER_MOODS.map((m) => (
+              <option key={m} value={m}>
+                {m[0]!.toUpperCase() + m.slice(1)}
+              </option>
+            ))}
+          </select>
         </label>
         <label>
           Style

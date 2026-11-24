@@ -897,6 +897,7 @@ Each record states the decision, why it was made and what else was considered. R
 **Decisions.**
 - **New picture style, `cartoon` ("Stick-figure cartoon")**, first in the list and the default for Story or topic videos (schema and dialog). Every scene picture gets the look; the AI storyboard's picture descriptions stay the same.
 - **Talking characters get a style choice:** `cartoon` (default) or `render3d` (Pixar-style). In the cartoon prompt the character faces the camera with the mouth closed as a small line; mouth edits ask Klein to keep the drawing style too. Simple drawn faces suit swapped mouth shapes, which is how hand-drawn animation has always done lip sync.
+- **Understated faces, real settings.** Your first cartoon results were too exaggerated and cheerful for history. Mouth edits now ask for small, natural shapes (no grin, no tongue), keeping the character's expression, mood and eyebrows. Talking characters take a **Mood** (serious by default; neutral, determined, worried, sad, happy) for an understated face, and a **Setting** that is drawn as the full background in the same style. The story style asks for subtle expressions too.
 - **Speed is unchanged:** Z-Image takes the same steps whatever the style. The gain is the look, and cleaner mouth shapes.
 
 **Not tested here:** how well Z-Image Turbo follows the cartoon prompt; that is seen on the reference PC.
