@@ -159,7 +159,7 @@ def test_engine_command_and_failure(tmp_path, monkeypatch):
     )
     args = (tmp_path / "args.txt").read_text()
     assert "-p a red fox" in args and "--steps 8" in args and "-W 576 -H 1024" in args
-    assert "-s 7" in args and "--offload-to-cpu" in args
+    assert "-s 7" in args and "--mmap" in args and "--offload-to-cpu" not in args
     assert Path(r["images"][0]).read_bytes() == b"PNG"
 
 
