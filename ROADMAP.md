@@ -283,9 +283,11 @@ Next:
   - the whole Short is one undo step, from **Make a Short**.
 - **The clip finder engine** from Clipalytics, as `packages/clipping`: local loudness, action and speech signals, moments, and AI scoring.
 
+**Progress (24 Nov 2026).** Slice B (ADR-047): generated visuals. The AI storyboards the script into scenes. Each scene gets an AI picture (Z-Image Turbo via stable-diffusion.cpp on your GPU, installed once) or a motion-graphics backdrop, animated with zooms, pans and dissolves to the voice. Topic and facts scripts are supported too.
+
 Next:
-- Slice B: the text-conversation and split-screen templates.
-- Slice C: the clip finder in the app. That means measuring with FFmpeg, a ranked moments panel, scoring with Ollama/Kimi, and one-click Shorts with reframe and captions.
+- Slice C: the text-conversation and split-screen templates.
+- Slice D: the clip finder in the app. That means measuring with FFmpeg, a ranked moments panel, scoring with Ollama/Kimi, and one-click Shorts with reframe and captions.
 - Then voice tools (noise cleanup, vocal removal) and ideas and hooks.
 
 **Goal:** make finished Shorts from a prompt, a script or a long video, with AI that costs nothing (Ollama) or very little (Kimi).

@@ -3,7 +3,14 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { BookOpen, MessagesSquare, Play, Scissors, Square, Columns2, Wand2, X } from 'lucide-react';
 import { create } from 'zustand';
-import { STORY_GENRES, estimateSeconds, type StoryGenre } from '@rec-it/ai';
+import {
+  PICTURE_STYLES,
+  SCRIPT_GENRES,
+  STORY_GENRES,
+  estimateSeconds,
+  type PictureStyle,
+  type StoryGenre,
+} from '@rec-it/ai';
 import { DEFAULT_VOICE, VOICES } from '@rec-it/templates';
 import type { StoryShortInput } from '@rec-it/ipc-contract';
 import { Button, Dialog, TextField } from '@rec-it/ui';
@@ -24,8 +31,8 @@ const TEMPLATES: {
 }[] = [
   {
     id: 'story',
-    title: 'Story video',
-    text: 'A post-style title card, an AI voice reading the story and big captions over gameplay.',
+    title: 'Story or topic video',
+    text: 'From a topic or your script: AI voice and big captions over AI pictures, motion graphics or gameplay.',
     icon: <BookOpen size={18} />,
     ready: true,
   },
@@ -102,6 +109,7 @@ function CreateBody({ onDone }: { onDone: () => void }) {
 function StoryForm({ onDone }: { onDone: () => void }) {
   const assets = useApp((s) => s.assets);
   const voiceStatus = useApp((s) => s.voice);
+  const imageStatus = useApp((s) => s.images);
   const jobs = useApp((s) => s.templateJobs);
   const videos = assets.filter((a) => a.kind === 'video' && a.status === 'ready');
   const sounds = assets.filter(
@@ -126,6 +134,8 @@ function StoryForm({ onDone }: { onDone: () => void }) {
   const background = chosenBackground || videos[0]?.id || '';
   const [randomStart, setRandomStart] = useState(true);
   const [music, setMusic] = useState('');
+  const [visuals, setVisuals] = useState<'footage' | 'pictures' | 'graphics'>('pictures');
+  const [pictureStyle, setPictureStyle] = useState<PictureStyle>('cinematic');
   const [captionStyle, setCaptionStyle] =
     useState<NonNullable<StoryShortInput['captionStyle']>>('pop');
   const [card, setCard] = useState(true);
@@ -211,7 +221,9 @@ function StoryForm({ onDone }: { onDone: () => void }) {
         username,
         voice,
         speed,
-        backgroundAssetId: background,
+        visuals,
+        pictureStyle,
+        backgroundAssetId: visuals === 'footage' ? background : null,
         backgroundStart: randomStart ? null : 0,
         musicAssetId: music || null,
         captionStyle,
@@ -225,7 +237,9 @@ function StoryForm({ onDone }: { onDone: () => void }) {
 
   const voiceReady = voiceStatus?.available === true;
   const running = job?.state === 'running';
-  const canCreate = !!title.trim() && !!story.trim() && !!background && voiceReady && !running;
+  const visualsReady =
+    visuals === 'footage' ? !!background : visuals === 'pictures' ? !!imageStatus?.available : true;
+  const canCreate = !!title.trim() && !!story.trim() && visualsReady && voiceReady && !running;
 
   return (
     <form
@@ -246,7 +260,7 @@ function StoryForm({ onDone }: { onDone: () => void }) {
             Write with AI
           </button>
           <button type="button" data-active={mode === 'paste'} onClick={() => setMode('paste')}>
-            Paste a story
+            Paste a script
           </button>
         </div>
         {mode === 'ai' && (
@@ -256,7 +270,11 @@ function StoryForm({ onDone }: { onDone: () => void }) {
               <select
                 className="ui-input"
                 value={genre}
-                onChange={(e) => setGenre(e.target.value as StoryGenre)}
+                onChange={(e) => {
+                  const g = e.target.value as StoryGenre;
+                  setGenre(g);
+                  setCard(!SCRIPT_GENRES.includes(g));
+                }}
               >
                 {(Object.keys(STORY_GENRES) as StoryGenre[]).map((g) => (
                   <option key={g} value={g}>
@@ -266,10 +284,14 @@ function StoryForm({ onDone }: { onDone: () => void }) {
               </select>
             </label>
             <label className="create__grow">
-              Idea (optional)
+              {SCRIPT_GENRES.includes(genre) ? 'Topic' : 'Idea (optional)'}
               <TextField
                 value={idea}
-                placeholder="e.g. my roommate labels every egg in the fridge"
+                placeholder={
+                  SCRIPT_GENRES.includes(genre)
+                    ? 'e.g. why octopuses have three hearts'
+                    : 'e.g. my roommate labels every egg in the fridge'
+                }
                 onChange={(e) => setIdea(e.target.value)}
               />
             </label>
@@ -399,33 +421,99 @@ function StoryForm({ onDone }: { onDone: () => void }) {
       </section>
 
       <section className="create__section">
-        <h3>Look</h3>
-        <div className="create__row">
-          <label className="create__grow">
-            Background video
-            <select
-              className="ui-input"
-              value={background}
-              onChange={(e) => setBackground(e.target.value)}
-              data-testid="story-background"
-            >
-              {!videos.length && <option value="">Import gameplay footage first</option>}
-              {videos.map((v) => (
-                <option key={v.id} value={v.id}>
-                  {v.name}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label className="create__check">
-            <input
-              type="checkbox"
-              checked={randomStart}
-              onChange={(e) => setRandomStart(e.target.checked)}
-            />
-            Random start
-          </label>
+        <h3>Visuals</h3>
+        <div
+          className="create__segmented"
+          role="radiogroup"
+          aria-label="What is behind the captions"
+        >
+          <button
+            type="button"
+            data-active={visuals === 'pictures'}
+            onClick={() => setVisuals('pictures')}
+            data-testid="visuals-pictures"
+          >
+            AI pictures
+          </button>
+          <button
+            type="button"
+            data-active={visuals === 'graphics'}
+            onClick={() => setVisuals('graphics')}
+            data-testid="visuals-graphics"
+          >
+            Motion graphics
+          </button>
+          <button
+            type="button"
+            data-active={visuals === 'footage'}
+            onClick={() => setVisuals('footage')}
+            data-testid="visuals-footage"
+          >
+            Gameplay footage
+          </button>
         </div>
+        {visuals === 'pictures' && (
+          <>
+            <small className="create__hint">
+              The AI splits the script into scenes and draws one picture per scene on your PC
+              (Z-Image Turbo); Rec-It animates them with slow zooms and pans.
+            </small>
+            {!imageStatus?.available && <PictureEngine />}
+            <label>
+              Picture style
+              <select
+                className="ui-input"
+                value={pictureStyle}
+                onChange={(e) => setPictureStyle(e.target.value as PictureStyle)}
+                data-testid="picture-style"
+              >
+                {(Object.keys(PICTURE_STYLES) as PictureStyle[]).map((k) => (
+                  <option key={k} value={k}>
+                    {PICTURE_STYLES[k].label}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </>
+        )}
+        {visuals === 'graphics' && (
+          <small className="create__hint">
+            Designed, animated backgrounds in colours the AI picks for each scene. Instant; no
+            picture engine needed.
+          </small>
+        )}
+        {visuals === 'footage' && (
+          <div className="create__row">
+            <label className="create__grow">
+              Background video
+              <select
+                className="ui-input"
+                value={background}
+                onChange={(e) => setBackground(e.target.value)}
+                data-testid="story-background"
+              >
+                {!videos.length && <option value="">Import gameplay footage first</option>}
+                {videos.map((v) => (
+                  <option key={v.id} value={v.id}>
+                    {v.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="create__check">
+              <input
+                type="checkbox"
+                checked={randomStart}
+                onChange={(e) => setRandomStart(e.target.checked)}
+              />
+              Random start
+            </label>
+          </div>
+        )}
+      </section>
+
+      <section className="create__section">
+        <h3>Look</h3>
         <div className="create__row">
           <label className="create__grow">
             Music (optional)
@@ -521,5 +609,44 @@ function StoryForm({ onDone }: { onDone: () => void }) {
         </Button>
       </footer>
     </form>
+  );
+}
+
+/** Status and install button for the AI picture engine (about 7 GB, downloaded once). */
+function PictureEngine() {
+  const status = useApp((s) => s.images);
+  if (!status) return null;
+  if (status.install.state === 'running')
+    return (
+      <div className="create__note" data-testid="picture-engine">
+        {status.install.message ?? 'Installing…'}
+        <progress value={status.install.progress ?? 0} max={1} />
+        <Button
+          size="sm"
+          variant="ghost"
+          onClick={() => void backend.invoke('images.cancelInstall', {})}
+        >
+          Cancel
+        </Button>
+      </div>
+    );
+  return (
+    <div className="create__note" data-testid="picture-engine">
+      {status.installable ? (
+        <>
+          AI pictures need the picture engine: Z-Image Turbo, run on your graphics card (about 7 GB,
+          downloaded once).{' '}
+          <Button size="sm" onClick={() => void backend.invoke('images.install', {})}>
+            Install picture engine
+          </Button>
+        </>
+      ) : (
+        <>AI pictures are not available on this computer. {status.reason}</>
+      )}
+      {status.install.state === 'failed' && (
+        <div className="create__error">{status.install.message}</div>
+      )}
+      {status.blocked && <div className="create__error">{status.blocked}</div>}
+    </div>
   );
 }

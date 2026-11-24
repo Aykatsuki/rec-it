@@ -148,6 +148,34 @@ export class AiClient {
     }
   }
 
+  /**
+   * Frees the graphics card before another GPU job (the picture engine). Ollama keeps a model
+   * loaded for minutes after a reply, and an 8 GB card cannot hold an 8B chat model and Z-Image
+   * together. Asks Ollama for its loaded models and unloads each one; it reloads on the next
+   * request. Does nothing for other providers, and never throws.
+   */
+  async release(): Promise<string[]> {
+    if (this.config.provider !== 'ollama' || !this.config.baseUrl) return [];
+    const root = this.config.baseUrl.replace(/\/+$/, '').replace(/\/v1$/, '');
+    try {
+      const ps = await this.fetch(`${root}/api/ps`, { method: 'GET', headers: this.headers() });
+      if (!ps.ok) return [];
+      const loaded = ((JSON.parse(await ps.text()) as { models?: { name?: string }[] }).models ?? [])
+        .map((m) => m.name)
+        .filter((n): n is string => !!n);
+      for (const model of loaded) {
+        await this.fetch(`${root}/api/generate`, {
+          method: 'POST',
+          headers: this.headers(),
+          body: JSON.stringify({ model, keep_alive: 0 }),
+        });
+      }
+      return loaded;
+    } catch {
+      return [];
+    }
+  }
+
   /** Models the server offers. */
   async listModels(): Promise<string[]> {
     const r = (await this.send('/models')) as { data?: { id?: string }[] };

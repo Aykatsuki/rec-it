@@ -20,6 +20,37 @@ const STORY = {
   username: 'egg_keeper',
 };
 
+const FACTS = {
+  title: 'Three hearts, blue blood',
+  story:
+    'Octopuses have three hearts. Two of them pump blood to the gills. Their blood is blue because of copper. Each arm can taste what it touches.',
+};
+const PLAN = {
+  scenes: [
+    {
+      from: 1,
+      to: 2,
+      picture: 'an octopus with glowing hearts',
+      motion: 'zoomIn',
+      palette: ['#001122', '#0055AA', '#66CCFF'],
+    },
+    {
+      from: 3,
+      to: 3,
+      picture: 'blue blood swirling in water',
+      motion: 'panLeft',
+      palette: ['#000033', '#3344FF', '#99AAFF'],
+    },
+    {
+      from: 4,
+      to: 4,
+      picture: 'an octopus arm touching a shell',
+      motion: 'zoomOut',
+      palette: ['#220011', '#AA3366', '#FFCC99'],
+    },
+  ],
+};
+
 test.describe('create a Short', () => {
   test.skip(!bins, 'FFmpeg is not available (run pnpm fetch-ffmpeg)');
   test.beforeAll(async () => {
@@ -37,7 +68,11 @@ test.describe('create a Short', () => {
         const ask = JSON.stringify(JSON.parse(body).messages);
         const content = ask.includes('Rec-It is connected')
           ? 'Rec-It is connected.'
-          : JSON.stringify(STORY);
+          : ask.includes('storyboard')
+            ? JSON.stringify(PLAN)
+            : ask.includes('faceless YouTube Shorts')
+              ? JSON.stringify(FACTS)
+              : JSON.stringify(STORY);
         res.end(JSON.stringify({ choices: [{ message: { content } }] }));
       });
     });
@@ -54,6 +89,7 @@ test.describe('create a Short', () => {
       ...(bins!.source === 'path' ? {} : { RECIT_FFMPEG_PATH: bins!.ffmpeg }),
       RECIT_DISABLE_SIDECAR: '0',
       RECIT_FAKE_TTS: '1',
+      RECIT_FAKE_IMAGES: '1',
     });
     try {
       await createProject(page, 'Stories');
@@ -91,6 +127,7 @@ test.describe('create a Short', () => {
         response_format: { type: 'json_object' },
       });
       await dialog.getByTestId('story-voice').selectOption('bf_emma');
+      await dialog.getByTestId('visuals-footage').click();
       await dialog.getByTestId('story-create').click();
       await expect(dialog).toBeHidden({ timeout: 90_000 });
 
@@ -107,6 +144,47 @@ test.describe('create a Short', () => {
       await items.first().click();
       await page.keyboard.press('Control+Z');
       await expect(items).toHaveCount(0);
+    } finally {
+      await app.close();
+    }
+  });
+
+  test('make a Short about a topic with AI pictures from the storyboard', async () => {
+    const { app, page } = await launch(tempUserData(), {
+      ...(bins!.source === 'path' ? {} : { RECIT_FFMPEG_PATH: bins!.ffmpeg }),
+      RECIT_DISABLE_SIDECAR: '0',
+      RECIT_FAKE_TTS: '1',
+      RECIT_FAKE_IMAGES: '1',
+    });
+    try {
+      await createProject(page, 'Facts');
+      await page.getByRole('button', { name: 'Settings' }).click();
+      await page.getByRole('tab', { name: 'AI' }).click();
+      const ai = page.getByTestId('ai-settings');
+      await ai.getByLabel('AI provider').selectOption('custom');
+      await ai.getByLabel('Server address').fill(aiUrl);
+      await ai.getByLabel('Server address').blur();
+      await expect(ai.getByText('Installed (fake)')).toBeVisible({ timeout: 60_000 });
+      await page.keyboard.press('Escape');
+
+      await page.getByTestId('create-button').click();
+      const dialog = page.getByTestId('create-dialog');
+      await dialog.getByRole('combobox').first().selectOption('facts');
+      await dialog.getByRole('textbox', { name: 'Topic' }).fill('octopus facts');
+      await dialog.getByTestId('story-write').click();
+      await expect(dialog.getByTestId('story-title')).toHaveValue(FACTS.title, { timeout: 15_000 });
+      // AI pictures is the default; the fake engine counts as installed.
+      await expect(dialog.getByTestId('picture-engine')).toHaveCount(0);
+      await dialog.getByTestId('picture-style').selectOption('anime');
+      await dialog.getByTestId('story-create').click();
+      await expect(dialog).toBeHidden({ timeout: 90_000 });
+
+      // Voice + one picture per planned scene, animated, with captions over them.
+      await expect(page.locator('[data-testid=asset-card]')).toHaveCount(4);
+      const storyboard = requests.find((r) => JSON.stringify(r.body ?? '').includes('storyboard'));
+      expect(JSON.stringify(storyboard?.body)).toContain('1. Octopuses have three hearts.');
+      await page.waitForTimeout(500);
+      await page.screenshot({ path: test.info().outputPath('pictures-short.png') });
     } finally {
       await app.close();
     }

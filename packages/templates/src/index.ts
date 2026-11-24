@@ -5,9 +5,11 @@ import { generateCaptions } from '@rec-it/captions';
 import {
   DEFAULT_CAPTIONS,
   secondsToFlicks,
+  snapToFrame,
   type CaptionSettings,
   type CaptionStyleId,
   type Command,
+  type Flicks,
   type Sequence,
   type TranscriptWord,
 } from '@rec-it/core';
@@ -39,6 +41,25 @@ export interface Media {
   duration: number;
 }
 
+export interface Footage extends Media {
+  kind?: 'footage';
+  /** Where in the footage to start (seconds). */
+  start: number;
+  /** Keep the footage's own sound (quietly). */
+  keepSound?: boolean;
+}
+
+/** A still (AI picture or motion-graphics backdrop) shown from `start` to `end` (timeline s). */
+export interface ScenePicture {
+  assetId: string;
+  start: number;
+  end: number;
+  motion: Motion;
+}
+
+export const MOTIONS = ['zoomIn', 'zoomOut', 'panLeft', 'panRight'] as const;
+export type Motion = (typeof MOTIONS)[number];
+
 export interface StoryShortInput {
   sequenceId: string;
   name: string;
@@ -46,12 +67,8 @@ export interface StoryShortInput {
   voice: Media & { words: readonly TranscriptWord[]; titleEnd: number };
   /** The title card image, or none (captions only). */
   card?: { assetId: string };
-  background: Media & {
-    /** Where in the footage to start (seconds). */
-    start: number;
-    /** Keep the footage's own sound (quietly). */
-    keepSound?: boolean;
-  };
+  /** Footage looped behind the story, or one generated picture per scene (ADR-047). */
+  background: Footage | { kind: 'scenes'; scenes: readonly ScenePicture[] };
   music?: Media & { volume: number };
   captions: Partial<Pick<CaptionSettings, 'style' | 'position' | 'uppercase' | 'highlight'>>;
   /** Item ids (so callers and tests know them). */
@@ -72,11 +89,14 @@ export const STORY_CAPTIONS: Pick<CaptionSettings, 'style' | 'position' | 'upper
 };
 
 const f = secondsToFlicks;
+/** The Short's frame rate. Scene boundaries sit exactly on frames (see scenePictures). */
+const FPS = { num: 30, den: 1 };
 
 /** The Short as one batch: background, card, voice, music and captions. */
 export function storyShort(input: StoryShortInput): { command: Command; length: number } {
   const { sequenceId: sid, voice, background, card, music, ids } = input;
-  if (background.duration <= 0.5) throw new Error('The background video is too short.');
+  if (background.kind !== 'scenes' && background.duration <= 0.5)
+    throw new Error('The background video is too short.');
   const length = voice.duration + TAIL;
   const track = (name: string) => `${sid}-${name}`;
   const commands: Command[] = [
@@ -86,32 +106,13 @@ export function storyShort(input: StoryShortInput): { command: Command; length: 
       name: input.name,
       width: 1080,
       height: 1920,
-      fps: { num: 30, den: 1 },
+      fps: FPS,
       trackIds: { V2: track('V2'), V1: track('V1'), A1: track('A1'), A2: track('A2') },
     },
   ];
-  // Background: as many pieces of footage as needed to cover the story, muted by default.
-  let at = 0;
-  let n = 0;
-  let from = Math.min(Math.max(0, background.start), Math.max(0, background.duration - 1));
-  while (at < length - 0.01 && n < 200) {
-    const take = Math.min(background.duration - from, length - at);
-    commands.push({
-      type: 'item.add',
-      sequenceId: sid,
-      trackId: track('V1'),
-      assetId: background.assetId,
-      id: ids.background(n),
-      start: f(at),
-      sourceIn: f(from),
-      duration: f(take),
-      transform: { fit: 'fill' },
-      ...(background.keepSound ? { volume: 0.15 } : { muted: true }),
-    });
-    at += take;
-    from = 0;
-    n++;
-  }
+  if (background.kind === 'scenes')
+    commands.push(...scenePictures(sid, track('V1'), background.scenes, length, ids.background));
+  else commands.push(...footage(sid, track('V1'), background, length, ids.background));
   // Voiceover.
   commands.push({
     type: 'item.add',
@@ -193,6 +194,137 @@ export function storyShort(input: StoryShortInput): { command: Command; length: 
   return { command: { type: 'batch', commands }, length };
 }
 
+/** Footage repeated to cover `length` seconds, muted by default. */
+function footage(
+  sid: string,
+  trackId: string,
+  background: Footage,
+  length: number,
+  id: (n: number) => string,
+): Command[] {
+  const out: Command[] = [];
+  let at = 0;
+  let n = 0;
+  let from = Math.min(Math.max(0, background.start), Math.max(0, background.duration - 1));
+  while (at < length - 0.01 && n < 200) {
+    const take = Math.min(background.duration - from, length - at);
+    out.push({
+      type: 'item.add',
+      sequenceId: sid,
+      trackId,
+      assetId: background.assetId,
+      id: id(n),
+      start: f(at),
+      sourceIn: f(from),
+      duration: f(take),
+      transform: { fit: 'fill' },
+      ...(background.keepSound ? { volume: 0.15 } : { muted: true }),
+    });
+    at += take;
+    from = 0;
+    n++;
+  }
+  return out;
+}
+
+/** How far a scene zooms or pans over its length. */
+const ZOOM = 1.14;
+const PAN = 0.06;
+/** Cross-dissolve between scenes. */
+const DISSOLVE = 0.3;
+/** Shortest scene worth showing (seconds); a dissolve needs room on both sides. */
+const MIN_SCENE = 0.7;
+
+/**
+ * One still per scene, edge to edge, each slowly zooming or panning (keyframes, so it stays
+ * editable), with a short dissolve between scenes.
+ */
+function scenePictures(
+  sid: string,
+  trackId: string,
+  scenes: readonly ScenePicture[],
+  length: number,
+  id: (n: number) => string,
+): Command[] {
+  const out: Command[] = [];
+  // Boundaries in flicks, computed once, so each clip ends exactly where the next starts (the
+  // dissolve needs that). A scene too short to show gives its time to the next scene's picture.
+  const total = snapToFrame(f(length), FPS);
+  const shown: { sc: ScenePicture; n: number; start: number }[] = [];
+  scenes.forEach((sc, n) => {
+    // On a frame: item.add snaps the start, then snaps start + duration, so a boundary off a
+    // frame could leave the clip a frame short of the next one and refuse the dissolve.
+    const start = n === 0 ? 0 : Math.min(snapToFrame(f(Math.max(0, sc.start)), FPS), total);
+    const prev = shown[shown.length - 1];
+    if (prev && start - prev.start < f(MIN_SCENE)) {
+      // The earlier scene is too short: this scene's picture takes over its slot a moment early.
+      if (shown.length > 1) shown[shown.length - 1] = { sc, n, start: prev.start };
+      return;
+    }
+    shown.push({ sc, n, start });
+  });
+  if (shown.length > 1 && total - shown[shown.length - 1]!.start < f(MIN_SCENE)) shown.pop();
+  shown.forEach(({ sc, n, start: startF }, k) => {
+    const endF = k === shown.length - 1 ? total : shown[k + 1]!.start;
+    const start = startF / f(1);
+    const end = endF / f(1);
+    const item = id(n);
+    out.push({
+      type: 'item.add',
+      sequenceId: sid,
+      trackId,
+      assetId: sc.assetId,
+      id: item,
+      start: startF as Flicks,
+      duration: (endF - startF) as Flicks,
+      transform: { fit: 'fill' },
+    });
+    // Keyframe times are source time; a still's source time runs from 0 with the clip.
+    const [p0, p1, v0, v1] =
+      sc.motion === 'zoomIn'
+        ? (['scale', 'scale', 1, ZOOM] as const)
+        : sc.motion === 'zoomOut'
+          ? (['scale', 'scale', ZOOM, 1] as const)
+          : ([
+              'x',
+              'x',
+              sc.motion === 'panLeft' ? PAN : -PAN,
+              sc.motion === 'panLeft' ? -PAN : PAN,
+            ] as const);
+    if (p0 === 'x')
+      out.push({ type: 'item.update', sequenceId: sid, itemId: item, transform: { scale: ZOOM } });
+    out.push(
+      {
+        type: 'keyframe.set',
+        sequenceId: sid,
+        itemId: item,
+        property: p0,
+        t: 0,
+        value: v0,
+        easing: 'linear',
+      },
+      {
+        type: 'keyframe.set',
+        sequenceId: sid,
+        itemId: item,
+        property: p1,
+        t: f(Math.max(0.05, end - start - 0.04)),
+        value: v1,
+        easing: 'linear',
+      },
+    );
+    if (k > 0)
+      out.push({
+        type: 'transition.set',
+        sequenceId: sid,
+        itemId: item,
+        kind: 'dissolve',
+        duration: f(DISSOLVE),
+      });
+  });
+  return out;
+}
+
 /** Just enough of the sequence for caption grouping: the voice at the start of an audio track. */
 function captionSequence(id: string, voice: Media, captions: CaptionSettings): Sequence {
   return {
@@ -245,4 +377,117 @@ export function speakable(text: string): string {
     .replace(/[\p{Extended_Pictographic}\u{FE0F}\u{200D}]/gu, '')
     .replace(/\s+/g, ' ')
     .trim();
+}
+
+// ---- Scenes (ADR-047) -----------------------------------------------------------------------
+
+/** Sentences of a script; very long ones are split at commas so scenes stay short. */
+export function splitSentences(text: string): string[] {
+  const parts = speakable(text).match(/[^.!?…]+[.!?…]+["'”’)]*|[^.!?…]+$/g) ?? [];
+  const out: string[] = [];
+  for (const raw of parts.map((p) => p.trim()).filter(Boolean)) {
+    if (raw.split(/\s+/).length <= 28) {
+      out.push(raw);
+      continue;
+    }
+    let cur = '';
+    for (const piece of raw.split(/(?<=,)\s+/)) {
+      if (cur && `${cur} ${piece}`.split(/\s+/).length > 22) {
+        out.push(cur);
+        cur = piece;
+      } else cur = cur ? `${cur} ${piece}` : piece;
+    }
+    if (cur) out.push(cur);
+  }
+  return out;
+}
+
+export interface Scene {
+  /** First and last sentence (0-based, inclusive). */
+  from: number;
+  to: number;
+  text: string;
+  picture: string;
+  motion: Motion;
+  palette: string[];
+}
+
+const PALETTES = [
+  ['#0F172A', '#7C3AED', '#F472B6'],
+  ['#FF7A18', '#AF002D', '#FFD166'],
+  ['#00C9A7', '#003049', '#90E0EF'],
+  ['#1D2B64', '#F8CDDA', '#6A82FB'],
+  ['#11998E', '#38EF7D', '#F9F871'],
+  ['#232526', '#414345', '#E94560'],
+];
+
+/** A plan without AI: about `count` scenes of consecutive sentences, picturing their words. */
+export function fallbackScenes(sentences: readonly string[], count: number): Scene[] {
+  const n = sentences.length;
+  const k = Math.max(1, Math.min(n, Math.round(count)));
+  const out: Scene[] = [];
+  for (let i = 0; i < k; i++) {
+    const from = Math.floor((i * n) / k);
+    const to = Math.floor(((i + 1) * n) / k) - 1;
+    const text = sentences.slice(from, to + 1).join(' ');
+    out.push({
+      from,
+      to,
+      text,
+      picture: text,
+      motion: MOTIONS[i % MOTIONS.length]!,
+      palette: PALETTES[i % PALETTES.length]!,
+    });
+  }
+  return out;
+}
+
+/**
+ * Makes the AI's plan safe to use: scenes in order, covering every sentence exactly once (gaps
+ * join the scene before, overlaps are trimmed), with a motion and palette each.
+ */
+export function normaliseScenes(
+  planned: readonly {
+    from: number;
+    to: number;
+    picture: string;
+    motion?: Motion | undefined;
+    palette?: string[] | undefined;
+  }[],
+  sentences: readonly string[],
+): Scene[] {
+  const n = sentences.length;
+  if (!n) return [];
+  const sorted = planned
+    .map((p) => ({
+      ...p,
+      from: Math.max(0, Math.min(n - 1, p.from - 1)),
+      to: Math.max(0, Math.min(n - 1, p.to - 1)),
+    }))
+    .filter((p) => p.to >= p.from)
+    .sort((a, b) => a.from - b.from);
+  const out: Scene[] = [];
+  let next = 0;
+  for (const p of sorted) {
+    if (p.to < next) continue; // entirely covered already
+    const from = out.length ? next : 0;
+    out.push({
+      from,
+      to: p.to,
+      text: '',
+      picture: p.picture.trim(),
+      motion: p.motion ?? MOTIONS[out.length % MOTIONS.length]!,
+      palette: p.palette?.length ? p.palette : PALETTES[out.length % PALETTES.length]!,
+    });
+    next = p.to + 1;
+  }
+  if (!out.length) return fallbackScenes(sentences, Math.ceil(n / 2));
+  if (next < n) out[out.length - 1]!.to = n - 1;
+  for (const sc of out) sc.text = sentences.slice(sc.from, sc.to + 1).join(' ');
+  return out;
+}
+
+/** About one picture every 4.5 seconds of narration, 3–24 pictures. */
+export function sceneCount(seconds: number): number {
+  return Math.max(3, Math.min(24, Math.round(seconds / 4.5)));
 }

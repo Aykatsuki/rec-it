@@ -23,6 +23,7 @@ import { lutDataSchema, lutInfoSchema } from './schemas/luts';
 import { claudeStateSchema } from './schemas/claude';
 import {
   aiStatusSchema,
+  imageStatusSchema,
   storyGenreSchema,
   storyShortSchema,
   storyTextSchema,
@@ -190,6 +191,10 @@ export const backendContract = defineContract({
         .strict(),
       output: z.object({ wav: z.string() }),
     },
+    'images.status': { input: empty, output: imageStatusSchema },
+    /** Downloads the AI picture engine and model (about 7 GB), once. */
+    'images.install': { input: empty, output: ok },
+    'images.cancelInstall': { input: empty, output: ok },
     'templates.jobs': { input: empty, output: z.array(templateJobSchema) },
     /** Starts building a story Short; follow it with templates.changed. */
     'templates.story': { input: storyShortSchema, output: z.object({ jobId: z.string() }) },
@@ -276,6 +281,7 @@ export const backendContract = defineContract({
     'luts.changed': z.array(lutInfoSchema),
     'claude.changed': claudeStateSchema,
     'voice.changed': voiceStatusSchema,
+    'images.changed': imageStatusSchema,
     'templates.changed': z.array(templateJobSchema),
   },
 });

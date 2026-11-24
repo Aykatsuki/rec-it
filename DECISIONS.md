@@ -50,6 +50,7 @@ Each record states the decision, why it was made and what else was considered. R
 | 044 | The Claude connector (MCP) | Accepted |
 | 045 | Claude tools for effects and animation; scenario evals | Accepted |
 | 046 | AI Shorts studio: Ollama/Kimi, local AI voice, story template, clip finder | Accepted |
+| 047 | Generated visuals: AI pictures (Z-Image Turbo) and motion graphics per scene | Accepted |
 
 ---
 
@@ -808,4 +809,42 @@ Each record states the decision, why it was made and what else was considered. R
   - Integration: the real sidecar with the fake voice and real FFmpeg imports. This covers the transcript with markdown, emoji and "Edit:" lines removed, the media marked "Made in Rec-It", the layout, one undo step and voice preview.
   - End to end: the real app with a fake OpenAI-compatible server. Settings → AI, Test the AI, Make a Short, Write it, a British voice, Create Short, the timeline, and undo.
   - A one-off check with the real Kokoro model and the export renderer showed the card pop and big captions over the footage.
+
+## ADR-047 · Generated visuals: AI pictures (Z-Image Turbo) and motion graphics per scene
+
+**Status:** Accepted (24 Nov 2026, Phase 8 second slice).
+
+**Context.** You want the whole Short generated from a topic or script, visuals included, using Ollama. Ollama runs text models; its image generation was still Mac-only, needs about 12 GB of graphics memory, and no local tool can make good video clips on an 8 GB card in reasonable time. You chose the built-in Z-Image Turbo engine and both styles, picked per Short.
+
+**Decisions.**
+- **Scenes come from the script.**
+  - Rec-It splits the script into sentences, breaking very long ones at commas.
+  - Ollama or Kimi then storyboards them: consecutive sentences per scene, one picture description, a camera motion and a three-colour palette per scene. That's about one scene every 4.5 seconds, between 3 and 24 in all.
+  - `normaliseScenes` makes any answer safe: in order, every sentence covered once, defaults for anything missing.
+  - With no AI set up, or a failed answer, `fallbackScenes` groups sentences evenly and pictures their words.
+  - The voice reads the title, then each scene as its own segment, so scene boundaries are exact.
+- **AI pictures: Z-Image Turbo through stable-diffusion.cpp**, run as a separate program by the sidecar. No PyTorch is needed.
+  - Engine: the Windows CUDA 12 build and its CUDA runtime, pinned to release master-1122-3b12781 with SHA-256 hashes (about 1 GB).
+  - Models (about 6.5 GB, all Apache-2.0): `z_image_turbo-Q4_0.gguf` (leejet), `Qwen3-4B-Instruct-2507-Q4_K_M.gguf` (unsloth), and the FLUX VAE `ae.safetensors` (Comfy-Org). Each is checked against the SHA-256 Hugging Face publishes for it on the download's redirect.
+  - Settings: 576×1024 (9:16), 8 steps, CFG 1, sd.cpp auto-fit (no `--offload-to-cpu`, which forced ~6 GB into RAM and ran a 16 GB PC out of memory), `--mmap`, `--max-vram -0.5`, diffusion flash attention, and a random base seed per Short.
+  - Ollama keeps its chat model in VRAM for minutes after the scene plan, which left too little for the text encoder ("prompt encoding failed"). Before drawing, Rec-It unloads every loaded Ollama model (`/api/ps`, then `keep_alive: 0`); errors show sd-cli's first error line, memory failures in plain words, and the full output in `last-error.log` in the engine folder.
+  - Installed from Make a Short (progress, cancel) into the models folder.
+  - `RECIT_SD_CLI` uses another sd-cli build (Linux, macOS, or newer). `RECIT_FAKE_IMAGES=1` draws a gradient per prompt, for tests.
+  - Seven picture styles (cinematic, anime, 3D render, comic, watercolour, dark and moody, historical painting) are appended to every prompt, with "vertical 9:16 composition, no text".
+- **Motion graphics**, drawn with Pillow from each scene's palette: a diagonal gradient, soft glows, faint rings, a dot grid and a rounded frame, plus fine grain against banding. No picture engine is needed.
+- **Animation** (`packages/templates`). Each scene's still is filled edge to edge with keyframes:
+  - zoom in or out (1 to 1.14);
+  - or a pan (x ±0.06 at 1.14), with a 0.3 s dissolve between scenes.
+  
+  Everything stays ordinary, editable clips, and the whole Short is one undo step. With no card, the title is spoken and captioned over the first scene.
+- **Topic scripts.** New kinds: facts/explainer, motivation, and history or mystery. They use a narrator prompt (short, picturable sentences, no invented statistics) and the card is off by default.
+- **Generated media are reused.** If a generated file has the same content as an existing asset (the same script, voice and speed made twice), the existing asset is used instead of being refused as a duplicate. Found by the integration test.
+- **Interface.** The story template becomes **Story or topic video**, with a Visuals choice: AI pictures (the default; picture style and the engine install), Motion graphics, or Gameplay footage. The new contract channels are `images.status`, `images.install`, `images.cancelInstall` and `images.changed`.
+- **Tests.**
+  - pytest: fake pictures, a stand-in sd-cli recording its command line, and engine status.
+  - Unit: sentences, plan normalisation and fallback, scene count, and picture animation (keyframes, dissolves, timing).
+  - Integration: pictures and graphics, scenes starting with their sentences, and reuse.
+  - End to end: a topic, facts written by the AI, the storyboard request carrying the numbered sentences, an anime style, and a Short with one picture per scene.
+
+**Not tested here:** the real engine and models. The cloud sandbox cannot reach Hugging Face and has no NVIDIA GPU, so the first real run happens on the reference PC. Expect about 10–20 s per picture there.
 

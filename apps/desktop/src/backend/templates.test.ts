@@ -41,6 +41,7 @@ describe.skipIf(!bins || !hasUv)('story template (backend, real sidecar, fake vo
 
   beforeAll(async () => {
     process.env.RECIT_FAKE_TTS = '1';
+    process.env.RECIT_FAKE_IMAGES = '1';
     dir = mkdtempSync(join(tmpdir(), 'recit-tpl-'));
     fx = makeFixtures(bins!.ffmpeg, { longSeconds: 4 });
     app = new BackendApp({
@@ -74,6 +75,7 @@ describe.skipIf(!bins || !hasUv)('story template (backend, real sidecar, fake vo
   afterAll(async () => {
     await app?.dispose();
     delete process.env.RECIT_FAKE_TTS;
+    delete process.env.RECIT_FAKE_IMAGES;
     rmSync(dir, { recursive: true, force: true, maxRetries: 3 });
     rmSync(fx.dir, { recursive: true, force: true, maxRetries: 3 });
   });
@@ -159,6 +161,55 @@ describe.skipIf(!bins || !hasUv)('story template (backend, real sidecar, fake vo
       }),
     ).toThrow(/background/);
   });
+
+  for (const visuals of ['pictures', 'graphics'] as const) {
+    it(`generates the visuals from the script (${visuals})`, async () => {
+      await waitFor(() => app.images.status().available !== null, 60_000);
+      expect(app.images.status().available).toBe(true);
+      const script =
+        'Octopuses have three hearts. Two pump blood to the gills. One pumps it to the body. Their blood is blue. They can taste with their arms. Each arm has its own mini brain.';
+      const jobId = app.templates.story({
+        title: 'Octopus facts',
+        story: script,
+        voice: 'af_heart',
+        speed: 1,
+        visuals,
+        pictureStyle: 'anime',
+        card: false,
+      });
+      const job = await waitFor(() => {
+        const j = app.templates.list().find((x) => x.id === jobId);
+        return j && j.state !== 'running' && j;
+      }, 120_000);
+      expect(job.error).toBeUndefined();
+      const { doc } = app.projects.document().state();
+      const seq = doc.sequences.find((s) => s.id === job.sequenceId)!;
+      const v1 = seq.tracks.find((t) => t.name === 'V1')!.items;
+      // No AI is set up here, so the script is grouped into 3 scenes (the minimum) by sentences.
+      expect(v1).toHaveLength(3);
+      const stills = app.projects
+        .media()
+        .list()
+        .filter((a) => v1.some((i) => i.assetId === a.id));
+      expect(stills.every((a) => a.kind === 'image' && a.rights.source === 'made-in-rec-it')).toBe(
+        true,
+      );
+      expect(v1.every((i) => i.keyframes && Object.keys(i.keyframes).length)).toBe(true);
+      expect(v1[1]!.transitionIn?.kind).toBe('dissolve');
+      // Each scene starts when its sentences start being spoken.
+      const words = app.transcripts.get(
+        seq.tracks.find((t) => t.name === 'A1')!.items[0]!.assetId,
+      )!.words;
+      const at = (w: string) => words.find((x) => x.text === w)!.start;
+      // 6 sentences in 3 scenes: the second starts at "One pumps…", the third at "They can…".
+      expect(sec(v1[1]!.start)).toBeCloseTo(at('One'), 0);
+      expect(sec(v1[2]!.start)).toBeCloseTo(at('They'), 0);
+      expect(sec(v1[1]!.start)).toBeLessThan(at('One') + 0.01);
+      // The title is spoken and captioned (no card).
+      const caps = seq.tracks.find((t) => t.kind === 'caption')!.items;
+      expect(caps[0]!.caption!.words[0]!.text).toBe('Octopus');
+    }, 180_000);
+  }
 
   it('previews a voice as WAV', async () => {
     const wav = Buffer.from(await app.voice.preview('af_heart', 1, 'Hello there'), 'base64');

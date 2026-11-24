@@ -14,7 +14,12 @@ export const STORY_GENRES = {
   scary: { label: 'Scary story', community: 'r/nosleep' },
   wholesome: { label: 'Wholesome', community: 'r/MadeMeSmile' },
   askreddit: { label: 'Question thread', community: 'r/AskReddit' },
+  facts: { label: 'Facts / explainer about a topic', community: '' },
+  motivation: { label: 'Motivation / life lesson', community: '' },
+  history: { label: 'History or mystery story', community: '' },
 } as const;
+/** Kinds that are narrated scripts about a topic rather than first-person posts. */
+export const SCRIPT_GENRES: readonly StoryGenre[] = ['facts', 'motivation', 'history'];
 export type StoryGenre = keyof typeof STORY_GENRES;
 
 export const storySchema = z.object({
@@ -40,6 +45,17 @@ export function writeStoryPrompt(o: {
 }): ChatMessage[] {
   const words = Math.round(o.seconds * WORDS_PER_SECOND);
   const g = STORY_GENRES[o.genre];
+  if (SCRIPT_GENRES.includes(o.genre))
+    return [
+      {
+        role: 'system',
+        content: `You write scripts for faceless YouTube Shorts narrated over AI pictures. ${NARRATION_RULES.slice(0, 3).join(' ')} Use short, vivid sentences that each describe something that can be pictured. Be accurate: no invented statistics; if unsure, say "reportedly". Reply with JSON only: {"title": "...", "story": "..."}.`,
+      },
+      {
+        role: 'user',
+        content: `Kind: ${g.label}.${o.idea?.trim() ? ` Topic: ${o.idea.trim()}` : ' Pick a fascinating topic.'}\nTitle: a hook of under 70 characters that makes people stop scrolling.\nScript: about ${words} words (${o.seconds} seconds when read), not counting the title.`,
+      },
+    ];
   return [
     {
       role: 'system',
@@ -75,4 +91,83 @@ export function narrationPrompt(o: {
 export function estimateSeconds(text: string, speed = 1): number {
   const words = text.split(/\s+/).filter(Boolean).length;
   return words / WORDS_PER_SECOND / speed;
+}
+
+// ---- Scenes (ADR-047) -----------------------------------------------------------------------
+
+export const PICTURE_STYLES = {
+  cinematic: {
+    label: 'Cinematic photo',
+    prompt:
+      'cinematic photograph, dramatic lighting, shallow depth of field, rich colour, highly detailed',
+  },
+  anime: {
+    label: 'Anime',
+    prompt:
+      'anime illustration, clean line art, vibrant colours, detailed background, studio quality',
+  },
+  render3d: {
+    label: '3D render',
+    prompt: '3D render, soft global illumination, stylised, octane render, highly detailed',
+  },
+  comic: {
+    label: 'Comic book',
+    prompt: 'comic book art, bold ink outlines, halftone shading, dynamic composition',
+  },
+  watercolour: {
+    label: 'Watercolour',
+    prompt: 'watercolour painting, soft washes, paper texture, gentle colours',
+  },
+  dark: {
+    label: 'Dark and moody',
+    prompt: 'dark moody photograph, low key lighting, fog, high contrast, cinematic',
+  },
+  historical: {
+    label: 'Historical painting',
+    prompt: 'oil painting in the style of an old master, historical scene, dramatic chiaroscuro',
+  },
+} as const;
+export type PictureStyle = keyof typeof PICTURE_STYLES;
+
+export const MOTIONS = ['zoomIn', 'zoomOut', 'panLeft', 'panRight'] as const;
+export type Motion = (typeof MOTIONS)[number];
+
+const hex = z.string().regex(/^#[0-9a-fA-F]{6}$/);
+export const scenePlanSchema = z.object({
+  scenes: z
+    .array(
+      z.object({
+        /** First and last sentence numbers (as given, from 1) this scene covers. */
+        from: z.number().int().min(1),
+        to: z.number().int().min(1),
+        /** What the picture shows (subject, setting, action); no text in the picture. */
+        picture: z.string().min(3).max(400),
+        motion: z.enum(MOTIONS).optional(),
+        /** Three colours for a motion-graphics backdrop matching the mood. */
+        palette: z.array(hex).min(2).max(4).optional(),
+      }),
+    )
+    .min(1)
+    .max(40),
+});
+export type ScenePlan = z.output<typeof scenePlanSchema>;
+
+/** Splits a script into scenes (groups of numbered sentences) with a picture and colours each. */
+export function scenePlanPrompt(o: {
+  title: string;
+  sentences: readonly string[];
+  /** Roughly how many scenes (one picture every 3–6 seconds). */
+  scenes: number;
+}): ChatMessage[] {
+  return [
+    {
+      role: 'system',
+      content:
+        'You are a storyboard artist for vertical YouTube Shorts. Split the numbered narration into scenes of consecutive sentences, in order, covering every sentence once. For each scene describe ONE striking picture for an image generator: concrete subject, setting, action, camera angle and lighting, consistent characters across scenes, no words or letters in the picture. Pick a camera motion (zoomIn, zoomOut, panLeft, panRight) and a palette of 3 hex colours matching the mood. Reply with JSON only: {"scenes": [{"from": 1, "to": 2, "picture": "...", "motion": "zoomIn", "palette": ["#112233", "#445566", "#778899"]}]}.',
+    },
+    {
+      role: 'user',
+      content: `Title: ${o.title}\nAbout ${o.scenes} scenes.\nNarration:\n${o.sentences.map((t, i) => `${i + 1}. ${t}`).join('\n')}`,
+    },
+  ];
 }

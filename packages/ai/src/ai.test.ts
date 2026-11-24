@@ -106,6 +106,46 @@ describe('AiClient', () => {
   });
 });
 
+describe('AiClient.release', () => {
+  it('unloads every model Ollama has loaded, so the picture engine gets the GPU', async () => {
+    const calls: { url: string; body?: unknown }[] = [];
+    const fetch: FetchLike = async (url, init) => {
+      calls.push({ url, body: init.body ? JSON.parse(init.body) : undefined });
+      const body = url.endsWith('/api/ps') ? { models: [{ name: 'qwen3:8b' }] } : {};
+      return { ok: true, status: 200, text: async () => JSON.stringify(body) };
+    };
+    const ai = new AiClient(
+      { provider: 'ollama', baseUrl: 'http://localhost:11434/v1/', model: '' },
+      fetch,
+    );
+    expect(await ai.release()).toEqual(['qwen3:8b']);
+    expect(calls).toEqual([
+      { url: 'http://localhost:11434/api/ps', body: undefined },
+      {
+        url: 'http://localhost:11434/api/generate',
+        body: { model: 'qwen3:8b', keep_alive: 0 },
+      },
+    ]);
+  });
+
+  it('does nothing for cloud providers and never throws', async () => {
+    const kimi = new AiClient(
+      { provider: 'kimi', baseUrl: 'https://api.moonshot.ai/v1', model: 'kimi-k3', apiKey: 'k' },
+      async () => {
+        throw new Error('should not be called');
+      },
+    );
+    expect(await kimi.release()).toEqual([]);
+    const down = new AiClient(
+      { provider: 'ollama', baseUrl: 'http://localhost:11434/v1', model: '' },
+      async () => {
+        throw new Error('ECONNREFUSED');
+      },
+    );
+    expect(await down.release()).toEqual([]);
+  });
+});
+
 describe('prompts', () => {
   it('sizes the story for the length and keeps rules for narration', () => {
     const [system, user] = writeStoryPrompt({

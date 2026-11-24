@@ -284,6 +284,12 @@ export class MediaService {
     }
   }
 
+  /** The asset already holding this file's content, if any (same fingerprint as import). */
+  async findSame(path: string): Promise<string | undefined> {
+    const { hash } = await contentHash(path);
+    return this.o.project.findByHash(hash)?.id;
+  }
+
   /** The asset's measured loudness file (one byte per 10 ms), if it exists. */
   waveformPath(assetId: string): string | null {
     const path = join(this.assetDir(assetId), FILES.waveform);

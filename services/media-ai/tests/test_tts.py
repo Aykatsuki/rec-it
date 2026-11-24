@@ -1,4 +1,5 @@
 import json
+import sys
 import threading
 import wave
 from collections import namedtuple
@@ -98,3 +99,85 @@ def test_card_without_pillow_in_fake_mode(tmp_path, monkeypatch):
     card._plain_png(str(out), 20, 10)
     assert out.read_bytes()[:4] == b"\x89PNG"
     assert json.dumps(card.THEMES["light"]["text"])
+
+
+def test_fake_images_draw_one_png_per_prompt(tmp_path, monkeypatch):
+    from recit_media_ai import images
+
+    monkeypatch.setenv("RECIT_FAKE_IMAGES", "1")
+    assert images.status(str(tmp_path))["available"] is True
+    r = images.generate(
+        {
+            "prompts": ["a castle", "a dragon"],
+            "outDir": str(tmp_path / "o"),
+            "modelsDir": str(tmp_path),
+        },
+        lambda *a: None,
+        threading.Event(),
+    )
+    assert [Path(p).name for p in r["images"]] == ["scene-1.png", "scene-2.png"]
+    assert all(Path(p).read_bytes()[:4] == b"\x89PNG" for p in r["images"])
+
+
+def test_real_engine_status_without_files(tmp_path, monkeypatch):
+    from recit_media_ai import images
+
+    monkeypatch.delenv("RECIT_FAKE_IMAGES", raising=False)
+    monkeypatch.delenv("RECIT_SD_CLI", raising=False)
+    s = images.status(str(tmp_path))
+    assert s["available"] is False
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="the stand-in engine is a shell script")
+def test_engine_command_and_failure(tmp_path, monkeypatch):
+    """A stand-in sd-cli that records its arguments and writes the output picture."""
+    from recit_media_ai import images
+
+    script = tmp_path / "sd-cli"
+    script.write_text(
+        "#!/bin/sh\n"
+        'echo "$@" > "$(dirname "$0")/args.txt"\n'
+        'while [ "$1" != "-o" ]; do shift; done\n'
+        'printf "PNG" > "$2"\n'
+    )
+    script.chmod(0o755)
+    monkeypatch.setenv("RECIT_SD_CLI", str(script))
+    monkeypatch.delenv("RECIT_FAKE_IMAGES", raising=False)
+    for name, _, _ in images.MODEL_FILES:
+        (images.model_dir(str(tmp_path)) / name).parent.mkdir(parents=True, exist_ok=True)
+        (images.model_dir(str(tmp_path)) / name).write_bytes(b"x")
+    assert images.status(str(tmp_path))["available"] is True
+    r = images.generate(
+        {
+            "prompts": ["a red fox"],
+            "outDir": str(tmp_path / "o"),
+            "modelsDir": str(tmp_path),
+            "seed": 7,
+        },
+        lambda *a: None,
+        threading.Event(),
+    )
+    args = (tmp_path / "args.txt").read_text()
+    assert "-p a red fox" in args and "--steps 8" in args and "-W 576 -H 1024" in args
+    assert "-s 7" in args and "--mmap" in args and "--offload-to-cpu" not in args
+    assert Path(r["images"][0]).read_bytes() == b"PNG"
+
+
+def test_motion_background(tmp_path):
+    pytest.importorskip("PIL")
+    from PIL import Image
+
+    out = tmp_path / "bg.png"
+    card.background(
+        {
+            "out": str(out),
+            "palette": ["#101030", "#E0407A", "#FFD166"],
+            "seed": "s1",
+            "width": 270,
+            "height": 480,
+        }
+    )
+    im = Image.open(out)
+    assert im.size == (270, 480)
+    top, bottom = im.getpixel((5, 5)), im.getpixel((265, 475))
+    assert top != bottom
