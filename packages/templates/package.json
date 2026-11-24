@@ -1,0 +1,17 @@
+{
+  "name": "@rec-it/templates",
+  "version": "0.0.0",
+  "private": true,
+  "license": "GPL-3.0-or-later",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "@rec-it/captions": "workspace:*",
+    "@rec-it/core": "workspace:*"
+  }
+}

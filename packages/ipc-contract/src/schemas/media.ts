@@ -42,6 +42,8 @@ export const rightsSourceSchema = z.enum([
   'creative-commons',
   'licensed-stock',
   'licensed-other',
+  /** Made by Rec-It itself: AI voiceovers and title cards (ADR-046). */
+  'made-in-rec-it',
   'unknown',
 ]);
 export type RightsSource = z.output<typeof rightsSourceSchema>;

@@ -63,6 +63,11 @@ export class TranscriptService {
     this.d.onChange(this.status());
   }
 
+  /** Re-announces the status after a transcript was stored elsewhere (AI voiceovers). */
+  changed(): void {
+    this.emit();
+  }
+
   /** Asks the sidecar whether faster-whisper is installed. */
   async refresh(): Promise<void> {
     if (!this.d.sidecar) {

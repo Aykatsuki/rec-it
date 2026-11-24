@@ -52,6 +52,8 @@ export type Command =
       width: number;
       height: number;
       fps: Rational;
+      /** Ids for the four new tracks, so a batch can refer to them (templates, ADR-046). */
+      trackIds?: { V2: string; V1: string; A1: string; A2: string };
     }
   | {
       type: 'sequence.update';
@@ -447,10 +449,10 @@ export function applyCommand(doc: ProjectDocument, command: Command, assets: Ass
         height: command.height,
         fps: command.fps,
         tracks: [
-          blankTrack('video', 'V2'),
-          blankTrack('video', 'V1'),
-          blankTrack('audio', 'A1'),
-          blankTrack('audio', 'A2'),
+          blankTrack('video', 'V2', command.trackIds?.V2),
+          blankTrack('video', 'V1', command.trackIds?.V1),
+          blankTrack('audio', 'A1', command.trackIds?.A1),
+          blankTrack('audio', 'A2', command.trackIds?.A2),
         ],
       };
       doc.sequences.push(seq);

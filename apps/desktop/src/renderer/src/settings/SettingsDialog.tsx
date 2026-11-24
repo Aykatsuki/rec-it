@@ -2,14 +2,17 @@ import { useEffect, useState, type ReactNode } from 'react';
 import { RefreshCw, X } from 'lucide-react';
 import type { SecretName } from '@rec-it/ipc-contract';
 import { Badge, Button, Dialog, StatusDot, Tabs, TextField, type DotState } from '@rec-it/ui';
-import { shell, RecitError } from '../api';
+import { AI_PROVIDERS, type AiProvider } from '@rec-it/ai';
+import { backend, shell, RecitError } from '../api';
+import { useApp } from '../store';
 import { useBackendLatency, useSettings, useSystemStatus } from '../hooks';
 
-export type SettingsTab = 'system' | 'secrets' | 'general';
+export type SettingsTab = 'system' | 'secrets' | 'general' | 'ai';
 
 const TABS = [
   { id: 'system', label: 'System' },
   { id: 'general', label: 'General' },
+  { id: 'ai', label: 'AI' },
   { id: 'secrets', label: 'Keys' },
 ] as const;
 
@@ -34,6 +37,7 @@ export function SettingsDialog({
       {tab === 'system' && <SystemTab />}
       {tab === 'general' && <GeneralTab />}
       {tab === 'secrets' && <SecretsTab />}
+      {tab === 'ai' && <AiTab />}
     </Dialog>
   );
 }
@@ -184,6 +188,10 @@ const SECRET_LABELS: Record<SecretName, { label: string; help: string }> = {
     label: 'YouTube Data API key',
     help: 'Used for research from Phase 8. Free from Google Cloud.',
   },
+  aiApiKey: {
+    label: 'AI API key',
+    help: 'For Kimi (platform.kimi.ai) or another hosted AI. Not needed for Ollama.',
+  },
   testSecret: {
     label: 'Test secret',
     help: 'Used to check that secure storage works on this computer.',
@@ -209,14 +217,16 @@ function SecretsTab() {
           Secure storage is not available on this system, so keys cannot be saved.
         </div>
       )}
-      {(Object.keys(SECRET_LABELS) as SecretName[]).map((name) => (
-        <SecretRow
-          key={name}
-          name={name}
-          fingerprint={status?.secrets[name]?.fingerprint}
-          isSet={status?.secrets[name]?.set ?? false}
-        />
-      ))}
+      {(Object.keys(SECRET_LABELS) as SecretName[])
+        .filter((name) => name !== 'aiApiKey')
+        .map((name) => (
+          <SecretRow
+            key={name}
+            name={name}
+            fingerprint={status?.secrets[name]?.fingerprint}
+            isSet={status?.secrets[name]?.set ?? false}
+          />
+        ))}
     </div>
   );
 }
@@ -292,5 +302,154 @@ function SecretRow({
       </div>
       {error && <div className="settings__warning">{error}</div>}
     </Row>
+  );
+}
+
+/** Where one-click AI features get their text (ADR-046), and the AI voice. */
+function AiTab() {
+  const { settings, update } = useSettings();
+  const { status } = useSystemStatus();
+  const voice = useApp((s) => s.voice);
+  const [models, setModels] = useState<string[] | null>(null);
+  const [check, setCheck] = useState<{ ok: boolean; text: string } | null>(null);
+  const [busy, setBusy] = useState(false);
+  if (!settings) return null;
+  const provider = settings.aiProvider;
+  const preset = AI_PROVIDERS[provider];
+  const loadModels = async () => {
+    setBusy(true);
+    try {
+      setModels((await backend.invoke('ai.models', {})).models);
+      setCheck(null);
+    } catch (e) {
+      setModels(null);
+      setCheck({ ok: false, text: e instanceof Error ? e.message : String(e) });
+    } finally {
+      setBusy(false);
+    }
+  };
+  const test = async () => {
+    setBusy(true);
+    setCheck(null);
+    try {
+      const r = await backend.invoke('ai.test', {});
+      setCheck({ ok: true, text: `${r.model} answered: “${r.reply}”` });
+    } catch (e) {
+      setCheck({ ok: false, text: e instanceof Error ? e.message : String(e) });
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <div className="settings__section" data-testid="ai-settings">
+      <p className="settings__muted">
+        Writing stories, titles and hooks uses this AI. Ollama runs on your PC and is free; Kimi
+        uses your own Moonshot API key. Claude in your Claude app works separately (Claude tab).
+      </p>
+      <Row label="AI provider">
+        <select
+          className="ui-input settings__select"
+          value={provider}
+          aria-label="AI provider"
+          onChange={(e) => {
+            setModels(null);
+            setCheck(null);
+            void update({ aiProvider: e.target.value as AiProvider, aiBaseUrl: null, aiModel: '' });
+          }}
+        >
+          {(Object.keys(AI_PROVIDERS) as AiProvider[]).map((p) => (
+            <option key={p} value={p}>
+              {AI_PROVIDERS[p].label}
+            </option>
+          ))}
+        </select>
+        <div className="settings__detail">{preset.help}</div>
+      </Row>
+      <Row label="Server address">
+        <TextField
+          key={`${provider}-url`}
+          defaultValue={settings.aiBaseUrl ?? ''}
+          placeholder={preset.baseUrl || 'http://localhost:1234/v1'}
+          spellCheck={false}
+          aria-label="Server address"
+          onBlur={(e) => void update({ aiBaseUrl: e.target.value.trim() || null })}
+        />
+      </Row>
+      <Row label="Model">
+        <div className="settings__secret">
+          {models ? (
+            <select
+              className="ui-input settings__select"
+              value={settings.aiModel}
+              aria-label="Model"
+              onChange={(e) => void update({ aiModel: e.target.value })}
+            >
+              <option value="">{preset.defaultModel || 'First available'}</option>
+              {models.map((m) => (
+                <option key={m} value={m}>
+                  {m}
+                </option>
+              ))}
+            </select>
+          ) : (
+            <TextField
+              key={`${provider}-model`}
+              defaultValue={settings.aiModel}
+              placeholder={preset.defaultModel || 'First available model'}
+              spellCheck={false}
+              aria-label="Model"
+              onBlur={(e) => void update({ aiModel: e.target.value.trim() })}
+            />
+          )}
+          <Button size="sm" disabled={busy} onClick={() => void loadModels()}>
+            List models
+          </Button>
+        </div>
+      </Row>
+      {(preset.needsKey || provider === 'custom') && (
+        <SecretRow
+          name="aiApiKey"
+          isSet={status?.secrets.aiApiKey?.set ?? false}
+          fingerprint={status?.secrets.aiApiKey?.fingerprint}
+        />
+      )}
+      <Row label="Check">
+        <Button size="sm" disabled={busy} onClick={() => void test()} data-testid="ai-test">
+          {busy ? 'Asking…' : 'Test the AI'}
+        </Button>
+        {check && (
+          <div
+            className={check.ok ? 'settings__detail' : 'settings__warning'}
+            data-testid="ai-check"
+          >
+            {check.text}
+          </div>
+        )}
+      </Row>
+      <Row label="AI voice" state={voice?.available ? 'ok' : undefined}>
+        {voice?.available ? (
+          <>Installed ({voice.engine}). Runs on this PC; nothing is sent anywhere.</>
+        ) : voice?.install.state === 'running' ? (
+          <>Installing… {voice.install.message}</>
+        ) : (
+          <>
+            <Button
+              size="sm"
+              disabled={!!voice?.blocked}
+              onClick={() => void backend.invoke('voice.install', {})}
+            >
+              Install AI voice
+            </Button>
+            <div className="settings__detail">
+              Kokoro, a natural-sounding voice that runs on your PC (about 300 MB with its model).
+            </div>
+          </>
+        )}
+        {voice?.install.state === 'failed' && (
+          <div className="settings__warning">{voice.install.message}</div>
+        )}
+        {voice?.blocked && <div className="settings__warning">{voice.blocked}</div>}
+      </Row>
+    </div>
   );
 }

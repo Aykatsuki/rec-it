@@ -1,4 +1,4 @@
-import { Download, Redo2, Settings, Sparkles, Undo2 } from 'lucide-react';
+import { Download, Redo2, Settings, Sparkles, Undo2, Wand2 } from 'lucide-react';
 import { Button, IconButton } from '@rec-it/ui';
 import { useSettings } from '../hooks';
 import { redo, sequenceSeconds, undo } from '../edit';
@@ -6,6 +6,7 @@ import { useApp, useSequence } from '../store';
 import { openExportDialog } from '../timeline/ExportDialog';
 import { ProjectMenu } from '../project/ProjectMenu';
 import { claudeStatus } from '../claude/ClaudePanel';
+import { openCreateDialog } from '../create/CreateDialog';
 
 export function TopBar({ onOpenSettings }: { onOpenSettings: () => void }) {
   const { settings } = useSettings();
@@ -45,6 +46,16 @@ export function TopBar({ onOpenSettings }: { onOpenSettings: () => void }) {
           <Sparkles size={13} />
           {claude.label}
         </span>
+        {project && (
+          <Button
+            icon={<Wand2 size={15} />}
+            title="Make a Short from a template: AI story videos and more"
+            onClick={openCreateDialog}
+            data-testid="create-button"
+          >
+            Make a Short
+          </Button>
+        )}
         <IconButton label="Settings" onClick={onOpenSettings}>
           <Settings size={16} />
         </IconButton>

@@ -155,6 +155,9 @@ describe('contracts', () => {
       cacheDirectory: null,
       reopenLastProject: true,
       exportDirectory: null,
+      aiProvider: 'ollama',
+      aiBaseUrl: null,
+      aiModel: '',
     });
     expect(settingsPatchSchema.safeParse({ aiEnabled: false }).success).toBe(true);
     expect(settingsPatchSchema.safeParse({ isAdmin: true }).success).toBe(false);

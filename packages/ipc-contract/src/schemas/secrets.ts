@@ -1,7 +1,7 @@
 import { z } from 'zod';
 
 /** The only secrets Rec-It stores. Anything else is rejected. */
-export const secretNameSchema = z.enum(['youtubeApiKey', 'testSecret']);
+export const secretNameSchema = z.enum(['youtubeApiKey', 'aiApiKey', 'testSecret']);
 export type SecretName = z.output<typeof secretNameSchema>;
 export const SECRET_NAMES = secretNameSchema.options;
 

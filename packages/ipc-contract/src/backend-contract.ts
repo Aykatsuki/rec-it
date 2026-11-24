@@ -21,6 +21,14 @@ import { transcriptSchema, transcriptionStatusSchema } from './schemas/transcrip
 import { faceStatusSchema, faceTrackSchema } from './schemas/faces';
 import { lutDataSchema, lutInfoSchema } from './schemas/luts';
 import { claudeStateSchema } from './schemas/claude';
+import {
+  aiStatusSchema,
+  storyGenreSchema,
+  storyShortSchema,
+  storyTextSchema,
+  templateJobSchema,
+  voiceStatusSchema,
+} from './schemas/create';
 
 const empty = z.object({}).strict();
 const ok = z.object({ ok: z.literal(true) });
@@ -141,6 +149,52 @@ export const backendContract = defineContract({
       output: faceTrackSchema.nullable(),
     },
 
+    // AI text, AI voice and faceless templates (Phase 8, ADR-046).
+    'ai.status': { input: empty, output: aiStatusSchema },
+    /** Models the configured AI server offers (fails with a readable message). */
+    'ai.models': { input: empty, output: z.object({ models: z.array(z.string()) }) },
+    /** A tiny request to check the AI setup end to end. */
+    'ai.test': { input: empty, output: z.object({ model: z.string(), reply: z.string() }) },
+    'ai.writeStory': {
+      input: z
+        .object({
+          genre: storyGenreSchema,
+          idea: z.string().max(1000).optional(),
+          seconds: z.number().min(15).max(180),
+        })
+        .strict(),
+      output: storyTextSchema,
+    },
+    /** A pasted post made ready to be read aloud and cut to length. */
+    'ai.narrate': {
+      input: z
+        .object({
+          title: z.string().max(300),
+          text: z.string().min(1).max(20000),
+          seconds: z.number().min(15).max(180),
+        })
+        .strict(),
+      output: storyTextSchema,
+    },
+    'voice.status': { input: empty, output: voiceStatusSchema },
+    /** Installs the AI voice (Kokoro) into the sidecar's environment, once. */
+    'voice.install': { input: empty, output: ok },
+    /** A short sample of a voice, as base64 WAV. */
+    'voice.preview': {
+      input: z
+        .object({
+          voice: z.string().regex(/^[a-z]{2}_[a-z]+$/),
+          speed: z.number().min(0.7).max(1.5).default(1),
+          text: z.string().max(300).optional(),
+        })
+        .strict(),
+      output: z.object({ wav: z.string() }),
+    },
+    'templates.jobs': { input: empty, output: z.array(templateJobSchema) },
+    /** Starts building a story Short; follow it with templates.changed. */
+    'templates.story': { input: storyShortSchema, output: z.object({ jobId: z.string() }) },
+    'templates.cancel': { input: z.object({ jobId: z.string() }).strict(), output: ok },
+
     // 3D LUTs imported into the project (Phase 6e, ADR-040).
     'luts.list': { input: empty, output: z.array(lutInfoSchema) },
     /** Reads a .cube file (a path from dialog.importLut) into the project. */
@@ -221,6 +275,8 @@ export const backendContract = defineContract({
     'faces.changed': faceStatusSchema,
     'luts.changed': z.array(lutInfoSchema),
     'claude.changed': claudeStateSchema,
+    'voice.changed': voiceStatusSchema,
+    'templates.changed': z.array(templateJobSchema),
   },
 });
 

@@ -1,7 +1,7 @@
 [project]
 name = "recit-media-ai"
 version = "0.0.1"
-description = "Rec-It media AI sidecar: transcription, scene detection and tracking (JSON-RPC over stdio)"
+description = "Rec-It media AI sidecar: transcription, face tracking, AI voice and title cards (JSON-RPC over stdio)"
 license = "GPL-3.0-or-later"
 requires-python = ">=3.11"
 dependencies = []
@@ -16,6 +16,9 @@ transcribe = [
 ]
 # Installed on demand from the app (about 60 MB): face detection for automatic reframing.
 reframe = ["opencv-python-headless>=4.10", "numpy>=1.26"]
+# Installed on demand from the app (about 100 MB, plus a 190 MB model on first use): AI voice
+# (Kokoro-82M through kokoro-onnx) and title cards (Pillow) for faceless templates.
+voice = ["kokoro-onnx>=0.6.1", "pillow>=11", "numpy>=1.26"]
 
 [dependency-groups]
 dev = ["pytest>=8.3", "ruff>=0.8"]
