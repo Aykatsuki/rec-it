@@ -5,6 +5,7 @@ import { generateCaptions } from '@rec-it/captions';
 import {
   DEFAULT_CAPTIONS,
   secondsToFlicks,
+  snapToFrame,
   type CaptionSettings,
   type CaptionStyleId,
   type Command,
@@ -88,6 +89,8 @@ export const STORY_CAPTIONS: Pick<CaptionSettings, 'style' | 'position' | 'upper
 };
 
 const f = secondsToFlicks;
+/** The Short's frame rate. Scene boundaries sit exactly on frames (see scenePictures). */
+const FPS = { num: 30, den: 1 };
 
 /** The Short as one batch: background, card, voice, music and captions. */
 export function storyShort(input: StoryShortInput): { command: Command; length: number } {
@@ -103,7 +106,7 @@ export function storyShort(input: StoryShortInput): { command: Command; length: 
       name: input.name,
       width: 1080,
       height: 1920,
-      fps: { num: 30, den: 1 },
+      fps: FPS,
       trackIds: { V2: track('V2'), V1: track('V1'), A1: track('A1'), A2: track('A2') },
     },
   ];
@@ -246,10 +249,12 @@ function scenePictures(
   const out: Command[] = [];
   // Boundaries in flicks, computed once, so each clip ends exactly where the next starts (the
   // dissolve needs that). A scene too short to show gives its time to the next scene's picture.
-  const total = f(length);
+  const total = snapToFrame(f(length), FPS);
   const shown: { sc: ScenePicture; n: number; start: number }[] = [];
   scenes.forEach((sc, n) => {
-    const start = n === 0 ? 0 : Math.min(f(Math.max(0, sc.start)), total);
+    // On a frame: item.add snaps the start, then snaps start + duration, so a boundary off a
+    // frame could leave the clip a frame short of the next one and refuse the dissolve.
+    const start = n === 0 ? 0 : Math.min(snapToFrame(f(Math.max(0, sc.start)), FPS), total);
     const prev = shown[shown.length - 1];
     if (prev && start - prev.start < f(MIN_SCENE)) {
       // The earlier scene is too short: this scene's picture takes over its slot a moment early.

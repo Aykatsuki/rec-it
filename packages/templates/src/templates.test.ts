@@ -214,4 +214,40 @@ describe('scenes', () => {
       expect(v1[i]!.transitionIn?.kind).toBe('dissolve');
     }
   });
+  it('always joins scene clips exactly, whatever the voice timings', () => {
+    let seed = 7;
+    const rand = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+    const lookup: AssetLookup = (id) =>
+      id.startsWith('p')
+        ? { kind: 'image', duration: null, hasAudio: false, width: 576, height: 1024 }
+        : assets(id);
+    for (let run = 0; run < 300; run++) {
+      const starts = [0];
+      while (starts.length < 12) starts.push(starts[starts.length - 1]! + 0.05 + rand() * 3);
+      const length = starts[starts.length - 1]! + 0.5 + rand() * 3;
+      const h = new History(emptyDocument());
+      const { command } = storyShort(
+        input({
+          card: undefined,
+          music: undefined,
+          voice: { assetId: 'voice', duration: length - TAIL, words: [], titleEnd: 0 },
+          background: {
+            kind: 'scenes',
+            scenes: starts.map((start, i) => ({
+              assetId: `p${i}`,
+              start,
+              end: starts[i + 1] ?? length,
+              motion: 'zoomIn',
+            })),
+          },
+        }),
+      );
+      lengths.voice = length;
+      h.execute(command, lookup);
+      const v1 = h.doc.sequences[0]!.tracks.find((t) => t.name === 'V1')!.items;
+      for (let i = 1; i < v1.length; i++)
+        expect(v1[i]!.start).toBe(v1[i - 1]!.start + v1[i - 1]!.duration);
+    }
+    lengths.voice = 20;
+  });
 });
