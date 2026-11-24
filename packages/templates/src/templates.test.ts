@@ -182,4 +182,36 @@ describe('scenes', () => {
     expect(v1[1]!.transitionIn?.kind).toBe('dissolve');
     expect(v1[0]!.transitionIn).toBeUndefined();
   });
+
+  it('joins scenes with awkward voice timings exactly; a too-short scene gives way to the next', () => {
+    const h = new History(emptyDocument());
+    const lookup: AssetLookup = (id) =>
+      id.startsWith('p')
+        ? { kind: 'image', duration: null, hasAudio: false, width: 576, height: 1024 }
+        : assets(id);
+    // Times like the voice produces: not on frame boundaries, and one scene only 0.2 s long.
+    const starts = [0, 3.0167, 6.4917, 6.6917, 10.3375, 14.8042, 17.0209];
+    const { command } = storyShort(
+      input({
+        card: undefined,
+        music: undefined,
+        background: {
+          kind: 'scenes',
+          scenes: starts.map((start, i) => ({
+            assetId: `p${i}`,
+            start,
+            end: starts[i + 1] ?? 20,
+            motion: i % 2 ? 'panRight' : 'zoomIn',
+          })),
+        },
+      }),
+    );
+    h.execute(command, lookup); // threw "A transition needs another clip ending right where…"
+    const v1 = h.doc.sequences[0]!.tracks.find((t) => t.name === 'V1')!.items;
+    expect(v1.map((i) => i.assetId)).toEqual(['p0', 'p1', 'p3', 'p4', 'p5', 'p6']);
+    for (let i = 1; i < v1.length; i++) {
+      expect(v1[i]!.start).toBe(v1[i - 1]!.start + v1[i - 1]!.duration);
+      expect(v1[i]!.transitionIn?.kind).toBe('dissolve');
+    }
+  });
 });

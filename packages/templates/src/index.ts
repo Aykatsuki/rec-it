@@ -8,6 +8,7 @@ import {
   type CaptionSettings,
   type CaptionStyleId,
   type Command,
+  type Flicks,
   type Sequence,
   type TranscriptWord,
 } from '@rec-it/core';
@@ -228,6 +229,8 @@ const ZOOM = 1.14;
 const PAN = 0.06;
 /** Cross-dissolve between scenes. */
 const DISSOLVE = 0.3;
+/** Shortest scene worth showing (seconds); a dissolve needs room on both sides. */
+const MIN_SCENE = 0.7;
 
 /**
  * One still per scene, edge to edge, each slowly zooming or panning (keyframes, so it stays
@@ -241,10 +244,25 @@ function scenePictures(
   id: (n: number) => string,
 ): Command[] {
   const out: Command[] = [];
+  // Boundaries in flicks, computed once, so each clip ends exactly where the next starts (the
+  // dissolve needs that). A scene too short to show gives its time to the next scene's picture.
+  const total = f(length);
+  const shown: { sc: ScenePicture; n: number; start: number }[] = [];
   scenes.forEach((sc, n) => {
-    const start = n === 0 ? 0 : sc.start;
-    const end = n === scenes.length - 1 ? length : scenes[n + 1]!.start;
-    if (end - start < 0.1) return;
+    const start = n === 0 ? 0 : Math.min(f(Math.max(0, sc.start)), total);
+    const prev = shown[shown.length - 1];
+    if (prev && start - prev.start < f(MIN_SCENE)) {
+      // The earlier scene is too short: this scene's picture takes over its slot a moment early.
+      if (shown.length > 1) shown[shown.length - 1] = { sc, n, start: prev.start };
+      return;
+    }
+    shown.push({ sc, n, start });
+  });
+  if (shown.length > 1 && total - shown[shown.length - 1]!.start < f(MIN_SCENE)) shown.pop();
+  shown.forEach(({ sc, n, start: startF }, k) => {
+    const endF = k === shown.length - 1 ? total : shown[k + 1]!.start;
+    const start = startF / f(1);
+    const end = endF / f(1);
     const item = id(n);
     out.push({
       type: 'item.add',
@@ -252,8 +270,8 @@ function scenePictures(
       trackId,
       assetId: sc.assetId,
       id: item,
-      start: f(start),
-      duration: f(end - start),
+      start: startF as Flicks,
+      duration: (endF - startF) as Flicks,
       transform: { fit: 'fill' },
     });
     // Keyframe times are source time; a still's source time runs from 0 with the clip.
@@ -290,7 +308,7 @@ function scenePictures(
         easing: 'linear',
       },
     );
-    if (n > 0)
+    if (k > 0)
       out.push({
         type: 'transition.set',
         sequenceId: sid,
