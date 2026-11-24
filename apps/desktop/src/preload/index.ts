@@ -27,7 +27,17 @@ ipcRenderer.on(IPC.backendPort, (event) => {
   const [port] = event.ports;
   if (!port) return;
   client?.dispose('Backend reconnected');
-  const next = createIpcClient(backendContract, portTransport(port), { timeoutMs: 60_000 });
+  const next = createIpcClient(backendContract, portTransport(port), {
+    timeoutMs: 60_000,
+    // A local model may first load into memory, and the first voice sample downloads the model.
+    channelTimeouts: {
+      'ai.models': 30_000,
+      'ai.test': 300_000,
+      'ai.writeStory': 300_000,
+      'ai.narrate': 300_000,
+      'voice.preview': 600_000,
+    },
+  });
   for (const name of Object.keys(backendContract.events) as (keyof BackendContract['events'])[]) {
     next.on(name, (payload) => {
       for (const l of eventListeners.get(name) ?? []) l(payload);

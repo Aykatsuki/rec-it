@@ -46,9 +46,15 @@ importers:
       '@fontsource-variable/inter':
         specifier: ^5.3.0
         version: 5.3.0
+      '@rec-it/ai':
+        specifier: workspace:*
+        version: link:../../packages/ai
       '@rec-it/captions':
         specifier: workspace:*
         version: link:../../packages/captions
+      '@rec-it/clipping':
+        specifier: workspace:*
+        version: link:../../packages/clipping
       '@rec-it/core':
         specifier: workspace:*
         version: link:../../packages/core
@@ -64,6 +70,9 @@ importers:
       '@rec-it/render-plan':
         specifier: workspace:*
         version: link:../../packages/render-plan
+      '@rec-it/templates':
+        specifier: workspace:*
+        version: link:../../packages/templates
       '@rec-it/tools':
         specifier: workspace:*
         version: link:../../packages/tools
@@ -141,11 +150,23 @@ importers:
 
   packages/agent-panel: {}
 
+  packages/ai:
+    dependencies:
+      zod:
+        specifier: ^4.6.0
+        version: 4.6.7
+
   packages/captions:
     dependencies:
       '@rec-it/core':
         specifier: workspace:*
         version: link:../core
+
+  packages/clipping:
+    dependencies:
+      zod:
+        specifier: ^4.6.0
+        version: 4.6.7
 
   packages/core:
     dependencies:
@@ -183,6 +204,15 @@ importers:
       '@rec-it/ffmpeg':
         specifier: workspace:*
         version: link:../ffmpeg
+
+  packages/templates:
+    dependencies:
+      '@rec-it/captions':
+        specifier: workspace:*
+        version: link:../captions
+      '@rec-it/core':
+        specifier: workspace:*
+        version: link:../core
 
   packages/tools:
     dependencies:

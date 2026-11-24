@@ -39,6 +39,9 @@ import { ExportService, type CaptionsInput, type ExportToolchain } from './servi
 import { sequenceCaptionsAss } from '@rec-it/captions';
 import { TranscriptService } from './services/transcript-service';
 import { FaceService } from './services/face-service';
+import { AiService } from './services/ai-service';
+import { VoiceService } from './services/voice-service';
+import { TemplateService } from './services/template-service';
 import { importLut, writeLutFiles } from './services/lut-service';
 import { ProjectService } from './services/project-service';
 import type { Command, ProjectDocument, Sequence } from '@rec-it/core';
@@ -70,6 +73,9 @@ export class BackendApp {
   readonly exports: ExportService;
   readonly transcripts: TranscriptService;
   readonly faces: FaceService;
+  readonly ai: AiService;
+  readonly voice: VoiceService;
+  readonly templates: TemplateService;
   readonly claude: ClaudeService;
   private lastProjectId: string | undefined;
   private secrets: Partial<Record<SecretName, string>> = {};
@@ -113,6 +119,7 @@ export class BackendApp {
           this.lastProjectId = p?.id;
           this.transcripts?.reset();
           this.faces?.reset();
+          this.templates?.reset();
           this.claude?.projectChanged();
         }
       },
@@ -132,8 +139,11 @@ export class BackendApp {
       device: () => this.settings.getAll().transcriptionDevice,
       modelsDir: join(config.userDataDir, 'models'),
       onChange: (status) => this.emit('transcript.changed', status),
-      busyElsewhere: () => this.faces.busy(),
-      onEngineChanged: () => void this.faces.refresh(),
+      busyElsewhere: () => this.faces.busy() || this.voice.busy(),
+      onEngineChanged: () => {
+        void this.faces.refresh();
+        void this.voice.refresh();
+      },
     });
     this.faces = new FaceService({
       projects: this.projects,
@@ -141,8 +151,33 @@ export class BackendApp {
       sidecarCommand: config.sidecar,
       ffmpeg: async () => (await this.toolchain()).bins.ffmpeg,
       onChange: (status) => this.emit('faces.changed', status),
-      busyElsewhere: () => this.transcripts.busy(),
-      onEngineChanged: () => void this.transcripts.refresh(),
+      busyElsewhere: () => this.transcripts.busy() || this.voice.busy(),
+      onEngineChanged: () => {
+        void this.transcripts.refresh();
+        void this.voice.refresh();
+      },
+    });
+    this.ai = new AiService({
+      settings: () => this.settings.getAll(),
+      apiKey: () => this.secrets.aiApiKey,
+    });
+    this.voice = new VoiceService({
+      sidecar: this.sidecar,
+      sidecarCommand: config.sidecar,
+      modelsDir: join(config.userDataDir, 'models'),
+      fontsDir: config.fontsDir,
+      onChange: (status) => this.emit('voice.changed', status),
+      busyElsewhere: () => this.transcripts.busy() || this.faces.busy(),
+      onEngineChanged: () => {
+        void this.transcripts.refresh();
+        void this.faces.refresh();
+      },
+    });
+    this.templates = new TemplateService({
+      projects: this.projects,
+      voice: this.voice,
+      onTranscript: () => this.transcripts.changed(),
+      onChange: (jobs) => this.emit('templates.changed', jobs),
     });
     this.claude = new ClaudeService({
       userDataDir: config.userDataDir,
@@ -271,6 +306,25 @@ export class BackendApp {
       return { ok: true as const };
     },
     'faces.get': ({ assetId }) => this.faces.get(assetId),
+    'ai.status': () => this.ai.status(),
+    'ai.models': async () => ({ models: await this.ai.models() }),
+    'ai.test': () => this.ai.test(),
+    'ai.writeStory': ({ genre, idea, seconds }) => this.ai.writeStory(genre, idea, seconds),
+    'ai.narrate': ({ title, text, seconds }) => this.ai.narrate(title, text, seconds),
+    'voice.status': () => this.voice.status(),
+    'voice.install': () => {
+      this.voice.installEngine();
+      return { ok: true as const };
+    },
+    'voice.preview': async ({ voice, speed, text }) => ({
+      wav: await this.voice.preview(voice, speed, text),
+    }),
+    'templates.jobs': () => this.templates.list(),
+    'templates.story': (input) => ({ jobId: this.templates.story(input) }),
+    'templates.cancel': ({ jobId }) => {
+      this.templates.cancel(jobId);
+      return { ok: true as const };
+    },
     'luts.list': () => this.projects.database().listLuts(),
     'luts.import': async ({ path }) => {
       const info = await importLut(this.projects.database(), path);
@@ -532,7 +586,7 @@ export class BackendApp {
       const sidecarCheck = checkSidecar(this.sidecar).then(async (result) => {
         this.sidecarStatus = result;
         this.emit('system.statusChanged', this.status());
-        await Promise.all([this.transcripts.refresh(), this.faces.refresh()]);
+        await Promise.all([this.transcripts.refresh(), this.faces.refresh(), this.voice.refresh()]);
       });
       await Promise.all([ffmpegCheck, sidecarCheck]);
       return this.status();
@@ -547,6 +601,7 @@ export class BackendApp {
     this.exports.cancel();
     this.transcripts.reset();
     this.faces.reset();
+    this.templates.reset();
     await this.projects.close().catch(() => {});
     for (const server of this.servers) server.dispose();
     this.servers.clear();

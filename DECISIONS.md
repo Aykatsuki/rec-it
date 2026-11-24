@@ -49,6 +49,7 @@ Each record states the decision, why it was made and what else was considered. R
 | 043 | Wipe, slide and zoom transitions | Accepted |
 | 044 | The Claude connector (MCP) | Accepted |
 | 045 | Claude tools for effects and animation; scenario evals | Accepted |
+| 046 | AI Shorts studio: Ollama/Kimi, local AI voice, story template, clip finder | Accepted |
 
 ---
 
@@ -748,4 +749,63 @@ Each record states the decision, why it was made and what else was considered. R
 - **Live evals.** `pnpm eval:claude [filter]` runs each scenario's request through Claude Code (`claude -p`, no built-in tools, only the Rec-It server, `--strict-mcp-config`). Claude Code reaches the in-memory world through the real bridge and endpoint. The run writes `apps/desktop/eval-results/*.json`, requires ≥ 90%, and stops at once if Claude Code cannot run (signed out, offline) rather than counting it as failures. It uses the plan Claude Code is signed in with, so it runs by hand before releases, not in CI.
 
 **Consequences.** Claude can now use everything Phases 5–6 added except crop, speed ramps and transitions' finer settings. The recorded scripts show the tools can do each job and keep undo exact. Whether Claude actually chooses them well is what the live run measures.
+
+## ADR-046 · AI Shorts studio: Ollama/Kimi, local AI voice, story template, clip finder
+
+**Status:** Accepted (24 Nov 2026, Phase 8 first slice). Changes the order of ADR-019 at your request: AI Shorts creation comes before the rest of Phase 6.
+
+**Context.** You want Rec-It to work like Crayo and OpusClip: AI finds clips and makes faceless videos (story videos, text conversations, split screens) with AI voices. You also want the AI usage to be free.
+
+**Decisions.**
+- **No OmniRoute for Claude.** OmniRoute's free Claude access works by routing requests through Claude subscription logins (Claude Code's OAuth), with several accounts in rotation. Anthropic does not allow third-party apps to route requests through Free, Pro or Max plan credentials, and accounts doing so risk suspension. Rec-It is open source and meant for other people, so it will not build on that. Claude stays available the permitted way, through your Claude app (ADR-018, ADR-044).
+- **One-click AI uses any OpenAI-compatible server** (`packages/ai`, no SDK):
+  - **Ollama** on this PC: the default. It is free and private; an RTX 3070 runs 7–8B models.
+  - **Kimi**: Moonshot's API with your own key.
+  - **Custom**: any OpenAI-compatible server.
+  
+  The client:
+  - asks for JSON mode;
+  - strips `<think>` blocks from reasoning models;
+  - sends an answer that does not fit its schema back once with the problem;
+  - explains the usual failures ("Start Ollama", "ollama pull …", "the key was refused").
+  
+  Settings hold the provider, address and model. The key is a new secret, `aiApiKey`, kept in safeStorage, pushed to the backend and never sent to the renderer. Prompts are short and say what the voice needs: plain spoken English, abbreviations spelled out, fiction only.
+- **AI voice runs on this PC.** Kokoro-82M (Apache-2.0), through kokoro-onnx (MIT) on ONNX Runtime.
+  - It is an optional sidecar extra, `voice`, installed from Settings → AI or from the Create dialog.
+  - The fp16 model and voices (190 MB) download on first use from the kokoro-onnx release and are checked against pinned SHA-256 hashes.
+  - It runs at about real time on a CPU, so no GPU setup is needed.
+  - The model reports each sound's duration, so every written word gets an exact time. Each word is phonemised alone to know how many spoken words it becomes ("29F" → 3; a dash → 0). If they still do not add up, time is shared by letter count within that segment.
+  - British voices read with British pronunciation.
+  - `RECIT_FAKE_TTS=1` gives a tone per word at known times, for tests.
+- **Title cards** are PNGs drawn by the sidecar with Pillow and the bundled fonts: a generic forum-post card with avatar, community, user, title, and vote and comment counts. They carry no platform logos.
+- **Story template** (`packages/templates`, pure). The voiceover, card and background become one batch of ordinary commands, so the result is editable clips and one undo step:
+  - background footage on V1, filled, muted, repeated to cover the story, from a random start;
+  - card on V2 while the title is read, popping from 75% to 90% (no fade-in, so the first frame shows it);
+  - voice on A1, and optional music on A2 at 12% with a fade-out;
+  - story captions in the Pop style at 1.4× in the middle of the frame. The title is not captioned when the card shows it.
+  
+  `sequence.create` gained optional track ids so a batch can refer to its new tracks.
+- **Generated media are ordinary assets.** The voice WAV and card PNG are written to "<project> media" next to the project file and imported with a new rights source, "Made in Rec-It" (not offered in the import dialog). The voiceover's word times are saved as its transcript, so the Transcript panel, captions and Claude's tools all see it.
+- **Template service** (backend). The pipeline runs as a job with stages and progress, can be cancelled, and lets the user carry on editing meanwhile: speak, then draw the card, then import and wait until ready, then store the transcript, then build. Input is checked with zod: the background must be a video, and the music must have sound.
+- **Make a Short** (top bar, shown when a project is open) opens the Create dialog.
+  - Templates: Story video (ready); Text conversation, Split screen and Find clips (marked "coming next").
+  - The story form:
+    - Write with AI (kind, idea, length) or paste a story, with "Fit to length with AI";
+    - editable title and story, with an estimated length;
+    - voice, speed and Listen;
+    - background with a random start, music, caption style, and the card's community, username and theme;
+    - progress and Cancel.
+  - When the Short is ready, the preview shows it from the start.
+- **Clip finder engine.** Clipalytics' analysis moves into `packages/clipping` (your own code, now GPL like Rec-It), with its tests:
+  - signals: loudness relative to the surrounding minute, on-screen action with scene cuts removed, and spoken hype;
+  - moments grown around peaks and snapped to sentences, pauses and cuts;
+  - local scores and reasons;
+  - the compact AI scoring bundle and blend: 60% AI, 40% signals.
+  
+  YouTube-only signals (most-replayed heatmap, live chat) and yt-dlp stay in Clipalytics and ProDown (ADR-012). Weights are renormalised for the three local signals. The in-app clip finder is the next slice.
+- **Tests.**
+  - Unit: the AI client against a fake server (model choice, JSON mode, key, retry, errors) and the prompts; the story builder (layout, background looping, pop, captions, one undo step); word alignment and timing (pytest); the ported clip finder (planted moments found, reasons, overlap, scoring and trims).
+  - Integration: the real sidecar with the fake voice and real FFmpeg imports. This covers the transcript with markdown, emoji and "Edit:" lines removed, the media marked "Made in Rec-It", the layout, one undo step and voice preview.
+  - End to end: the real app with a fake OpenAI-compatible server. Settings → AI, Test the AI, Make a Short, Write it, a British voice, Create Short, the timeline, and undo.
+  - A one-off check with the real Kokoro model and the export renderer showed the card pop and big captions over the footage.
 

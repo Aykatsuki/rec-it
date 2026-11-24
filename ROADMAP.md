@@ -11,7 +11,7 @@ The roadmap is ordered so that each phase produces something that works and can 
 | M1 · Working editor | 3 | Import footage, edit on a multi-track timeline, preview, export a 1080×1920 MP4 |
 | M2 · Shorts editor | 5 | Transcribe, add animated captions, reframe to 9:16 by hand or automatically |
 | M2.5 · Effects | 6 | Fades, transitions, colour, blur, speed and audio effects on clips |
-| M3 · AI editor | 8 | Ask Claude (in your Claude app) to edit; get AI-ranked clip suggestions from long videos |
+| M3 · AI Shorts studio | 8 | Faceless story Shorts and AI-found clips, with AI from Ollama/Kimi or Claude in your Claude app |
 | M4 · Full product | 11 | YouTube research, rights tracking, batch Shorts, signed installers |
 
 **Priority: the editor first.** Phases 0–6 deliver a complete, AI-free video editor (multi-track timeline, preview, export, captions, 9:16 reframing, effects). No AI work starts until the editor is complete and you are happy with it (ADR-019, ADR-026). Transcription in Phase 4 is local Whisper, not Claude.
@@ -266,27 +266,47 @@ Next:
 
 ---
 
-## Phase 8 · AI analysis and clip selection (M) → **Milestone M3**
+## Phase 8 · AI Shorts studio (L) → **Milestone M3** — 🟡 slice A done (24 Nov 2026)
 
-**Goal:** find the best Shorts in long videos.
+**Priority (24 Nov 2026):** you asked to make Rec-It an AI Shorts maker like Crayo and OpusClip now, ahead of the rest of Phase 6 and the reference-PC checks of Phase 7. One-click AI runs on **Ollama** (on your PC, free) or **Kimi** (your Moonshot API key), and Claude keeps working through your Claude app. Faceless templates come first, then the clip finder ported from Clipalytics. See ADR-046 (which also records why OmniRoute is not used).
+
+**Progress (24 Nov 2026).** Slice A (ADR-046):
+- **AI provider:** Ollama, Kimi or any OpenAI-compatible server (Settings → AI, with a test button). The key is kept in the secret store.
+- **AI voice:** Kokoro, run by the Python helper, with exact word timings.
+- **Title cards** drawn with the bundled fonts.
+- **The story template:**
+  - the AI writes the story, or tidies a pasted post and fits it to length;
+  - the voice reads the title and story;
+  - the card pops in over gameplay footage;
+  - big word-by-word captions follow the voice;
+  - music is optional;
+  - the whole Short is one undo step, from **Make a Short**.
+- **The clip finder engine** from Clipalytics, as `packages/clipping`: local loudness, action and speech signals, moments, and AI scoring.
+
+Next:
+- Slice B: the text-conversation and split-screen templates.
+- Slice C: the clip finder in the app. That means measuring with FFmpeg, a ranked moments panel, scoring with Ollama/Kimi, and one-click Shorts with reframe and captions.
+- Then voice tools (noise cleanup, vocal removal) and ideas and hooks.
+
+**Goal:** make finished Shorts from a prompt, a script or a long video, with AI that costs nothing (Ollama) or very little (Kimi).
 
 **Deliverables**
-- Signal extraction in Python: scene cuts, loudness, silence map, speech rate, faces, motion energy.
-- Deterministic candidate generator; frame sampler.
-- Local signal-based ranking that works with no AI; Claude scoring through `get_candidate_bundle` and `submit_candidate_scores`.
-- Highlights panel: ranked candidates with preview, reasons, scores, accept/reject.
-- `build_short_from_candidate`: sequence with cuts, reframe and captions applied.
+- 8a · AI provider layer (`packages/ai`), local AI voice (Kokoro), title cards, story template. ✅
+- 8b · Text-conversation template (animated chat bubbles, two voices) and split-screen template (your clip over satisfying gameplay).
+- 8c · Clip finder: `packages/clipping` (ported from Clipalytics ✅), FFmpeg loudness/action measurement in the backend, transcript-based speech signal, moments panel with preview, reasons and scores, AI scoring (≈2K tokens per video), one-click Shorts (cut, fill/reframe, captions, hook title), batch build.
+- 8d · Voice and audio: noise cleanup and vocal removal (local models), more voices.
+- 8e · Ideas: hooks, titles, descriptions and hashtags for a finished Short.
 
 **Exit criteria**
-- On a set of 5 long fixture videos where you have marked the moments you would choose, at least 60% of your picks appear in Rec-It's top 10 per video (a practical benchmark that we will refine with you).
-- Highlights panel produces a ranked list with AI switched off; Claude scoring of a 1-hour video completes in one conversation without hitting tool-size limits.
-- Candidate boundaries never cut a word in half.
+- A story Short from an idea in under 2 minutes on the reference PC, with captions within ±50 ms of the voice.
+- On 5 long videos where you have marked the moments you would choose, at least 60% of your picks appear in the clip finder's top 10.
+- Every template's result is ordinary, editable clips and undoes in one step.
+- Works with AI switched off (paste a story; local-only clip ranking).
 
 **Testing**
-- pytest: each signal on labelled fixtures.
-- Unit: candidate generator boundaries, dedupe, word snapping.
-- Eval: the recall benchmark above, tracked over time as prompts change.
-- Payload tests: candidate bundles stay under a set size (frames downscaled, transcript excerpts trimmed).
+- Unit: prompts, client (fake server), template builders, clip finder (ported tests), word alignment.
+- Integration: templates through the real sidecar (fake voice) and FFmpeg.
+- E2E: AI settings, writing a story, building the Short, undo.
 
 ---
 

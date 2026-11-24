@@ -4,7 +4,7 @@ import platform
 import time
 from typing import Any
 
-from . import __version__, faces, transcribe
+from . import __version__, card, faces, transcribe, tts
 from .rpc import INVALID_PARAMS, RpcError, Server, log
 from .system import cuda_status, query_gpus
 
@@ -24,6 +24,7 @@ def system_info(_: dict[str, Any]) -> dict[str, Any]:
         "cuda": cuda_status(gpus),
         "transcription": transcribe.available(),
         "faces": faces.available(),
+        "voice": tts.available(),
     }
 
 
@@ -53,6 +54,32 @@ def faces_job(params: dict[str, Any], progress: Any, cancelled: Any) -> dict[str
         raise RpcError(-32800, "Cancelled") from e
 
 
+def tts_job(params: dict[str, Any], progress: Any, cancelled: Any) -> dict[str, Any]:
+    segments = params.get("segments")
+    if (
+        not isinstance(segments, list)
+        or not segments
+        or not all(isinstance(s, dict) and isinstance(s.get("text"), str) for s in segments)
+    ):
+        raise RpcError(INVALID_PARAMS, "segments must be a list of {id, text}")
+    if not isinstance(params.get("out"), str):
+        raise RpcError(INVALID_PARAMS, "out must be a file path")
+    status = tts.available()
+    if not status["available"]:
+        raise RpcError(-32001, "AI voice is not installed", status)
+    try:
+        return tts.run(params, progress, cancelled)
+    except tts.Cancelled as e:
+        raise RpcError(-32800, "Cancelled") from e
+
+
+def card_render(params: dict[str, Any]) -> dict[str, Any]:
+    for key in ("out", "fontsDir", "title"):
+        if not isinstance(params.get(key), str):
+            raise RpcError(INVALID_PARAMS, f"{key} must be text")
+    return card.render(params)
+
+
 def debug_sleep(params: dict[str, Any]) -> dict[str, Any]:
     """Test helper for timeouts and cancellation."""
     seconds = params.get("seconds")
@@ -67,11 +94,14 @@ HANDLERS = {
     "version": version,
     "system.info": system_info,
     "debug.sleep": debug_sleep,
+    "card.render": card_render,
 }
 
 
 def main() -> int:
     log(f"starting v{__version__} on Python {platform.python_version()}")
-    Server(HANDLERS, jobs={"transcribe": transcribe_job, "faces": faces_job}).serve()
+    Server(
+        HANDLERS, jobs={"transcribe": transcribe_job, "faces": faces_job, "tts": tts_job}
+    ).serve()
     log("stdin closed, exiting")
     return 0

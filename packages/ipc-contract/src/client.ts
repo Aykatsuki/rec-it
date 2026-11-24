@@ -4,6 +4,8 @@ import { IpcError, type IpcErrorCode } from './errors';
 
 export interface ClientOptions {
   timeoutMs?: number;
+  /** Longer (or shorter) limits for particular channels, e.g. AI requests to a local model. */
+  channelTimeouts?: Record<string, number>;
 }
 
 export interface IpcClient<C extends Contract> extends TypedClient<C> {
@@ -88,16 +90,17 @@ export function createIpcClient<C extends Contract>(
       );
     }
     const id = nextId++;
+    const limit = options.channelTimeouts?.[channel] ?? timeoutMs;
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
         pending.delete(id);
         reject(
           new IpcError({
             code: 'TIMEOUT',
-            message: `"${channel}" timed out after ${timeoutMs} ms`,
+            message: `"${channel}" timed out after ${limit} ms`,
           }),
         );
-      }, timeoutMs);
+      }, limit);
       pending.set(id, { resolve, reject, timer, channel });
       transport.send({ kind: 'request', id, channel, payload: checked.data });
     });

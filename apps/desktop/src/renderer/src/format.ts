@@ -45,6 +45,7 @@ export const RIGHTS_LABELS: Record<MediaAsset['rights']['source'], string> = {
   'creative-commons': 'Creative Commons',
   'licensed-stock': 'Licensed stock footage',
   'licensed-other': 'Licensed from someone else',
+  'made-in-rec-it': 'Made in Rec-It',
   unknown: 'Not sure',
 };
 

@@ -13,6 +13,12 @@ const fields = {
   reopenLastProject: z.boolean(),
   /** Folder of the last export; the export dialog starts there. null = the Videos folder. */
   exportDirectory: z.string().max(4096).nullable(),
+  /** Where one-click AI features get their text (ADR-046). The API key is a secret. */
+  aiProvider: z.enum(['ollama', 'kimi', 'custom']),
+  /** null: the provider's usual address. */
+  aiBaseUrl: z.string().max(500).nullable(),
+  /** Empty: the first model the server lists. */
+  aiModel: z.string().max(200),
 };
 
 export const DEFAULT_SETTINGS = {
@@ -22,6 +28,9 @@ export const DEFAULT_SETTINGS = {
   cacheDirectory: null,
   reopenLastProject: true,
   exportDirectory: null,
+  aiProvider: 'ollama',
+  aiBaseUrl: null,
+  aiModel: '',
 } as const;
 
 /** App-wide settings stored in app.db. Missing keys fall back to defaults so old databases keep working. */
@@ -32,6 +41,9 @@ export const settingsSchema = z.object({
   cacheDirectory: fields.cacheDirectory.default(DEFAULT_SETTINGS.cacheDirectory),
   reopenLastProject: fields.reopenLastProject.default(DEFAULT_SETTINGS.reopenLastProject),
   exportDirectory: fields.exportDirectory.default(DEFAULT_SETTINGS.exportDirectory),
+  aiProvider: fields.aiProvider.default(DEFAULT_SETTINGS.aiProvider),
+  aiBaseUrl: fields.aiBaseUrl.default(DEFAULT_SETTINGS.aiBaseUrl),
+  aiModel: fields.aiModel.default(DEFAULT_SETTINGS.aiModel),
 });
 export type Settings = z.output<typeof settingsSchema>;
 

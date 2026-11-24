@@ -48,6 +48,7 @@ const HELP: Record<RightsSource, string> = {
     'Shared under a Creative Commons licence. Rec-It will write the credit for you.',
   'licensed-stock': 'Bought or licensed from a stock library.',
   'licensed-other': 'You have permission from the owner.',
+  'made-in-rec-it': 'Voiceovers and title cards Rec-It made for you.',
   unknown: 'Rec-It will remind you to check before export.',
 };
 
@@ -105,21 +106,27 @@ function RightsForm({ request }: { request: Request }) {
       >
         <fieldset className="rights__options">
           <legend className="sr-only">Source</legend>
-          {(Object.keys(RIGHTS_LABELS) as RightsSource[]).map((source) => (
-            <label key={source} className="rights__option" data-checked={rights.source === source}>
-              <input
-                type="radio"
-                name="source"
-                value={source}
-                checked={rights.source === source}
-                onChange={() => setRights({ ...rights, source })}
-              />
-              <span>
-                <strong>{RIGHTS_LABELS[source]}</strong>
-                <small>{HELP[source]}</small>
-              </span>
-            </label>
-          ))}
+          {(Object.keys(RIGHTS_LABELS) as RightsSource[])
+            .filter((source) => source !== 'made-in-rec-it')
+            .map((source) => (
+              <label
+                key={source}
+                className="rights__option"
+                data-checked={rights.source === source}
+              >
+                <input
+                  type="radio"
+                  name="source"
+                  value={source}
+                  checked={rights.source === source}
+                  onChange={() => setRights({ ...rights, source })}
+                />
+                <span>
+                  <strong>{RIGHTS_LABELS[source]}</strong>
+                  <small>{HELP[source]}</small>
+                </span>
+              </label>
+            ))}
         </fieldset>
 
         {rights.source === 'creative-commons' && (

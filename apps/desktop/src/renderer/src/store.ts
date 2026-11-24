@@ -11,6 +11,8 @@ import type {
   LutInfo,
   Transcript,
   TranscriptionStatus,
+  TemplateJob,
+  VoiceStatus,
 } from '@rec-it/ipc-contract';
 import { backend } from './api';
 
@@ -57,6 +59,9 @@ interface AppState {
   luts: LutInfo[];
   /** The Claude connector: connection, activity, change cards, confirmations (ADR-044). */
   claude: ClaudeState | null;
+  /** AI voice engine for faceless templates (ADR-046). */
+  voice: VoiceStatus | null;
+  templateJobs: TemplateJob[];
   /** Clips waiting for their media's face analysis, to be reframed when it finishes. */
   pendingReframe: Record<string, string[]>;
   /** The clip whose crop is being edited in the crop window (ADR-034). */
@@ -135,6 +140,8 @@ export const useApp = create<AppState>((set) => ({
   faces: null,
   luts: [],
   claude: null,
+  voice: null,
+  templateJobs: [],
   pendingReframe: {},
   safeZones: stored('recit.safeZones') === '1',
   setSafeZones: (safeZones) => {
@@ -197,6 +204,10 @@ export function startBackendSync(): () => void {
     useApp.setState({ faces: await backend.invoke('faces.status', {}) });
     await loadLuts();
     useApp.setState({ claude: await backend.invoke('claude.state', {}).catch(() => null) });
+    useApp.setState({
+      voice: await backend.invoke('voice.status', {}).catch(() => null),
+      templateJobs: await backend.invoke('templates.jobs', {}).catch(() => []),
+    });
   };
   const loadLuts = async () => {
     const project = useApp.getState().project;
@@ -228,6 +239,8 @@ export function startBackendSync(): () => void {
     ),
     backend.on('project.changed', () => void loadLuts()),
     backend.on('luts.changed', (luts) => useApp.setState({ luts })),
+    backend.on('voice.changed', (voice) => useApp.setState({ voice })),
+    backend.on('templates.changed', (templateJobs) => useApp.setState({ templateJobs })),
     backend.on('claude.changed', (claude) => {
       const before = useApp.getState().claude;
       useApp.setState({ claude });
