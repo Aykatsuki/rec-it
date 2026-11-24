@@ -133,7 +133,7 @@ def test_talking_steps_down_when_graphics_memory_runs_short(tmp_path, monkeypatc
         "image": str(tmp_path / "fox.png"),
         "audio": str(tmp_path / "line.wav"),
         "out": str(tmp_path / "shot.avi"),
-        "seconds": 3.8,  # 61 frames, 16 latent frames: the reference PC's failing case
+        "seconds": 3.8,  # 65 frames: like the reference PC's line
     }
     seen: list[str] = []
     r = talking.talk(params, lambda p, m=None: seen.append(m or ""), threading.Event())
@@ -159,3 +159,56 @@ def test_memory_shortfall_and_sizes() -> None:
     assert size_for(61, 1) is None
     assert all(w % 16 == 0 and h % 16 == 0 for w, h in SIZES)
     assert tokens(480, 832, 61) == 30 * 52 * 16
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="the stand-in engine is a shell script")
+def test_talking_steps_down_when_windows_commit_runs_short(tmp_path, monkeypatch) -> None:
+    """Like the reference PC's second try: block 1 at 432x768 cannot get RAM + page file."""
+    from recit_media_ai import talking
+
+    script = tmp_path / "sd-cli"
+    script.write_text(
+        "#!/bin/sh\n"
+        'echo "$@" >> "$(dirname "$0")/calls.txt"\n'
+        'case "$*" in *"-W 480 "*|*"-W 448 "*|*"-W 432 "*)\n'
+        '  echo "[E] RAM graph capacity exceeded. Requested 6661952 bytes, 0 bytes available,'
+        ' 0 bytes resident, pending device commit is 4059689088 bytes"\n'
+        '  echo "[E] Wan2.2-S2V-14B segment 3/42 (wan.blocks.1) failed during workspace"\n'
+        "  exit 1;;\n"
+        "esac\n"
+        'while [ "$1" != "-o" ]; do shift; done\n'
+        'printf "AVI" > "$2"\n'
+    )
+    script.chmod(0o755)
+    monkeypatch.setenv("RECIT_SD_CLI", str(script))
+    monkeypatch.delenv("RECIT_FAKE_TALK", raising=False)
+    models = str(tmp_path)
+    for name, _, _ in talking.TALK_FILES:
+        (talking.model_dir(models) / name).parent.mkdir(parents=True, exist_ok=True)
+        (talking.model_dir(models) / name).write_bytes(b"x")
+    talking.lora_dir(models).mkdir(parents=True)
+    (talking.lora_dir(models) / talking.LORA[0]).write_bytes(b"x")
+    frames = talking.frames_for(3.8)
+    talking._save_limit(models, talking.tokens(432, 768, frames))  # learnt on the first try
+    params = {
+        "modelsDir": models,
+        "image": str(tmp_path / "fox.png"),
+        "audio": str(tmp_path / "line.wav"),
+        "out": str(tmp_path / "shot.avi"),
+        "seconds": 3.8,
+    }
+    r = talking.talk(params, lambda *a: None, threading.Event())
+    calls = (tmp_path / "calls.txt").read_text().splitlines()
+    assert ["-W 432" in calls[0], "-W 400" in calls[1]] == [True, True]
+    assert (r["width"], r["height"]) == (400, 704)
+    # Not remembered: it depends on what else is open.
+    assert talking.token_limit(models) == talking.tokens(432, 768, frames)
+
+
+def test_commit_shortfall_names_the_page_file() -> None:
+    lines = [
+        "[E] RAM graph capacity exceeded. Requested 6661952 bytes, 0 bytes available, 0 bytes "
+        "resident, pending device commit is 4059689088 bytes --- model_manager.cpp:1359"
+    ]
+    message = failure_message(lines, lines, 1, LOG, "The animation engine")
+    assert message.startswith("Windows ran out of memory") and "Virtual memory" in message

@@ -191,6 +191,11 @@ def memory_shortfall(lines: list[str]) -> float | None:
     return None
 
 
+def commit_shortfall(lines: list[str]) -> bool:
+    """Windows' commit charge (RAM + page file) could not cover the GPU workspace."""
+    return any(images._COMMIT.search(line) for line in lines)
+
+
 def talk(
     params: dict[str, Any], progress: Callable[..., None], cancelled: threading.Event
 ) -> dict[str, Any]:
@@ -240,7 +245,8 @@ def _animate(
     lora = Path(LORA[0]).stem
     m = model_dir(models_dir)
     limit = token_limit(models_dir)
-    for _attempt in range(4):
+    commit_retries = 0
+    for _attempt in range(5):
         size = size_for(frames, limit)
         if size is None:
             raise RuntimeError(
@@ -306,6 +312,17 @@ def _animate(
             raise Cancelled() from e
         except images.EngineFailed as e:
             share = memory_shortfall(e.lines)
+            if share is None and commit_shortfall(e.lines) and commit_retries < 2:
+                # Windows could not lend the GPU workspace (RAM + page file). A smaller size needs
+                # less; not remembered, since it depends on what else is open.
+                commit_retries += 1
+                smaller = [sz for sz in SIZES if sz[0] * sz[1] < width * height]
+                if not smaller:
+                    raise
+                used = tokens(*smaller[0], frames)
+                limit = used if limit is None else min(limit, used)
+                progress(0.04, "Not enough free memory in Windows at that size; trying smaller…")
+                continue
             if share is None:
                 raise
             # Aim a little under what was available; never above what just failed.

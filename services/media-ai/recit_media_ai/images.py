@@ -383,6 +383,8 @@ def run_engine(
 _ANSI = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]")
 _PROGRESS = re.compile(r"^\s*\|[=#> -]*\|")
 _RAM = re.compile(r"RAM (weight|graph) capacity exceeded", re.IGNORECASE)
+#: Windows commit charge (RAM + page file) too low for the GPU workspace sd.cpp needs.
+_COMMIT = re.compile(r"capacity exceeded.*pending device commit", re.IGNORECASE)
 _ERROR = re.compile(r"\[(E|ERROR)\]|error|failed|out of memory", re.IGNORECASE)
 _OOM = re.compile(
     r"out of memory|cudaMalloc|failed to allocate|alloc.*buffer|CUDA error"
@@ -404,6 +406,14 @@ def failure_message(
 ) -> str:
     """A readable reason from sd-cli's output: memory problems in plain words, otherwise the
     first error it logged (the last one is only "generate failed", which says nothing)."""
+    if any(_COMMIT.search(e) for e in errors):
+        return (
+            "Windows ran out of memory to give the graphics card (RAM plus the page file). "
+            'Make the page file bigger: Start → "Adjust the appearance and performance of '
+            'Windows" → Advanced → Virtual memory → Change, untick "Automatically manage", '
+            "choose C:, Custom size 16384 to 32768 MB, Set, OK, then restart. "
+            f"Details: {log_path}"
+        )
     if any(_RAM.search(e) for e in errors):
         return (
             "Your PC ran out of memory (RAM) while generating. Close other programs, especially "
