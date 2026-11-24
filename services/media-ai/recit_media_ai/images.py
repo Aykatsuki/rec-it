@@ -339,6 +339,8 @@ def run_engine(
     proc = subprocess.Popen(
         [str(exe), *args],
         cwd=str(exe.parent),
+        # Never the sidecar's stdin: that is the JSON-RPC channel.
+        stdin=subprocess.DEVNULL,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
         creationflags=flags,

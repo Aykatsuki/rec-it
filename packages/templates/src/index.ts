@@ -566,8 +566,8 @@ export function talkingShot(input: TalkingShotInput): Command {
 export function characterPrompt(character: string): string {
   return (
     `${character.trim()}, Pixar-style 3D animated film character, waist-up portrait facing the ` +
-    'camera, mouth gently closed, expressive eyes, soft cinematic studio lighting, simple softly ' +
-    'blurred background, vertical 9:16 composition, no text'
+    'camera, mouth closed with lips together, neutral expression, eyes open, soft cinematic ' +
+    'studio lighting, simple softly blurred background, vertical 9:16 composition, no text'
   );
 }
 

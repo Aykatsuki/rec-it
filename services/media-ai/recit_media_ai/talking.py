@@ -340,6 +340,7 @@ def _fake_clip(ffmpeg: str, image: Path, audio: Path, out: Path, seconds: float)
     subprocess.run(
         [
             ffmpeg,
+            "-nostdin",
             "-hide_banner",
             "-loglevel",
             "error",
@@ -365,5 +366,6 @@ def _fake_clip(ffmpeg: str, image: Path, audio: Path, out: Path, seconds: float)
             str(out),
         ],
         check=True,
+        stdin=subprocess.DEVNULL,
         creationflags=flags,
     )

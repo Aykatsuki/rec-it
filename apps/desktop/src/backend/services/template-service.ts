@@ -431,10 +431,10 @@ export class TemplateService {
           ids: { video: createId('item'), voice: createId('item') },
         }),
       );
-      const drawn = Object.keys(shapes).filter((k) => k !== 'rest' && shapes[k] !== shapes.rest);
+      const drawn = Object.keys(shapes).filter((k) => k !== 'base' && shapes[k] !== shapes.base);
       this.update(id, {
         state: 'done',
-        stage: `Done in ${duration((Date.now() - started) / 1000)}; the mouth shapes took ${duration(shapesSeconds)} (${new Set(drawn.map((k) => shapes[k])).size} of 6 drawn).`,
+        stage: `Done in ${duration((Date.now() - started) / 1000)}; the mouth shapes took ${duration(shapesSeconds)} (${new Set(drawn.map((k) => shapes[k])).size} of 7 drawn).`,
         progress: 1,
         sequenceId,
       });

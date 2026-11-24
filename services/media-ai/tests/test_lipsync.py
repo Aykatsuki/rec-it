@@ -127,7 +127,8 @@ def test_shapes_and_render_end_to_end(tmp_path, monkeypatch) -> None:
         threading.Event(),
     )
     shapes = r["shapes"]
-    assert set(shapes) == {"rest", *lipsync.SHAPES}
+    assert set(shapes) == {"base", *lipsync.SHAPES}
+    assert shapes["rest"] != shapes["base"]  # closed lips drawn, not the original
     assert all(Path(p).is_file() for p in shapes.values())
 
     out = tmp_path / "talk.mp4"
@@ -160,3 +161,81 @@ def test_shapes_and_render_end_to_end(tmp_path, monkeypatch) -> None:
     eyes = frames[:, int(h * 0.3) - 1 : int(h * 0.3) + 2, mx - w // 8 - 4 : mx - w // 8 + 4]
     dark = eyes.mean(axis=(1, 2)) < eyes.mean() - 30
     assert 0 < dark.sum() <= 5 * len(lipsync.blinks(3.22, 3))
+
+
+@pytest.mark.skipif(_ffmpeg() is None, reason="needs FFmpeg")
+def test_render_job_leaves_the_rpc_channel_alone(tmp_path, monkeypatch) -> None:
+    """Through the real stdio server: requests sent while FFmpeg renders are all answered, and
+    the job reports back. FFmpeg used to inherit the sidecar's stdin (the JSON-RPC channel); on
+    Windows it reads that pipe for key presses, and on the reference PC the render never
+    reported back. Linux FFmpeg leaves a pipe alone, so here this guards the behaviour rather
+    than reproducing the Windows hang."""
+    import json
+    import queue
+    import sys
+    import time
+
+    pytest.importorskip("numpy")
+    base = tmp_path / "base.png"
+    _picture(base, 384, 672)
+    monkeypatch.setenv("RECIT_FAKE_LIPSYNC", "1")
+    os_env = {**__import__("os").environ}
+    shapes = lipsync.make_shapes(
+        {"base": str(base), "outDir": str(tmp_path / "shapes"), "modelsDir": str(tmp_path)},
+        lambda *a: None,
+        threading.Event(),
+    )["shapes"]
+    long_sounds = [
+        {"p": "aoifm"[i % 5], "start": i * 0.1, "end": i * 0.1 + 0.1} for i in range(400)
+    ]
+    proc = subprocess.Popen(
+        [sys.executable, "-m", "recit_media_ai"],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
+        text=True,
+        cwd=Path(__file__).resolve().parents[1],
+        env=os_env,
+    )
+    assert proc.stdin and proc.stdout
+    replies: queue.Queue[dict] = queue.Queue()
+    threading.Thread(
+        target=lambda: [replies.put(json.loads(line)) for line in proc.stdout], daemon=True
+    ).start()
+
+    def send(message: dict) -> None:
+        proc.stdin.write(json.dumps(message) + "\n")
+        proc.stdin.flush()
+
+    try:
+        send(
+            {
+                "jsonrpc": "2.0",
+                "id": "render",
+                "method": "lipsync.render",
+                "params": {
+                    "shapes": shapes,
+                    "sounds": long_sounds,
+                    "duration": 40.0,
+                    "out": str(tmp_path / "long.mp4"),
+                    "ffmpeg": _ffmpeg(),
+                },
+            }
+        )
+        for i in range(20):
+            send({"jsonrpc": "2.0", "id": i, "method": "ping"})
+            time.sleep(0.05)
+        answered: set = set()
+        deadline = time.time() + 120
+        while time.time() < deadline and not ({"render", *range(20)} <= answered):
+            try:
+                msg = replies.get(timeout=1)
+            except queue.Empty:
+                continue
+            if "id" in msg and msg.get("method") is None:
+                assert "error" not in msg, msg
+                answered.add(msg["id"])
+        assert answered >= {"render", *range(20)}
+    finally:
+        proc.stdin.close()
+        proc.wait(timeout=10)

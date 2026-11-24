@@ -51,9 +51,11 @@ KEEP = (
     " Keep everything else exactly the same: the same character, face, eyes, pose, framing, "
     "lighting, colours and background."
 )
-#: Mouth shapes (a classic limited-animation set) and the edit that draws each one. "rest" is
-#: the original picture (lips closed: m, b, p and silence).
+#: Mouth shapes (a classic limited-animation set) and the edit that draws each one.
 SHAPES: dict[str, str] = {
+    # Pictures often come back with the mouth open whatever the prompt says, so closed lips
+    # (m, b, p and silence) are drawn too, and stand in for the original when they come out.
+    "rest": "Close the character's mouth: lips gently together, relaxed, neutral." + KEEP,
     "open": "Open the character's mouth wide, as when saying 'ah', showing the tongue." + KEEP,
     "mid": "Open the character's mouth slightly and relaxed, as when saying 'uh'." + KEEP,
     "wide": "Stretch the character's mouth into a wide smile showing the teeth, as when saying "
@@ -246,13 +248,16 @@ def make_shapes(
     params: dict[str, Any], progress: Callable[..., None], cancelled: threading.Event
 ) -> dict[str, Any]:
     """Draws every mouth shape and the blink from `base` into `outDir`, as full pictures where
-    only the mouth (or eyes) differs from the base. Returns {shape: path}, with "rest" = base."""
+    only the mouth (or eyes) differs from the base. Returns {shape: path} plus "base" (the
+    original picture)."""
     base = Path(str(params["base"]))
     out_dir = Path(str(params["outDir"]))
     out_dir.mkdir(parents=True, exist_ok=True)
     models_dir = str(params["modelsDir"])
     seed = int(params.get("seed", 42))
-    result: dict[str, str] = {"rest": str(base)}
+    # "base" is the untouched picture: blinks are measured against it. "rest" (closed lips)
+    # starts as the base and is replaced by its edit when that comes out.
+    result: dict[str, str] = {"base": str(base), "rest": str(base)}
     raw_dir = out_dir / "edits"
     raw_dir.mkdir(exist_ok=True)
     names = list(SHAPES)
@@ -333,9 +338,13 @@ def _fake_edit(base: Path, out: Path, name: str) -> None:
         for ex in (cx - w // 8, cx + w // 8):
             d.line([(ex - w // 20, int(h * 0.3)), (ex + w // 20, int(h * 0.3))], (20, 20, 20), 6)
     else:
-        rx, ry = size[name]
-        box = [cx - rx * w / 2, cy - ry * h / 2, cx + rx * w / 2, cy + ry * h / 2]
-        d.ellipse(box, fill=(60, 15, 20))
+        if name == "rest":  # closed lips: a thin lip-coloured line
+            box = [cx - 0.05 * w, cy - 0.006 * h, cx + 0.05 * w, cy + 0.006 * h]
+            d.ellipse(box, fill=(200, 110, 110))
+        else:
+            rx, ry = size[name]
+            box = [cx - rx * w / 2, cy - ry * h / 2, cx + rx * w / 2, cy + ry * h / 2]
+            d.ellipse(box, fill=(60, 15, 20))
     pic.save(out)
 
 
@@ -489,7 +498,7 @@ def render(
         if key not in cache:
             path = Path(shapes.get(shape) or shapes["rest"])
             if closed:
-                eyes = _eyes_mask(Path(shapes["rest"]), Path(shapes["blink"]))
+                eyes = _eyes_mask(Path(shapes.get("base", shapes["rest"])), Path(shapes["blink"]))
                 with Image.open(path) as p, Image.open(shapes["blink"]) as bl:
                     mixed = Image.composite(bl.convert("RGB"), p.convert("RGB"), eyes)
                     path = work / f"{shape}-blink.png"
@@ -523,6 +532,7 @@ def render(
     proc = subprocess.run(
         [
             ffmpeg,
+            "-nostdin",
             "-hide_banner",
             "-loglevel",
             "error",
@@ -547,8 +557,13 @@ def render(
             "+faststart",
             str(out),
         ],
+        # Never the sidecar's stdin (the JSON-RPC channel): FFmpeg would read it for key presses
+        # and swallow the backend's messages, so the job never reports back.
+        stdin=subprocess.DEVNULL,
         capture_output=True,
         creationflags=flags,
+        # A clip takes seconds; never wait forever on a stuck FFmpeg.
+        timeout=max(120.0, duration * 10),
     )
     if proc.returncode != 0:
         raise RuntimeError(f"FFmpeg could not assemble the clip: {proc.stderr.decode()[-300:]}")

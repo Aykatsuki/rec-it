@@ -104,7 +104,10 @@ def _detect(
     size = w * h * 3
     frames: list[list[list[float]]] = []
     expected = max(1, int(duration * fps))
-    proc = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    # No stdin: the sidecar's stdin is the JSON-RPC channel, which FFmpeg would read from.
+    proc = subprocess.Popen(
+        args, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE
+    )
     try:
         assert proc.stdout is not None
         while True:

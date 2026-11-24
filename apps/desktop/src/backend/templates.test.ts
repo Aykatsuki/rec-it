@@ -227,7 +227,7 @@ describe.skipIf(!bins || !hasUv)('story template (backend, real sidecar, fake vo
     }, 120_000);
     expect(job.error).toBeUndefined();
     expect(job.kind).toBe('talk-test');
-    expect(job.stage).toMatch(/^Done in .+; the mouth shapes took .+ \(\d of 6 drawn\)\.$/);
+    expect(job.stage).toMatch(/^Done in .+; the mouth shapes took .+ \(\d of 7 drawn\)\.$/);
     const { doc } = app.projects.document().state();
     const seq = doc.sequences.find((s) => s.id === job.sequenceId)!;
     const track = (name: string) => seq.tracks.find((t) => t.name === name)!.items;
