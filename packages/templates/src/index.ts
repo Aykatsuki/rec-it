@@ -526,6 +526,8 @@ export function talkingShot(input: TalkingShotInput): Command {
         id: ids.video,
         start: 0,
         duration: f(input.video.duration),
+        // sd-cli also muxes the driving voice into the clip; playing both doubles it and clips.
+        muted: true,
         transform: { fit: 'fill' },
       },
       {

@@ -262,7 +262,7 @@ describe('talking shot', () => {
         ? {
             kind: 'video',
             duration: secondsToFlicks(2.5625),
-            hasAudio: false,
+            hasAudio: true,
             width: 480,
             height: 832,
           }
@@ -284,6 +284,8 @@ describe('talking shot', () => {
     const v1 = seq.tracks.find((t) => t.name === 'V1')!.items;
     const a1 = seq.tracks.find((t) => t.name === 'A1')!.items;
     expect(v1.map((i) => [i.assetId, i.start, i.transform.fit])).toEqual([['clip', 0, 'fill']]);
+    // The clip carries a copy of the voice: it is muted so the line is heard once.
+    expect(v1[0]!.muted).toBe(true);
     expect(a1.map((i) => [i.assetId, s(i.duration)])).toEqual([['line', 2.4]]);
     expect(characterPrompt(' a fox ')).toMatch(/^a fox, Pixar-style 3D/);
   });

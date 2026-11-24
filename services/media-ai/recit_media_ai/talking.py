@@ -213,7 +213,7 @@ def talk(
     progress(0.02, "Animating the character…")
     width, height = WIDTH, HEIGHT
     if _fake():
-        _fake_clip(str(params["ffmpeg"]), image, out, frames / FPS)
+        _fake_clip(str(params["ffmpeg"]), image, audio, out, frames / FPS)
     else:
         width, height = _animate(
             models_dir, image, audio, out, prompt, seed, frames, progress, cancelled
@@ -333,8 +333,9 @@ def _animate(
     raise RuntimeError("The animation engine could not find a size that fits the graphics card.")
 
 
-def _fake_clip(ffmpeg: str, image: Path, out: Path, seconds: float) -> None:
-    """A still 480x832 MJPEG clip of the picture (stands in for the model in tests)."""
+def _fake_clip(ffmpeg: str, image: Path, audio: Path, out: Path, seconds: float) -> None:
+    """A still 480x832 MJPEG clip of the picture with the voice muxed in, like sd-cli's output
+    (stands in for the model in tests)."""
     flags = 0x08000000 if sys.platform == "win32" else 0
     subprocess.run(
         [
@@ -347,6 +348,8 @@ def _fake_clip(ffmpeg: str, image: Path, out: Path, seconds: float) -> None:
             "1",
             "-i",
             str(image),
+            "-i",
+            str(audio),
             "-t",
             f"{seconds:.3f}",
             "-r",
@@ -355,6 +358,10 @@ def _fake_clip(ffmpeg: str, image: Path, out: Path, seconds: float) -> None:
             f"scale={WIDTH}:{HEIGHT},format=yuvj420p",
             "-c:v",
             "mjpeg",
+            "-c:a",
+            "pcm_s16le",
+            "-af",
+            "apad",
             str(out),
         ],
         check=True,

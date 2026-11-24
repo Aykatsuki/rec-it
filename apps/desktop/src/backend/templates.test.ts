@@ -236,6 +236,9 @@ describe.skipIf(!bins || !hasUv)('story template (backend, real sidecar, fake vo
     expect(clip.originalPath).toMatch(/talking .+\.avi$/);
     expect([clip.probe?.video?.width, clip.probe?.video?.height]).toEqual([480, 832]);
     expect(app.projects.media().get(track('A1')[0]!.assetId).kind).toBe('audio');
+    // Like sd-cli, the clip carries the voice too; it is muted so the line is heard once.
+    expect(clip.probe?.audioStreamCount).toBe(1);
+    expect(track('V1')[0]!.muted).toBe(true);
     // The clip covers the whole line, rounded up to whole latent frames (4n+1 at 16 fps).
     const clipSec = sec(track('V1')[0]!.duration);
     const lineSec = sec(track('A1')[0]!.duration);
