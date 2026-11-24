@@ -4,7 +4,7 @@ import platform
 import time
 from typing import Any
 
-from . import __version__, card, faces, transcribe, tts
+from . import __version__, card, faces, images, transcribe, tts
 from .rpc import INVALID_PARAMS, RpcError, Server, log
 from .system import cuda_status, query_gpus
 
@@ -80,6 +80,43 @@ def card_render(params: dict[str, Any]) -> dict[str, Any]:
     return card.render(params)
 
 
+def images_status(params: dict[str, Any]) -> dict[str, Any]:
+    if not isinstance(params.get("modelsDir"), str):
+        raise RpcError(INVALID_PARAMS, "modelsDir must be a folder")
+    return images.status(params["modelsDir"])
+
+
+def images_install_job(params: dict[str, Any], progress: Any, cancelled: Any) -> dict[str, Any]:
+    if not isinstance(params.get("modelsDir"), str):
+        raise RpcError(INVALID_PARAMS, "modelsDir must be a folder")
+    try:
+        return images.install(params, progress, cancelled)
+    except images.Cancelled as e:
+        raise RpcError(-32800, "Cancelled") from e
+
+
+def images_job(params: dict[str, Any], progress: Any, cancelled: Any) -> dict[str, Any]:
+    prompts = params.get("prompts")
+    if not isinstance(prompts, list) or not prompts or not all(isinstance(p, str) for p in prompts):
+        raise RpcError(INVALID_PARAMS, "prompts must be a list of text")
+    for key in ("outDir", "modelsDir"):
+        if not isinstance(params.get(key), str):
+            raise RpcError(INVALID_PARAMS, f"{key} must be a folder")
+    if not images.status(params["modelsDir"])["available"]:
+        raise RpcError(-32001, "The picture engine is not installed")
+    try:
+        return images.generate(params, progress, cancelled)
+    except images.Cancelled as e:
+        raise RpcError(-32800, "Cancelled") from e
+
+
+def backgrounds_render(params: dict[str, Any]) -> dict[str, Any]:
+    items = params.get("items")
+    if not isinstance(items, list) or not items:
+        raise RpcError(INVALID_PARAMS, "items must be a list of {out, palette, seed}")
+    return {"images": [card.background(dict(item))["out"] for item in items]}
+
+
 def debug_sleep(params: dict[str, Any]) -> dict[str, Any]:
     """Test helper for timeouts and cancellation."""
     seconds = params.get("seconds")
@@ -95,13 +132,22 @@ HANDLERS = {
     "system.info": system_info,
     "debug.sleep": debug_sleep,
     "card.render": card_render,
+    "images.status": images_status,
+    "backgrounds.render": backgrounds_render,
 }
 
 
 def main() -> int:
     log(f"starting v{__version__} on Python {platform.python_version()}")
     Server(
-        HANDLERS, jobs={"transcribe": transcribe_job, "faces": faces_job, "tts": tts_job}
+        HANDLERS,
+        jobs={
+            "transcribe": transcribe_job,
+            "faces": faces_job,
+            "tts": tts_job,
+            "images": images_job,
+            "images.install": images_install_job,
+        },
     ).serve()
     log("stdin closed, exiting")
     return 0

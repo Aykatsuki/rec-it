@@ -13,6 +13,7 @@ import type {
   TranscriptionStatus,
   TemplateJob,
   VoiceStatus,
+  ImageStatus,
 } from '@rec-it/ipc-contract';
 import { backend } from './api';
 
@@ -61,6 +62,8 @@ interface AppState {
   claude: ClaudeState | null;
   /** AI voice engine for faceless templates (ADR-046). */
   voice: VoiceStatus | null;
+  /** AI picture engine (ADR-047). */
+  images: ImageStatus | null;
   templateJobs: TemplateJob[];
   /** Clips waiting for their media's face analysis, to be reframed when it finishes. */
   pendingReframe: Record<string, string[]>;
@@ -141,6 +144,7 @@ export const useApp = create<AppState>((set) => ({
   luts: [],
   claude: null,
   voice: null,
+  images: null,
   templateJobs: [],
   pendingReframe: {},
   safeZones: stored('recit.safeZones') === '1',
@@ -206,6 +210,7 @@ export function startBackendSync(): () => void {
     useApp.setState({ claude: await backend.invoke('claude.state', {}).catch(() => null) });
     useApp.setState({
       voice: await backend.invoke('voice.status', {}).catch(() => null),
+      images: await backend.invoke('images.status', {}).catch(() => null),
       templateJobs: await backend.invoke('templates.jobs', {}).catch(() => []),
     });
   };
@@ -240,6 +245,7 @@ export function startBackendSync(): () => void {
     backend.on('project.changed', () => void loadLuts()),
     backend.on('luts.changed', (luts) => useApp.setState({ luts })),
     backend.on('voice.changed', (voice) => useApp.setState({ voice })),
+    backend.on('images.changed', (images) => useApp.setState({ images })),
     backend.on('templates.changed', (templateJobs) => useApp.setState({ templateJobs })),
     backend.on('claude.changed', (claude) => {
       const before = useApp.getState().claude;

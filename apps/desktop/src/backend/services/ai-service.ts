@@ -4,6 +4,9 @@ import {
   AI_PROVIDERS,
   AiClient,
   narrationPrompt,
+  scenePlanPrompt,
+  scenePlanSchema,
+  type ScenePlan,
   storySchema,
   writeStoryPrompt,
   type FetchLike,
@@ -65,6 +68,13 @@ export class AiService {
   writeStory(genre: StoryGenre, idea: string | undefined, seconds: number) {
     return this.client().json(storySchema, writeStoryPrompt({ genre, idea, seconds }), {
       temperature: 0.9,
+    });
+  }
+
+  /** The storyboard for generated visuals (ADR-047). */
+  planScenes(title: string, sentences: string[], scenes: number): Promise<ScenePlan> {
+    return this.client().json(scenePlanSchema, scenePlanPrompt({ title, sentences, scenes }), {
+      temperature: 0.6,
     });
   }
 

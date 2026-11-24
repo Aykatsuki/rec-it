@@ -42,6 +42,7 @@ import { FaceService } from './services/face-service';
 import { AiService } from './services/ai-service';
 import { VoiceService } from './services/voice-service';
 import { TemplateService } from './services/template-service';
+import { ImageService } from './services/image-service';
 import { importLut, writeLutFiles } from './services/lut-service';
 import { ProjectService } from './services/project-service';
 import type { Command, ProjectDocument, Sequence } from '@rec-it/core';
@@ -76,6 +77,7 @@ export class BackendApp {
   readonly ai: AiService;
   readonly voice: VoiceService;
   readonly templates: TemplateService;
+  readonly images: ImageService;
   readonly claude: ClaudeService;
   private lastProjectId: string | undefined;
   private secrets: Partial<Record<SecretName, string>> = {};
@@ -173,9 +175,16 @@ export class BackendApp {
         void this.faces.refresh();
       },
     });
+    this.images = new ImageService({
+      sidecar: this.sidecar,
+      modelsDir: join(config.userDataDir, 'models'),
+      onChange: (status) => this.emit('images.changed', status),
+    });
     this.templates = new TemplateService({
       projects: this.projects,
       voice: this.voice,
+      images: this.images,
+      planScenes: (title, sentences, count) => this.ai.planScenes(title, sentences, count),
       onTranscript: () => this.transcripts.changed(),
       onChange: (jobs) => this.emit('templates.changed', jobs),
     });
@@ -319,6 +328,15 @@ export class BackendApp {
     'voice.preview': async ({ voice, speed, text }) => ({
       wav: await this.voice.preview(voice, speed, text),
     }),
+    'images.status': () => this.images.status(),
+    'images.install': () => {
+      this.images.startInstall();
+      return { ok: true as const };
+    },
+    'images.cancelInstall': () => {
+      this.images.cancelInstall();
+      return { ok: true as const };
+    },
     'templates.jobs': () => this.templates.list(),
     'templates.story': (input) => ({ jobId: this.templates.story(input) }),
     'templates.cancel': ({ jobId }) => {
@@ -586,7 +604,12 @@ export class BackendApp {
       const sidecarCheck = checkSidecar(this.sidecar).then(async (result) => {
         this.sidecarStatus = result;
         this.emit('system.statusChanged', this.status());
-        await Promise.all([this.transcripts.refresh(), this.faces.refresh(), this.voice.refresh()]);
+        await Promise.all([
+          this.transcripts.refresh(),
+          this.faces.refresh(),
+          this.voice.refresh(),
+          this.images.refresh(),
+        ]);
       });
       await Promise.all([ffmpegCheck, sidecarCheck]);
       return this.status();

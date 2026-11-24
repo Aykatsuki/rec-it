@@ -20,7 +20,36 @@ export const storyGenreSchema = z.enum([
   'scary',
   'wholesome',
   'askreddit',
+  'facts',
+  'motivation',
+  'history',
 ]);
+
+export const pictureStyleSchema = z.enum([
+  'cinematic',
+  'anime',
+  'render3d',
+  'comic',
+  'watercolour',
+  'dark',
+  'historical',
+]);
+
+/** The AI picture engine (Z-Image Turbo via stable-diffusion.cpp; ADR-047). */
+export const imageStatusSchema = z.object({
+  available: z.boolean().nullable(),
+  engine: z.string().optional(),
+  /** This computer can download the engine (Windows), or one is configured. */
+  installable: z.boolean(),
+  reason: z.string().optional(),
+  blocked: z.string().optional(),
+  install: z.object({
+    state: z.enum(['idle', 'running', 'failed']),
+    message: z.string().optional(),
+    progress: z.number().min(0).max(1).optional(),
+  }),
+});
+export type ImageStatus = z.output<typeof imageStatusSchema>;
 
 export const storyTextSchema = z.object({
   title: z.string(),
@@ -56,7 +85,11 @@ export const storyShortSchema = z
     username: z.string().max(40).default(''),
     voice: z.string().regex(/^[a-z]{2}_[a-z]+$/),
     speed: z.number().min(0.7).max(1.5).default(1.1),
-    backgroundAssetId: z.string().min(1).max(100),
+    /** What is behind the captions: footage, AI pictures per scene, or motion graphics. */
+    visuals: z.enum(['footage', 'pictures', 'graphics']).default('footage'),
+    pictureStyle: pictureStyleSchema.default('cinematic'),
+    /** Footage for `visuals: footage`. */
+    backgroundAssetId: z.string().min(1).max(100).nullable().default(null),
     /** Seconds into the background footage; null picks a random start. */
     backgroundStart: seconds.nullable().default(null),
     keepBackgroundSound: z.boolean().default(false),

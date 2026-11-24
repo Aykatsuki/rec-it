@@ -7,7 +7,18 @@ import { basename, dirname, extname, join } from 'node:path';
 import { createId } from '@rec-it/core';
 import type { MediaAsset, TemplateJob } from '@rec-it/ipc-contract';
 import { storyShortSchema } from '@rec-it/ipc-contract';
-import { randomStart, speakable, storyShort } from '@rec-it/templates';
+import { PICTURE_STYLES, type ScenePlan } from '@rec-it/ai';
+import {
+  fallbackScenes,
+  normaliseScenes,
+  randomStart,
+  sceneCount,
+  speakable,
+  splitSentences,
+  storyShort,
+  type Scene,
+} from '@rec-it/templates';
+import type { ImageService } from './image-service';
 import type { z } from 'zod';
 import type { ProjectService } from './project-service';
 import type { VoiceService } from './voice-service';
@@ -17,6 +28,9 @@ type StoryInput = z.output<typeof storyShortSchema>;
 export interface TemplateDeps {
   projects: ProjectService;
   voice: VoiceService;
+  images: ImageService;
+  /** The AI's scene plan, or null when no AI is set up or it fails (a plain grouping is used). */
+  planScenes: (title: string, sentences: string[], count: number) => Promise<ScenePlan | null>;
   /** A transcript was stored outside transcription (the voiceover's). */
   onTranscript: () => void;
   onChange: (jobs: TemplateJob[]) => void;
@@ -56,9 +70,15 @@ export class TemplateService {
     const input = storyShortSchema.parse(raw);
     const info = this.d.projects.info();
     if (!info) throw new Error('Open or create a project first.');
-    const bg = this.d.projects.media().get(input.backgroundAssetId);
-    if (bg.kind !== 'video' || !bg.probe?.durationSec)
-      throw new Error('Choose a video for the background (gameplay, satisfying clips…).');
+    if (input.visuals === 'footage') {
+      if (!input.backgroundAssetId)
+        throw new Error('Choose a video for the background (gameplay, satisfying clips…).');
+      const bg = this.d.projects.media().get(input.backgroundAssetId);
+      if (bg.kind !== 'video' || !bg.probe?.durationSec)
+        throw new Error('Choose a video for the background (gameplay, satisfying clips…).');
+    }
+    if (input.visuals === 'pictures' && !this.d.images.status().available)
+      throw new Error('Install the AI picture engine first.');
     if (input.musicAssetId) {
       const m = this.d.projects.media().get(input.musicAssetId);
       if (!m.probe?.audioStreamCount) throw new Error('The music has no sound.');
@@ -99,13 +119,28 @@ export class TemplateService {
       const story = speakable(input.story);
       if (!title || !story) throw new Error('The title and story need some words.');
 
-      // 1. Voiceover: the title, then the story, with word times.
-      this.update(id, { stage: 'Recording the voiceover…', progress: 0.02 });
+      // Generated visuals: the AI storyboards the script into scenes first.
+      const generated = input.visuals !== 'footage';
+      let scenes: Scene[] = [];
+      if (generated) {
+        this.update(id, { stage: 'Planning the scenes…', progress: 0.02 });
+        const sentences = splitSentences(story);
+        const count = sceneCount((title.length + story.length) / 15 / input.speed);
+        const plan = await this.d.planScenes(title, sentences, count).catch(() => null);
+        scenes = plan ? normaliseScenes(plan.scenes, sentences) : fallbackScenes(sentences, count);
+        check();
+      }
+      const share = generated ? 0.3 : 0.68;
+
+      // 1. Voiceover: the title, then the story (one part per scene), with word times.
+      this.update(id, { stage: 'Recording the voiceover…', progress: 0.05 });
       const voicePath = join(folder, `voice ${stamp}.wav`);
       const spoken = await this.d.voice.speak(
         [
           { id: 'title', text: title },
-          { id: 'story', text: story },
+          ...(generated
+            ? scenes.map((sc, i) => ({ id: `scene${i}`, text: sc.text }))
+            : [{ id: 'story', text: story }]),
         ],
         {
           voice: input.voice,
@@ -113,11 +148,40 @@ export class TemplateService {
           out: voicePath,
           signal,
           onProgress: (p, message) =>
-            this.update(id, { progress: 0.02 + 0.68 * p, ...(message ? { stage: message } : {}) }),
+            this.update(id, { progress: 0.05 + share * p, ...(message ? { stage: message } : {}) }),
         },
       );
       check();
       const titleSeg = spoken.segments.find((s) => s.id === 'title')!;
+
+      // 1b. Pictures or motion-graphics backdrops, one per scene.
+      let scenePaths: string[] = [];
+      if (input.visuals === 'pictures') {
+        const style = PICTURE_STYLES[input.pictureStyle].prompt;
+        scenePaths = await this.d.images.generate(
+          scenes.map((sc) => `${sc.picture}. ${style}, vertical 9:16 composition, no text`),
+          {
+            outDir: join(folder, `pictures ${stamp}`),
+            seed: Math.floor(Math.random() * 1_000_000),
+            signal,
+            onProgress: (p, message) =>
+              this.update(id, {
+                progress: 0.36 + 0.36 * p,
+                ...(message ? { stage: message } : {}),
+              }),
+          },
+        );
+      } else if (input.visuals === 'graphics') {
+        this.update(id, { stage: 'Designing the backgrounds…', progress: 0.5 });
+        scenePaths = await this.d.images.backgrounds(
+          scenes.map((sc, i) => ({
+            out: join(folder, `backdrop ${stamp}-${i + 1}.png`),
+            palette: sc.palette,
+            seed: `${stamp}-${i}`,
+          })),
+        );
+      }
+      check();
 
       // 2. Title card.
       let cardPath: string | undefined;
@@ -138,16 +202,26 @@ export class TemplateService {
 
       // 3. Import both as ordinary media and wait until they can go on the timeline.
       this.update(id, { stage: 'Adding the voiceover to the project…', progress: 0.76 });
-      const paths = [voicePath, ...(cardPath ? [cardPath] : [])];
-      const result = await media().import(paths, {
-        source: 'made-in-rec-it',
-        notes: 'AI voice (Kokoro-82M) and title card made by Rec-It.',
-        userAttested: true,
-      });
+      const paths = [voicePath, ...(cardPath ? [cardPath] : []), ...scenePaths];
+      // A file made before with the same content (same story, voice and speed) is reused.
+      const existing = await Promise.all(paths.map((p) => media().findSame(p)));
+      const fresh = paths.filter((_, i) => !existing[i]);
+      const result = fresh.length
+        ? await media().import(fresh, {
+            source: 'made-in-rec-it',
+            notes:
+              'AI voice (Kokoro-82M), title card and scene pictures (Z-Image Turbo) or backdrops made by Rec-It.',
+            userAttested: true,
+          })
+        : { imported: [], skipped: [] };
       if (result.skipped.length)
         throw new Error(`Could not add the generated files: ${result.skipped[0]!.reason}`);
-      const [voiceId, cardId] = result.imported;
-      const ready = await this.waitReady(media, result.imported, signal);
+      const queue = [...result.imported];
+      const ids = existing.map((id) => id ?? queue.shift()!);
+      const [voiceId, ...rest] = ids;
+      const cardId = cardPath ? rest.shift() : undefined;
+      const sceneIds = rest;
+      const ready = await this.waitReady(media, ids, signal);
       const voiceAsset = ready.get(voiceId!)!;
 
       // The voiceover's words are its transcript: captions, the transcript panel and Claude use it.
@@ -165,22 +239,23 @@ export class TemplateService {
 
       // 4. Build the Short in one undoable step.
       this.update(id, { stage: 'Building the Short…', progress: 0.92 });
-      const bg = media().get(input.backgroundAssetId);
       const music = input.musicAssetId ? media().get(input.musicAssetId) : undefined;
       const voiceLength = voiceAsset.probe?.durationSec ?? spoken.duration;
-      const bgLength = bg.probe?.durationSec ?? 0;
       const sequenceId = createId('sequence');
       const { command } = storyShort({
         sequenceId,
         name: shortName(input.title),
         voice: { assetId: voiceId!, duration: voiceLength, words, titleEnd: titleSeg.end },
         ...(cardId ? { card: { assetId: cardId } } : {}),
-        background: {
-          assetId: bg.id,
-          duration: bgLength,
-          start: input.backgroundStart ?? randomStart(bgLength, voiceLength + 1),
-          keepSound: input.keepBackgroundSound,
-        },
+        background: generated
+          ? {
+              kind: 'scenes',
+              scenes: scenes.map((sc, i) => {
+                const seg = spoken.segments.find((s) => s.id === `scene${i}`)!;
+                return { assetId: sceneIds[i]!, start: seg.start, end: seg.end, motion: sc.motion };
+              }),
+            }
+          : this.footage(input, voiceLength),
         ...(music?.probe
           ? {
               music: {
@@ -207,6 +282,17 @@ export class TemplateService {
         this.update(id, { state: 'cancelled', stage: 'Cancelled' });
       else this.update(id, { state: 'failed', stage: 'Failed', error: message });
     }
+  }
+
+  private footage(input: StoryInput, voiceLength: number) {
+    const bg = this.d.projects.media().get(input.backgroundAssetId!);
+    const length = bg.probe?.durationSec ?? 0;
+    return {
+      assetId: bg.id,
+      duration: length,
+      start: input.backgroundStart ?? randomStart(length, voiceLength + 1),
+      keepSound: input.keepBackgroundSound,
+    };
   }
 
   /** Generated files live next to the project file, in "<project> media". */

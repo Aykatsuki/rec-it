@@ -130,3 +130,79 @@ def render(params: dict[str, Any]) -> dict[str, Any]:
     out = str(params["out"])
     img.save(out, "PNG")
     return {"out": out, "width": WIDTH, "height": height}
+
+
+# ---- Motion-graphics backgrounds (ADR-047) ---------------------------------------------------
+
+
+def _hex(c: str) -> tuple[int, int, int]:
+    c = c.lstrip("#")
+    return int(c[0:2], 16), int(c[2:4], 16), int(c[4:6], 16)
+
+
+def background(params: dict[str, Any]) -> dict[str, Any]:
+    """
+    A designed backdrop for one scene: a diagonal gradient between the palette's first two
+    colours, large soft glows of the others, and fine grain so it does not band. Rec-It animates
+    it (slow zoom, drift) under the captions.
+    """
+    import hashlib
+    import random
+
+    out = str(params["out"])
+    width = int(params.get("width", 1080))
+    height = int(params.get("height", 1920))
+    palette = [_hex(c) for c in params.get("palette") or ["#1E1B4B", "#7C3AED", "#F472B6"]]
+    while len(palette) < 3:
+        palette.append(palette[-1])
+    seed = int(hashlib.sha256(str(params.get("seed", "")).encode()).hexdigest()[:8], 16)
+    rnd = random.Random(seed)
+    try:
+        from PIL import Image, ImageDraw, ImageFilter
+    except ImportError:
+        from .images import _gradient_png
+
+        _gradient_png(out, str(seed), 64, 112)
+        return {"out": out}
+
+    # Gradient at a small scale, then enlarged (smooth and fast).
+    small = Image.new("RGB", (54, 96))
+    a, b = palette[0], palette[1]
+    angle = rnd.random()
+    for y in range(96):
+        for x in range(54):
+            t = min(1.0, max(0.0, (y / 95) * (1 - angle) + (x / 53) * angle))
+            small.putpixel((x, y), tuple(int(a[i] + (b[i] - a[i]) * t) for i in range(3)))
+    img = small.resize((width, height), Image.BICUBIC).convert("RGBA")
+    glow = Image.new("RGBA", (width, height), (0, 0, 0, 0))
+    d = ImageDraw.Draw(glow)
+    for k in range(5):
+        colour = palette[2 + k % max(1, len(palette) - 2)]
+        r = rnd.uniform(0.25, 0.55) * width
+        cx, cy = rnd.uniform(0, width), rnd.uniform(0, height)
+        d.ellipse((cx - r, cy - r, cx + r, cy + r), fill=(*colour, rnd.randint(70, 140)))
+    glow = glow.filter(ImageFilter.GaussianBlur(width * 0.12))
+    img = Image.alpha_composite(img, glow)
+    # Light geometry: rings, a dot grid and a rounded frame, faint so captions stay readable.
+    shapes = Image.new("RGBA", (width, height), (0, 0, 0, 0))
+    s = ImageDraw.Draw(shapes)
+    line = max(2, width // 270)
+    for _ in range(3):
+        r = rnd.uniform(0.12, 0.4) * width
+        cx, cy = rnd.uniform(0, width), rnd.uniform(0, height)
+        s.ellipse((cx - r, cy - r, cx + r, cy + r), outline=(255, 255, 255, 46), width=line)
+    gx, gy = rnd.choice([0.08, 0.62]) * width, rnd.choice([0.06, 0.72]) * height
+    step = width * 0.035
+    for i in range(7):
+        for j in range(7):
+            x, y = gx + i * step, gy + j * step
+            s.ellipse((x - line, y - line, x + line, y + line), fill=(255, 255, 255, 60))
+    m = width * 0.06
+    s.rounded_rectangle(
+        (m, m, width - m, height - m), width * 0.05, outline=(255, 255, 255, 28), width=line
+    )
+    img = Image.alpha_composite(img, shapes)
+    grain = Image.effect_noise((width // 2, height // 2), 18).resize((width, height))
+    img = Image.blend(img.convert("RGB"), Image.merge("RGB", [grain] * 3), 0.04)
+    img.save(out, "PNG")
+    return {"out": out}
