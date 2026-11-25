@@ -20,13 +20,20 @@ import {
   normaliseEpisode,
   TAIL,
   referencePrompt,
+  facePrompt,
   shotPrompt,
+  shotReferences,
+  parseScript,
+  numberedScript,
+  applyScript,
+  withCast,
   type Episode,
   characterPrompt,
   talkingShot,
   type Scene,
 } from '@rec-it/templates';
 import type { AnimationService } from './animation-service';
+import { CharacterStore, type CharacterFiles } from './character-store';
 import type { ImageService } from './image-service';
 import type { z } from 'zod';
 import type { ProjectService } from './project-service';
@@ -44,7 +51,11 @@ export interface TemplateDeps {
   /** The AI's scene plan, or null when no AI is set up or it fails (a plain grouping is used). */
   planScenes: (title: string, sentences: string[], count: number) => Promise<ScenePlan | null>;
   /** The AI's episode plan from a brief (ADR-052); rejects when no AI is set up. */
-  planEpisode?: (brief: string, seconds: number) => Promise<EpisodePlan>;
+  planEpisode?: (
+    brief: string,
+    seconds: number,
+    extra?: { script?: string; cast?: readonly { id: string; name: string; look: string }[] },
+  ) => Promise<EpisodePlan>;
   /** Frees the graphics card (unloads Ollama's models) before the picture engine runs. */
   releaseGpu?: () => Promise<unknown>;
   /** A transcript was stored outside transcription (the voiceover's). */
@@ -58,6 +69,8 @@ export class Cancelled extends Error {}
 
 export class TemplateService {
   private jobs: TemplateJob[] = [];
+  /** The project's remembered characters (ADR-053). */
+  readonly characters = new CharacterStore(() => this.generatedFolder());
   private controllers = new Map<string, AbortController>();
 
   constructor(private readonly d: TemplateDeps) {}
@@ -464,6 +477,17 @@ export class TemplateService {
     }
   }
 
+  /** The project's remembered characters, for the Make a Short dialog. */
+  async cast(): Promise<{ id: string; name: string; look: string }[]> {
+    if (!this.d.projects.info()) return [];
+    return (await this.characters.list()).map(({ id, name, look }) => ({ id, name, look }));
+  }
+
+  /** Forgets a remembered character. */
+  async forget(id: string): Promise<void> {
+    if (this.d.projects.info()) await this.characters.remove(id);
+  }
+
   /** Starts an episode from a brief (ADR-052); returns at once with the job id. */
   episode(raw: unknown): string {
     const input = episodeSchema.parse(raw);
@@ -506,17 +530,31 @@ export class TemplateService {
       await mkdir(work, { recursive: true });
       const seed = Math.floor(Math.random() * 1_000_000);
 
-      // 1. The plan: cast, shots, lines and pictures.
+      // 1. The plan: cast, shots, lines and pictures. A written script is spoken exactly as
+      // written (the AI only plans the pictures); remembered characters are reused (ADR-053).
+      const lines = input.script ? parseScript(input.script) : [];
+      if (input.script && !lines.length) throw new Error('The script has no lines to speak.');
+      const remembered = await this.characters.list();
       this.update(id, { stage: 'Planning the episode…', progress: 0.01 });
-      const episode: Episode = normaliseEpisode(
-        await this.d.planEpisode!(input.brief, input.seconds),
+      const plan = await this.d.planEpisode!(input.brief, input.seconds, {
+        ...(lines.length ? { script: numberedScript(lines) } : {}),
+        cast: remembered.map(({ id: cid, name, look }) => ({ id: cid, name, look })),
+      });
+      const episode: Episode = withCast(
+        lines.length ? applyScript(plan, lines) : normaliseEpisode(plan),
+        remembered,
       );
       if (!episode.shots.length) throw new Error('The AI planned no shots; try again.');
       this.update(id, { title: episode.title.slice(0, 80) });
       check();
 
       // 2. Voices: one recording per voice (narrator, each character), then one track in order.
-      const voices = castVoices(episode.characters, input.narrator, this.d.voice.human.available());
+      const voices = castVoices(
+        episode.characters,
+        input.narrator,
+        this.d.voice.human.available(),
+        Object.fromEntries(remembered.flatMap((c) => (c.voice ? [[c.id, c.voice]] : []))),
+      );
       const byVoice = new Map<string, number[]>();
       episode.shots.forEach((sh, i) => {
         const v = voices[sh.speaker] ?? input.narrator;
@@ -556,26 +594,50 @@ export class TemplateService {
       );
       check();
 
-      // 3. Character references, drawn once (frees the GPU from Ollama first).
+      // 3. Character references: remembered ones are reused; new characters get a full-body
+      // design sheet and a face close-up drawn from it, kept for every later episode.
       this.update(id, { stage: 'Freeing the graphics card…', progress: 0.16 });
       await this.d.releaseGpu?.().catch(() => undefined);
-      const refs = new Map<string, string>();
+      const refs = new Map<string, CharacterFiles>();
       const cast = episode.characters.filter((c) =>
         episode.shots.some((sh) => sh.characters.includes(c.id)),
       );
       for (const [k, c] of cast.entries()) {
-        this.update(id, {
-          stage: `Designing ${c.name} (${k + 1} of ${cast.length})…`,
-          progress: 0.17 + 0.08 * (k / Math.max(1, cast.length)),
-        });
-        const [pic] = await this.d.images.generate([referencePrompt(c, episode.style)], {
+        const known = remembered.find((r) => r.id === c.id);
+        if (known) {
+          refs.set(c.id, known);
+          continue;
+        }
+        const progress = 0.17 + 0.08 * (k / Math.max(1, cast.length));
+        this.update(id, { stage: `Designing ${c.name} (${k + 1} of ${cast.length})…`, progress });
+        const [sheet] = await this.d.images.generate([referencePrompt(c, episode.style)], {
           outDir: join(work, `ref ${c.id}`),
           seed: seed + k,
           ...CHARACTER_SIZE,
           signal,
         });
-        refs.set(c.id, pic!);
         check();
+        this.update(id, {
+          stage: `Drawing ${c.name}'s face (${k + 1} of ${cast.length})…`,
+          progress,
+        });
+        const face = await this.d.animation.draw({
+          refs: [sheet!],
+          prompt: facePrompt(c, episode.style),
+          out: join(work, `ref ${c.id} face.png`),
+          ...FACE_SIZE,
+          seed: seed + 50 + k,
+          signal,
+        });
+        check();
+        const voice = voices[c.id]?.replace(/^hq:k-/, '');
+        refs.set(
+          c.id,
+          await this.characters.save(
+            { ...c, ...(voice && /^[a-z]{2}_[a-z]+$/.test(voice) ? { voice } : {}) },
+            { sheet: sheet!, face },
+          ),
+        );
       }
 
       // 4. One picture per shot: characters from their references, others from scratch.
@@ -585,8 +647,9 @@ export class TemplateService {
           stage: `Drawing shot ${i + 1} of ${episode.shots.length}… ${elapsed(started)}`,
           progress: 0.25 + 0.4 * (i / episode.shots.length),
         });
-        const prompt = shotPrompt(sh, episode);
-        const shotRefs = sh.characters.map((c) => refs.get(c)).filter((p): p is string => !!p);
+        const used = shotReferences(sh).filter((r) => refs.get(r.id)?.[r.kind]);
+        const shotRefs = used.map((r) => refs.get(r.id)![r.kind]!);
+        const prompt = shotPrompt(sh, episode, used);
         pictures.push(
           shotRefs.length
             ? await this.d.animation.draw({
@@ -775,6 +838,8 @@ export class TemplateService {
 
 /** Characters are drawn larger than scene pictures: they fill the frame and must stay sharp. */
 const CHARACTER_SIZE = { width: 768, height: 1344 };
+/** A character's face reference: square and small, so a shot with it stays quick. */
+const FACE_SIZE = { width: 640, height: 640 };
 
 /** The engine behind a voice id, for the media notes. */
 function voiceEngine(voice: string): string {

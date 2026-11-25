@@ -82,8 +82,12 @@ export class AiService {
   }
 
   /** The plan of an episode from a brief: cast, shots, lines and pictures (ADR-052). */
-  planEpisode(brief: string, seconds: number): Promise<EpisodePlan> {
-    return this.client().json(episodePlanSchema, episodePrompt({ brief, seconds }), {
+  planEpisode(
+    brief: string,
+    seconds: number,
+    extra: { script?: string; cast?: readonly { id: string; name: string; look: string }[] } = {},
+  ): Promise<EpisodePlan> {
+    return this.client().json(episodePlanSchema, episodePrompt({ brief, seconds, ...extra }), {
       temperature: 0.7,
     });
   }

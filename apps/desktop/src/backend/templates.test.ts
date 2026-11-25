@@ -358,6 +358,60 @@ describe.skipIf(!bins || !hasUv)('story template (backend, real sidecar, fake vo
     );
   }, 300_000);
 
+  it('remembers the cast and speaks a written script exactly as written', async () => {
+    // The first episode designed Hiroshi and the warrior: both are remembered.
+    expect((await app.templates.cast()).map((c) => c.id)).toEqual(['hiroshi', 'warrior']);
+    let seen: { script?: string; cast?: readonly { id: string }[] } = {};
+    app.ai.planEpisode = async (_brief, _seconds, extra = {}) => {
+      seen = extra;
+      return {
+        title: 'Episode 2',
+        style: '2D anime illustration',
+        // The AI re-describes Hiroshi differently and under another id: the remembered one wins.
+        characters: [
+          { id: 'takeda', name: 'Hiroshi', gender: 'male', age: 'adult', look: 'blue eyes' },
+          { id: 'kenji', name: 'Kenji', gender: 'male', age: 'old', look: 'grey beard' },
+        ],
+        shots: [
+          { line: 1, speaker: 'narrator', text: 'x', picture: 'rain on a temple', characters: [] },
+          { line: 2, speaker: 'takeda', text: 'x', picture: 'close-up', characters: ['takeda'] },
+          { line: 3, speaker: 'kenji', text: 'x', picture: 'close-up', characters: ['kenji'] },
+        ],
+      };
+    };
+    const prompts: string[] = [];
+    const generate = app.images.generate.bind(app.images);
+    app.images.generate = (p, o) => {
+      prompts.push(...p);
+      return generate(p, o);
+    };
+    const jobId = app.templates.episode({
+      script:
+        'NARRATOR: Rain fell on the temple.\nHIROSHI: I remember you.\nKenji: Then you remember why.',
+      narrator: 'am_onyx',
+    });
+    const job = await waitFor(() => {
+      const j = app.templates.list().find((x) => x.id === jobId);
+      return j && j.state !== 'running' && j;
+    }, 240_000);
+    app.images.generate = generate;
+    expect(job.error).toBeUndefined();
+    expect(seen.script).toContain('2. Hiroshi: I remember you.');
+    expect(seen.cast?.map((c) => c.id)).toEqual(['hiroshi', 'warrior']);
+    // Only Kenji is new: one design sheet, and no picture of Hiroshi drawn from scratch.
+    expect(prompts.filter((p) => p.startsWith('Character design sheet'))).toHaveLength(1);
+    expect(prompts.join(' ')).not.toContain('blue eyes');
+    expect((await app.templates.cast()).map((c) => c.id)).toEqual(['hiroshi', 'kenji', 'warrior']);
+    const { doc } = app.projects.document().state();
+    const seq = doc.sequences.find((s) => s.id === job.sequenceId)!;
+    const captions = seq.tracks.find((t) => t.kind === 'caption')!.items;
+    expect(captions.flatMap((c) => c.caption!.words.map((w) => w.text)).join(' ')).toMatch(
+      /Rain fell on the temple\. I remember you\. Then you remember why\./,
+    );
+    await app.templates.forget('kenji');
+    expect((await app.templates.cast()).map((c) => c.id)).toEqual(['hiroshi', 'warrior']);
+  }, 300_000);
+
   it('previews a voice as WAV', async () => {
     const wav = Buffer.from(await app.voice.preview('af_heart', 1, 'Hello there'), 'base64');
     expect(wav.subarray(0, 4).toString()).toBe('RIFF');

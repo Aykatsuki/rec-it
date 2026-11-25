@@ -199,7 +199,7 @@ export class BackendApp {
       animation: this.animation,
       planScenes: (title, sentences, count) => this.ai.planScenes(title, sentences, count),
       releaseGpu: () => this.ai.releaseGpu(),
-      planEpisode: (brief, seconds) => this.ai.planEpisode(brief, seconds),
+      planEpisode: (brief, seconds, extra) => this.ai.planEpisode(brief, seconds, extra),
       onTranscript: () => this.transcripts.changed(),
       onChange: (jobs) => this.emit('templates.changed', jobs),
     });
@@ -380,6 +380,11 @@ export class BackendApp {
     'templates.story': (input) => ({ jobId: this.templates.story(input) }),
     'templates.talkTest': (input) => ({ jobId: this.templates.talkTest(input) }),
     'templates.episode': (input) => ({ jobId: this.templates.episode(input) }),
+    'characters.list': () => this.templates.cast(),
+    'characters.remove': async ({ id }) => {
+      await this.templates.forget(id);
+      return { ok: true as const };
+    },
     'templates.cancel': ({ jobId }) => {
       this.templates.cancel(jobId);
       return { ok: true as const };

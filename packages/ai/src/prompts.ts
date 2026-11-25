@@ -229,6 +229,8 @@ export const episodePlanSchema = z.object({
           /** Character ids visible in the picture. */
           characters: z.array(z.string()).catch([]).default([]),
           motion: z.enum(MOTIONS).optional().catch(undefined),
+          /** With a written script: the number of the script line this shot shows. */
+          line: z.coerce.number().int().optional().catch(undefined),
         })
         .catch({ speaker: 'narrator', text: '', picture: '', characters: [] }),
     )
@@ -238,8 +240,41 @@ export const episodePlanSchema = z.object({
 export type EpisodePlan = z.output<typeof episodePlanSchema>;
 
 /** Turns a brief (style, story, dialogue, narration notes) into an episode plan for a Short. */
-export function episodePrompt(o: { brief: string; seconds: number }): ChatMessage[] {
+export function episodePrompt(o: {
+  brief: string;
+  seconds: number;
+  /** A written script as numbered lines: spoken exactly as written (ADR-053). */
+  script?: string;
+  /** Characters remembered from earlier episodes: reused unchanged (ADR-053). */
+  cast?: readonly { id: string; name: string; look: string }[];
+}): ChatMessage[] {
   const words = Math.round(o.seconds * 2.4);
+  const cast = o.cast?.length
+    ? '\n\nThese characters already exist from earlier episodes. When they appear, use exactly the same id, name and look (copy the look word for word); add only characters who are new:\n' +
+      o.cast.map((c) => `- ${c.id}: ${c.name}: ${c.look}`).join('\n')
+    : '';
+  if (o.script)
+    return [
+      {
+        role: 'system',
+        content:
+          'You are the director and storyboard artist of a vertical (9:16) YouTube Short made of illustrated shots with a narrator and spoken dialogue. ' +
+          'The script is final and already written as numbered lines: do NOT write, change, merge or skip any spoken text. ' +
+          'Make exactly one shot per numbered line, in order, with "line" set to its number; copy the line\'s speaker and text. ' +
+          'Your job is only the pictures: every shot whose speaker is a character is a close-up of that character facing the camera, face clearly visible, mouth closed; ' +
+          'narration shots show the moment being told (subject, setting, action, camera angle, lighting, no text or letters); follow any [picture: …] note; list the visible character ids; ' +
+          'pick a camera motion per shot (zoomIn, zoomOut, panLeft, panRight). ' +
+          'Every character who speaks or appears needs an entry in "characters"; describe each ONCE in "look" with fixed, specific details (face shape, eye colour, hair, build, clothing, armour, weapons, colours) taken from the brief, and never change them. ' +
+          '"style" is a short list of visual style keywords taken from the brief (for example: 2D anime illustration, dark fantasy, black and crimson palette). ' +
+          'Reply with JSON only: {"title": "...", "style": "...", "characters": [{"id": "hiroshi", "name": "Hiroshi Takeda", "gender": "male", "age": "young", "look": "..."}], ' +
+          '"shots": [{"line": 1, "speaker": "narrator", "text": "...", "picture": "...", "characters": ["hiroshi"], "motion": "zoomIn"}]}.' +
+          cast,
+      },
+      {
+        role: 'user',
+        content: `${o.brief.trim() ? `BRIEF:\n${o.brief.trim()}\n\n` : ''}SCRIPT:\n${o.script}`,
+      },
+    ];
   return [
     {
       role: 'system',
@@ -249,7 +284,7 @@ export function episodePrompt(o: { brief: string; seconds: number }): ChatMessag
         'Rules: follow the story and dialogue of the brief in order; narration is vivid, short sentences, building suspense; keep dialogue lines exactly as written in the brief; ' +
         'every line of dialogue gets its own shot whose speaker is that character and whose picture is a close-up of that character facing the camera, face clearly visible, mouth closed; ' +
         'narration shots have speaker "narrator"; ' +
-        'describe each character ONCE in "look" with fixed, specific details (face, hair, build, clothing, armour, weapons, colours) and never change them; ' +
+        'describe each character ONCE in "look" with fixed, specific details (face shape, eye colour, hair, build, clothing, armour, weapons, colours) and never change them; ' +
         'each picture describes ONE striking frame: subject, setting, action, camera angle, lighting, no text or letters; list the visible character ids; ' +
         'pick a camera motion per shot (zoomIn, zoomOut, panLeft, panRight); ' +
         '"style" is a short list of visual style keywords taken from the brief (for example: 2D anime illustration, dark fantasy, black and crimson palette). ' +

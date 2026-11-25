@@ -983,6 +983,48 @@ function VoicePicker(p: { value: string; onChange: (voice: string) => void; test
   );
 }
 
+/**
+ * The characters this project remembers (ADR-053): later episodes reuse their look, pictures
+ * and voice. Forgetting one makes the next episode design it again.
+ */
+function Cast({ running }: { running: boolean }) {
+  const [cast, setCast] = useState<{ id: string; name: string; look: string }[]>([]);
+  const load = () =>
+    void backend
+      .invoke('characters.list', {})
+      .then(setCast)
+      .catch(() => setCast([]));
+  useEffect(load, [running]);
+  if (!cast.length)
+    return (
+      <small className="create__hint">
+        Characters are designed in the first episode and remembered by this project, so every later
+        episode uses the same faces, clothes and voices.
+      </small>
+    );
+  return (
+    <div className="create__cast" data-testid="episode-cast">
+      <span>Remembered characters (reused in every episode):</span>
+      {cast.map((c) => (
+        <span key={c.id} className="create__castmember" title={c.look}>
+          {c.name}
+          <Button
+            size="sm"
+            variant="ghost"
+            disabled={running}
+            title={`Forget ${c.name}: the next episode designs them again`}
+            onClick={() => {
+              void backend.invoke('characters.remove', { id: c.id }).then(load);
+            }}
+          >
+            Forget
+          </Button>
+        </span>
+      ))}
+    </div>
+  );
+}
+
 /** Status and install button for the human-like voice (about 5 GB; ADR-051). */
 function HumanVoiceEngine() {
   const status = useApp((s) => s.voiceHq);
@@ -1011,6 +1053,7 @@ function EpisodeForm({ onDone }: { onDone: () => void }) {
   const animationStatus = useApp((s) => s.animation);
   const jobs = useApp((s) => s.templateJobs);
   const [brief, setBrief] = useState('');
+  const [script, setScript] = useState('');
   const [seconds, setSeconds] = useState(60);
   const [narrator, setNarrator] = useState<string>(() =>
     useApp.getState().voiceHq?.available ? 'hq:k-am_onyx' : 'am_onyx',
@@ -1047,13 +1090,14 @@ function EpisodeForm({ onDone }: { onDone: () => void }) {
     (!narrator.startsWith('hq:') || !!voiceHq?.available) &&
     !!imageStatus?.available &&
     !!animationStatus?.available;
-  const canStart = ready && brief.trim().length >= 20 && !running;
+  const canStart = ready && (brief.trim().length >= 20 || script.trim().length >= 10) && !running;
 
   const start = async () => {
     setError(null);
     try {
       const r = await backend.invoke('templates.episode', {
         brief,
+        script,
         seconds,
         narrator,
         liveliness,
@@ -1094,6 +1138,26 @@ function EpisodeForm({ onDone }: { onDone: () => void }) {
             data-testid="episode-brief"
           />
         </label>
+        <label>
+          Script (optional)
+          <small className="create__hint">
+            Every line is spoken exactly as written, in order. Write NARRATOR: for narration and the
+            character&apos;s name for dialogue (e.g. HIROSHI: I will find you.). A line in [square
+            brackets] describes the picture for the next line. With a script, the length follows the
+            script.
+          </small>
+          <textarea
+            className="ui-input create__text"
+            value={script}
+            rows={8}
+            placeholder={
+              '[Night. A burning village.]\nNARRATOR: The year is 1582.\nHIROSHI: I will find you.'
+            }
+            onChange={(e) => setScript(e.target.value)}
+            data-testid="episode-script"
+          />
+        </label>
+        <Cast running={running} />
         <div className="create__row">
           <label className="create__grow">
             Length: about {seconds} s

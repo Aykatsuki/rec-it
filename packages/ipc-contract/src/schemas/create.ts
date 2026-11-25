@@ -174,7 +174,10 @@ export type TemplateJob = z.output<typeof templateJobSchema>;
  */
 export const episodeSchema = z
   .object({
-    brief: z.string().trim().min(20).max(12000),
+    /** The brief: style, story, characters. Optional when a script is given. */
+    brief: z.string().trim().max(12000).default(''),
+    /** A written script, spoken exactly as written (ADR-053): "NAME: line" or NARRATOR lines. */
+    script: z.string().trim().max(20000).default(''),
     /** Target length in seconds. */
     seconds: z.number().min(30).max(90).default(60),
     /** The narrator's voice; characters are cast automatically. */
@@ -184,5 +187,14 @@ export const episodeSchema = z
     musicVolume: z.number().min(0).max(1).default(0.15),
     captionStyle: z.enum(['highlight', 'pop', 'karaoke', 'caps', 'clean', 'bebas']).default('pop'),
   })
-  .strict();
+  .strict()
+  .refine((e) => e.brief.length >= 20 || e.script.length >= 10, {
+    message: 'Write a brief of at least 20 characters or a script.',
+  });
+/** A character remembered by the project (ADR-053). */
+export const storedCharacterSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  look: z.string(),
+});
 export type EpisodeInput = z.input<typeof episodeSchema>;

@@ -26,6 +26,7 @@ import {
   imageStatusSchema,
   talkTestSchema,
   episodeSchema,
+  storedCharacterSchema,
   voiceIdSchema,
   voiceSampleSchema,
   storyGenreSchema,
@@ -222,6 +223,13 @@ export const backendContract = defineContract({
     'templates.cancel': { input: z.object({ jobId: z.string() }).strict(), output: ok },
     /** Starts an episode from a brief; follow it with templates.changed. */
     'templates.episode': { input: episodeSchema, output: z.object({ jobId: z.string() }) },
+    /** Characters the open project remembers from earlier episodes (ADR-053). */
+    'characters.list': { input: empty, output: z.array(storedCharacterSchema) },
+    /** Forgets one: the next episode designs it afresh. */
+    'characters.remove': {
+      input: z.object({ id: z.string().min(1).max(40) }).strict(),
+      output: ok,
+    },
     /** Starts one talking-character test shot; follow it with templates.changed. */
     'templates.talkTest': { input: talkTestSchema, output: z.object({ jobId: z.string() }) },
 
