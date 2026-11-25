@@ -18,6 +18,7 @@ import {
   talkingShot,
   characterPrompt,
   type StoryShortInput,
+  normaliseEpisode,
 } from './index';
 
 const s = (f: number) => f / FLICKS_PER_SECOND;
@@ -294,5 +295,28 @@ describe('talking shot', () => {
     const scene = characterPrompt('a samurai', { setting: 'a muddy battlefield', mood: 'sad' });
     expect(scene).toContain('in a muddy battlefield, detailed hand-drawn background');
     expect(scene).toContain('understated sad expression');
+  });
+});
+
+describe('episode plan', () => {
+  it('repairs or drops imperfect shots instead of failing the episode', () => {
+    const ep = normaliseEpisode({
+      title: 'Blood of the Shogun',
+      style: '2D anime',
+      characters: [
+        { id: 'hiroshi', name: 'Hiroshi', gender: 'male', age: 'young', look: 'samurai' },
+      ],
+      shots: [
+        { speaker: 'narrator', text: 'The year is 1582.', picture: 'a village', characters: [] },
+        { speaker: 'narrator', text: '', picture: '', characters: [] }, // an empty shot
+        { speaker: ' hiroshi ', text: 'I will find you.', picture: '', characters: [] },
+      ],
+    });
+    expect(ep.shots.map((s) => [s.speaker, s.text])).toEqual([
+      ['narrator', 'The year is 1582.'],
+      ['hiroshi', 'I will find you.'],
+    ]);
+    expect(ep.shots[1]!.picture).toBe('I will find you.');
+    expect(ep.shots[1]!.characters).toEqual(['hiroshi']);
   });
 });

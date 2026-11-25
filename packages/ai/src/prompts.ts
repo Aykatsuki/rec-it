@@ -214,22 +214,26 @@ export const episodePlanSchema = z.object({
     )
     .max(6)
     .default([]),
+  // Lenient on purpose: a local model often gets one shot slightly wrong (an empty speaker or
+  // line); that shot is repaired or dropped by normaliseEpisode instead of failing the episode.
   shots: z
     .array(
-      z.object({
-        /** "narrator" or a character id. */
-        speaker: z.string().min(1).max(40),
-        /** What is said in this shot (narration or dialogue), spoken aloud. */
-        text: z.string().min(1).max(400),
-        /** What the picture shows; for dialogue, a close-up of the speaker facing the camera. */
-        picture: z.string().min(3).max(500),
-        /** Character ids visible in the picture. */
-        characters: z.array(z.string()).max(3).default([]),
-        motion: z.enum(MOTIONS).optional().catch(undefined),
-      }),
+      z
+        .object({
+          /** "narrator" or a character id. */
+          speaker: z.string().max(60).catch('narrator'),
+          /** What is said in this shot (narration or dialogue), spoken aloud. */
+          text: z.string().max(600).catch(''),
+          /** What the picture shows; for dialogue, a close-up of the speaker facing the camera. */
+          picture: z.string().max(800).catch(''),
+          /** Character ids visible in the picture. */
+          characters: z.array(z.string()).catch([]).default([]),
+          motion: z.enum(MOTIONS).optional().catch(undefined),
+        })
+        .catch({ speaker: 'narrator', text: '', picture: '', characters: [] }),
     )
     .min(1)
-    .max(30),
+    .max(40),
 });
 export type EpisodePlan = z.output<typeof episodePlanSchema>;
 

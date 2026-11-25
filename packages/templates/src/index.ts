@@ -662,13 +662,14 @@ export function normaliseEpisode(plan: {
   for (const s of plan.shots) {
     const text = speakable(s.text);
     if (!text) continue;
-    const speaker = known.has(s.speaker) ? s.speaker : 'narrator';
+    const speaker = known.has(s.speaker.trim()) ? s.speaker.trim() : 'narrator';
     const visible = [...new Set((s.characters ?? []).filter((c) => known.has(c)))];
     if (speaker !== 'narrator' && !visible.includes(speaker)) visible.unshift(speaker);
     shots.push({
       speaker,
       text,
-      picture: s.picture.trim(),
+      // A missing picture is drawn from what is said.
+      picture: s.picture.trim() || text,
       characters: visible.slice(0, 2),
       motion: s.motion ?? MOTIONS[shots.length % MOTIONS.length]!,
     });

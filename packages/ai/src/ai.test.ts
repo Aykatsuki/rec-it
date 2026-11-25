@@ -6,6 +6,7 @@ import {
   extractJson,
   narrationPrompt,
   storySchema,
+  episodePlanSchema,
   writeStoryPrompt,
   type FetchLike,
 } from './index';
@@ -165,5 +166,27 @@ describe('prompts', () => {
   it('extracts JSON from wrapped replies', () => {
     expect(extractJson('Here you go: {"a": 1} thanks')).toEqual({ a: 1 });
     expect(() => extractJson('no json')).toThrow(AiError);
+  });
+});
+
+describe('episode plan schema', () => {
+  it('accepts an answer with an imperfect shot (what a local model sent)', () => {
+    const plan = episodePlanSchema.parse({
+      title: 'Blood of the Shogun',
+      style: '2D anime',
+      characters: [
+        { id: 'hiroshi', name: 'Hiroshi', gender: 'male', age: 'young', look: 'samurai' },
+      ],
+      shots: [
+        { speaker: 'narrator', text: 'The year is 1582.', picture: 'a village' },
+        { speaker: '', text: '', picture: '' },
+        'not even a shot',
+        { speaker: 'hiroshi', text: 'I will find you.', picture: 'close-up', motion: 'spin' },
+      ],
+    });
+    expect(plan.shots).toHaveLength(4);
+    expect(plan.shots[1]).toMatchObject({ speaker: '', text: '' });
+    expect(plan.shots[2]).toMatchObject({ speaker: 'narrator', text: '' });
+    expect(plan.shots[3]!.motion).toBeUndefined();
   });
 });
