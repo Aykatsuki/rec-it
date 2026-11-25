@@ -149,6 +149,8 @@ export const talkTestSchema = z
     setting: z.string().trim().max(300).default(''),
     /** The face they keep while talking (only the mouth moves). */
     mood: z.enum(CHARACTER_MOODS).default('serious'),
+    /** How much the mouth moves: 0 calm … 1 lively. */
+    liveliness: z.number().min(0).max(1).default(0.6),
   })
   .strict();
 export type TalkTestInput = z.input<typeof talkTestSchema>;

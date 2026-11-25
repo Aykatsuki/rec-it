@@ -716,6 +716,7 @@ function CharactersForm({ onDone }: { onDone: () => void }) {
   const [style, setStyle] = useState<'cartoon' | 'render3d'>('cartoon');
   const [setting, setSetting] = useState('a muddy battlefield in the rain');
   const [mood, setMood] = useState<CharacterMood>('serious');
+  const [liveliness, setLiveliness] = useState(0.6);
   const [line, setLine] = useState('Hi! I was made on your own computer. Pretty cool, right?');
   const [voice, setVoice] = useState<string>(initialVoice);
   const [error, setError] = useState<string | null>(null);
@@ -756,6 +757,7 @@ function CharactersForm({ onDone }: { onDone: () => void }) {
         style,
         setting,
         mood,
+        liveliness,
       });
       setJobId(r.jobId);
     } catch (e) {
@@ -812,6 +814,18 @@ function CharactersForm({ onDone }: { onDone: () => void }) {
               </option>
             ))}
           </select>
+        </label>
+        <label>
+          Mouth movement: {liveliness < 0.3 ? 'calm' : liveliness < 0.75 ? 'balanced' : 'lively'}
+          <input
+            type="range"
+            min={0}
+            max={1}
+            step={0.05}
+            value={liveliness}
+            onChange={(e) => setLiveliness(Number(e.target.value))}
+            data-testid="talk-liveliness"
+          />
         </label>
         <label>
           Style

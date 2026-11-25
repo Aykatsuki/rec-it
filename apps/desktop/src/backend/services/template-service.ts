@@ -398,6 +398,7 @@ export class TemplateService {
         shapes,
         sounds,
         audio: voicePath,
+        liveliness: input.liveliness,
         duration: spoken.duration,
         out: join(folder, `talking ${stamp}.mp4`),
         seed,

@@ -246,8 +246,8 @@ def timeline(
 # ---- Mouth from the sound itself ---------------------------------------------------------------
 
 
-def loudness(wav_path: Path, fps: int = FPS) -> list[float]:
-    """The voice's loudness per video frame (RMS), scaled so ordinary speech is about 1."""
+def intensity(wav_path: Path) -> list[float]:
+    """The voice's loudness in dB, 100 times a second (30 ms windows, lightly smoothed)."""
     import wave
 
     import numpy as np
@@ -257,28 +257,72 @@ def loudness(wav_path: Path, fps: int = FPS) -> list[float]:
         data = np.frombuffer(w.readframes(w.getnframes()), dtype="<i2").astype(np.float32)
     if channels > 1:
         data = data.reshape(-1, channels).mean(axis=1)
-    hop = max(1, rate // fps)
-    n = len(data) // hop
+    data /= 32768.0
+    hop, win = rate // 100, int(rate * 0.03)
+    n = max(0, (len(data) - win) // hop + 1)
     if n == 0:
         return []
-    rms = np.sqrt((data[: n * hop].reshape(n, hop) ** 2).mean(axis=1))
-    voiced = rms[rms > rms.max() * 0.05] if rms.max() > 0 else rms
-    ref = float(np.percentile(voiced, 80)) if len(voiced) else 1.0
-    return (rms / max(ref, 1e-6)).tolist()
+    frames = np.lib.stride_tricks.sliding_window_view(data, win)[::hop][:n]
+    db = 10 * np.log10((frames**2).mean(axis=1) + 1e-10)
+    return np.convolve(db, np.ones(5) / 5, mode="same").tolist()
+
+
+def syllables(db: list[float], liveliness: float = 0.6) -> tuple[list[float], list[bool]]:
+    """Syllable centres (seconds) and a per-10 ms voiced flag. A syllable is a loudness peak
+    with a dip of at least a few dB before the previous one (the vowel between consonants).
+    Glided stretches with no clear dips still get syllables at a natural pace."""
+    if not db:
+        return [], []
+    top = max(db)
+    voiced = [x > top - 30 for x in db]
+    min_dip = 3.0 - 1.5 * liveliness
+    peaks: list[int] = []
+    low_since = 0.0  # the lowest level since the last kept peak
+    for i in range(1, len(db) - 1):
+        low_since = min(low_since, db[i]) if peaks else db[i]
+        if not voiced[i] or not (db[i] >= db[i - 1] and db[i] > db[i + 1]):
+            continue
+        if not peaks or i - peaks[-1] >= 10:  # at least 0.1 s apart
+            if not peaks or db[i] - low_since >= min_dip:
+                peaks.append(i)
+                low_since = db[i]
+                continue
+        if peaks and db[i] > db[peaks[-1]] and i - peaks[-1] < 10:
+            peaks[-1] = i  # a louder top of the same syllable
+    # Fill long voiced stretches without peaks (gliding speech) at a natural syllable pace.
+    step = round(28 - 8 * liveliness)  # every 0.28 s (calm) to 0.20 s (lively)
+    filled: list[int] = []
+    run_start = None
+    for i, v in enumerate([*voiced, False]):
+        if v and run_start is None:
+            run_start = i
+        if not v and run_start is not None:
+            inside = [p for p in peaks if run_start <= p < i]
+            marks = [run_start, *inside, i]
+            for a, b in zip(marks, marks[1:], strict=False):
+                filled.extend(range(a + step, b - step // 2, step))
+            run_start = None
+    centres = sorted(peaks + filled)
+    return [c / 100 for c in centres], voiced
 
 
 def timeline_from_audio(
-    level: list[float],
+    db: list[float],
     sounds: list[dict[str, Any]],
     duration: float,
     fps: int = FPS,
-    min_hold: int = 3,
+    liveliness: float = 0.6,
 ) -> list[dict[str, Any]]:
-    """Mouth shapes driven by how loud the voice is in each frame, so the mouth is shut when the
-    voice is silent and moves only as much as the sound does. The sound timings only choose the
-    vowel shape (round "oo", wide "ee", f/v) while there is sound. Shapes hold at least
-    `min_hold` frames (0.1 s), and the mouth leads the sound by one frame."""
+    """Mouth shapes from the voice itself: shut in silence, open around each syllable (the vowel)
+    and relaxed or briefly closed between them (consonants), so it moves at the voice's own pace.
+    The sound timings only choose the vowel shape (round "oo", wide "ee", f/v). `liveliness`
+    (0 calm … 1 lively) sets how readily syllables are found and how wide the mouth opens.
+    The mouth leads the sound by one frame."""
+    live = max(0.0, min(1.0, liveliness))
+    centres, voiced = syllables(db, live)
+    top = max(db) if db else 0.0
     vowel = timeline(sounds, duration, lead=0.0, min_hold=0.0) if sounds else []
+    half = 0.085 - 0.025 * live  # how long the mouth stays open around a syllable centre
     frames = max(1, round(duration * fps))
 
     def hinted(t: float) -> str | None:
@@ -287,27 +331,28 @@ def timeline_from_audio(
                 return str(seg["shape"])
         return None
 
-    # Light smoothing (the mouth cannot snap open and shut within a frame).
-    lv = [0.0] * frames
-    for i in range(frames):
-        window = [level[j] for j in (i - 1, i, i + 1) if 0 <= j < len(level)]
-        lv[i] = (sum(window) / len(window)) if window else 0.0
+    def at(t: float) -> tuple[bool, float]:
+        k = min(len(db) - 1, max(0, round(t * 100)))
+        return (voiced[k], db[k]) if db else (False, -100.0)
+
     shapes: list[str] = []
     for i in range(frames):
-        x = lv[min(len(lv) - 1, i + 1)]  # one frame of lead
-        hint = hinted((i + 1) / fps)
-        # Syllables: louder than the surrounding ~0.3 s opens the mouth, the dips between them
-        # relax it, so steady speech moves at a natural 4-5 syllables a second, not a held gape.
-        j = min(len(lv) - 1, i + 1)
-        around = lv[max(0, j - 4) : j + 5]
-        local = sum(around) / len(around)
-        if x < 0.18:
+        t = (i + 1.5) / fps  # one frame of lead, centre of the frame
+        is_voiced, level = at(t)
+        near = min((abs(c - t) for c in centres), default=9.0)
+        hint = hinted(t)
+        if not is_voiced:
             shapes.append("rest")
-        elif x < 0.45 or x < local * 0.97:
-            shapes.append("round" if hint == "round" else "fv" if hint == "fv" else "mid")
+        elif near <= half:
+            strong = level > top - 14
+            shape = hint if hint in ("open", "wide", "round") else "open"
+            shapes.append(shape if strong else "round" if hint == "round" else "mid")
+        elif level < top - (16 - 6 * live):
+            shapes.append("rest")  # a deep dip: lips meet on the consonant
         else:
-            shapes.append(hint if hint in ("open", "wide", "round") else "open")
-    # Runs shorter than min_hold join the previous run (or the next, at the start).
+            shapes.append("fv" if hint == "fv" else "mid")
+    # Runs shorter than the minimum hold (three frames calm, two lively) join the previous run.
+    min_hold = 3 if live < 0.3 else 2
     runs: list[list[Any]] = []
     for sh in shapes:
         if runs and runs[-1][0] == sh:
@@ -580,7 +625,12 @@ def render(
     progress(0.05, "Timing the mouth to the voice…")
     audio = params.get("audio")
     segs = (
-        timeline_from_audio(loudness(Path(str(audio))), sounds, duration)
+        timeline_from_audio(
+            intensity(Path(str(audio))),
+            sounds,
+            duration,
+            liveliness=float(params.get("liveliness", 0.6)),
+        )
         if audio
         else timeline(sounds, duration)
     )

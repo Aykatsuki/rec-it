@@ -84,6 +84,8 @@ export class AnimationService {
     sounds: Sound[];
     /** The voice itself: its loudness opens and closes the mouth (the sounds only shape it). */
     audio?: string;
+    /** 0 calm … 1 lively. */
+    liveliness?: number;
     duration: number;
     out: string;
     seed: number;
@@ -95,6 +97,7 @@ export class AnimationService {
         shapes: o.shapes,
         sounds: o.sounds,
         ...(o.audio ? { audio: o.audio } : {}),
+        ...(o.liveliness !== undefined ? { liveliness: o.liveliness } : {}),
         duration: o.duration,
         out: o.out,
         seed: o.seed,

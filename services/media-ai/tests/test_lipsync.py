@@ -268,7 +268,7 @@ def test_mouth_follows_the_voice_loudness(tmp_path) -> None:
     once per syllable, not on every sound; no shape is shorter than 0.1 s."""
     wav = tmp_path / "v.wav"
     _speech_wav(wav, [(0.5, 0.0), (1.5, 0.6), (0.8, 0.0), (1.0, 0.6), (0.4, 0.0)])
-    level = lipsync.loudness(wav)
+    level = lipsync.intensity(wav)
     duration = 4.2
     # Sound timings that are wrong on purpose: "speech" during the silent 2.0-2.8 s.
     wrong = [{"p": "a", "start": i * 0.05, "end": i * 0.05 + 0.05} for i in range(84)]
@@ -276,6 +276,11 @@ def test_mouth_follows_the_voice_loudness(tmp_path) -> None:
     assert all(s["shape"] == "rest" for s in segs if s["start"] >= 2.15 and s["end"] <= 2.75)
     assert shape_at(segs, 0.2) == "rest" and shape_at(segs, 4.1) == "rest"
     talking = [s for s in segs if 0.5 <= s["start"] < 2.0]
-    assert 3 <= len(talking) <= 12  # roughly syllable rate, not 8+ changes a second
-    assert all(s["end"] - s["start"] >= 0.1 - 1e-6 for s in segs[:-1])
+    # About 4 syllables a second, each opening and closing: lively but not 16+ changes a second.
+    assert 6 <= len(talking) <= 15
+    assert all(s["end"] - s["start"] >= 2 / 30 - 1e-3 for s in segs[:-1])
+    # Calm moves less than lively.
+    calm = lipsync.timeline_from_audio(level, wrong, duration, liveliness=0.0)
+    lively = lipsync.timeline_from_audio(level, wrong, duration, liveliness=1.0)
+    assert len(calm) <= len(segs) <= len(lively)
     assert {s["shape"] for s in talking} <= {"open", "mid", "wide", "round", "fv", "rest"}
