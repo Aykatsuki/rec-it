@@ -6,8 +6,8 @@ import { mkdir } from 'node:fs/promises';
 import { basename, dirname, extname, join } from 'node:path';
 import { createId } from '@rec-it/core';
 import type { MediaAsset, TemplateJob } from '@rec-it/ipc-contract';
-import { storyShortSchema, talkTestSchema } from '@rec-it/ipc-contract';
-import { PICTURE_STYLES, type ScenePlan } from '@rec-it/ai';
+import { episodeSchema, storyShortSchema, talkTestSchema } from '@rec-it/ipc-contract';
+import { PICTURE_STYLES, type EpisodePlan, type ScenePlan } from '@rec-it/ai';
 import {
   fallbackScenes,
   normaliseScenes,
@@ -16,6 +16,12 @@ import {
   speakable,
   splitSentences,
   storyShort,
+  castVoices,
+  normaliseEpisode,
+  TAIL,
+  referencePrompt,
+  shotPrompt,
+  type Episode,
   characterPrompt,
   talkingShot,
   type Scene,
@@ -24,10 +30,11 @@ import type { AnimationService } from './animation-service';
 import type { ImageService } from './image-service';
 import type { z } from 'zod';
 import type { ProjectService } from './project-service';
-import type { VoiceService } from './voice-service';
+import type { SpokenSegment, VoiceService } from './voice-service';
 
 type StoryInput = z.output<typeof storyShortSchema>;
 type TalkInput = z.output<typeof talkTestSchema>;
+type EpisodeInput = z.output<typeof episodeSchema>;
 
 export interface TemplateDeps {
   projects: ProjectService;
@@ -36,6 +43,8 @@ export interface TemplateDeps {
   animation: AnimationService;
   /** The AI's scene plan, or null when no AI is set up or it fails (a plain grouping is used). */
   planScenes: (title: string, sentences: string[], count: number) => Promise<ScenePlan | null>;
+  /** The AI's episode plan from a brief (ADR-052); rejects when no AI is set up. */
+  planEpisode?: (brief: string, seconds: number) => Promise<EpisodePlan>;
   /** Frees the graphics card (unloads Ollama's models) before the picture engine runs. */
   releaseGpu?: () => Promise<unknown>;
   /** A transcript was stored outside transcription (the voiceover's). */
@@ -444,6 +453,272 @@ export class TemplateService {
       this.update(id, {
         state: 'done',
         stage: `Done in ${duration((Date.now() - started) / 1000)}; the mouth shapes took ${duration(shapesSeconds)} (${new Set(drawn.map((k) => shapes[k])).size} of 7 drawn).`,
+        progress: 1,
+        sequenceId,
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (signal.aborted || error instanceof Cancelled || /cancel/i.test(message))
+        this.update(id, { state: 'cancelled', stage: 'Cancelled' });
+      else this.update(id, { state: 'failed', stage: 'Failed', error: message });
+    }
+  }
+
+  /** Starts an episode from a brief (ADR-052); returns at once with the job id. */
+  episode(raw: unknown): string {
+    const input = episodeSchema.parse(raw);
+    if (!this.d.projects.info()) throw new Error('Open or create a project first.');
+    if (!this.d.planEpisode) throw new Error('Episodes need the AI (Settings → AI).');
+    if (!this.d.images.status().available) throw new Error('Install the AI picture engine first.');
+    if (!this.d.animation.status().available)
+      throw new Error('Install the mouth-shape engine first.');
+    if (input.musicAssetId) {
+      const m = this.d.projects.media().get(input.musicAssetId);
+      if (!m.probe?.audioStreamCount) throw new Error('The music has no sound.');
+    }
+    const id = createId('tpl');
+    this.jobs = [
+      ...this.jobs.filter((j) => j.state === 'running'),
+      { id, kind: 'episode', title: 'Episode', state: 'running', stage: 'Starting…', progress: 0 },
+    ];
+    this.d.onChange(this.jobs);
+    const controller = new AbortController();
+    this.controllers.set(id, controller);
+    void this.runEpisode(id, input, controller.signal).finally(() => this.controllers.delete(id));
+    return id;
+  }
+
+  private async runEpisode(id: string, input: EpisodeInput, signal: AbortSignal): Promise<void> {
+    const started = Date.now();
+    try {
+      const projectId = this.d.projects.info()!.id;
+      const media = () => {
+        const p = this.d.projects.info();
+        if (!p || p.id !== projectId) throw new Error('The project was closed.');
+        return this.d.projects.media();
+      };
+      const check = () => {
+        if (signal.aborted) throw new Cancelled();
+      };
+      const folder = await this.generatedFolder();
+      const stamp = id.replace(/^tpl[_-]?/, '').slice(-10);
+      const work = join(folder, `episode ${stamp}`);
+      await mkdir(work, { recursive: true });
+      const seed = Math.floor(Math.random() * 1_000_000);
+
+      // 1. The plan: cast, shots, lines and pictures.
+      this.update(id, { stage: 'Planning the episode…', progress: 0.01 });
+      const episode: Episode = normaliseEpisode(
+        await this.d.planEpisode!(input.brief, input.seconds),
+      );
+      if (!episode.shots.length) throw new Error('The AI planned no shots; try again.');
+      this.update(id, { title: episode.title.slice(0, 80) });
+      check();
+
+      // 2. Voices: one recording per voice (narrator, each character), then one track in order.
+      const voices = castVoices(episode.characters, input.narrator, this.d.voice.human.available());
+      const byVoice = new Map<string, number[]>();
+      episode.shots.forEach((sh, i) => {
+        const v = voices[sh.speaker] ?? input.narrator;
+        byVoice.set(v, [...(byVoice.get(v) ?? []), i]);
+      });
+      const spokenBy = new Map<number, { wav: string; seg: SpokenSegment }>();
+      let done = 0;
+      for (const [voice, shots] of byVoice) {
+        this.update(id, {
+          stage: `Recording the voices (${++done} of ${byVoice.size})…`,
+          progress: 0.03 + 0.12 * ((done - 1) / byVoice.size),
+        });
+        const wav = join(work, `voice ${done}.wav`);
+        const r = await this.d.voice.speak(
+          shots.map((i) => ({ id: `s${i}`, text: episode.shots[i]!.text })),
+          { voice, speed: 1, out: wav, signal },
+        );
+        for (const seg of r.segments) spokenBy.set(Number(seg.id.slice(1)), { wav, seg });
+        check();
+      }
+      const track = await this.d.voice.assemble(
+        episode.shots.map((_, i) => {
+          const s = spokenBy.get(i)!;
+          return { wav: s.wav, start: s.seg.start, end: s.seg.end };
+        }),
+        join(folder, `episode voice ${stamp}.wav`),
+        join(work, 'lines'),
+      );
+      const placed = track.pieces;
+      const shift = (i: number) => placed[i]!.start - spokenBy.get(i)!.seg.start;
+      const words = episode.shots.flatMap((_, i) =>
+        spokenBy.get(i)!.seg.words.map((w) => ({
+          ...w,
+          start: w.start + shift(i),
+          end: w.end + shift(i),
+        })),
+      );
+      check();
+
+      // 3. Character references, drawn once (frees the GPU from Ollama first).
+      this.update(id, { stage: 'Freeing the graphics card…', progress: 0.16 });
+      await this.d.releaseGpu?.().catch(() => undefined);
+      const refs = new Map<string, string>();
+      const cast = episode.characters.filter((c) =>
+        episode.shots.some((sh) => sh.characters.includes(c.id)),
+      );
+      for (const [k, c] of cast.entries()) {
+        this.update(id, {
+          stage: `Designing ${c.name} (${k + 1} of ${cast.length})…`,
+          progress: 0.17 + 0.08 * (k / Math.max(1, cast.length)),
+        });
+        const [pic] = await this.d.images.generate([referencePrompt(c, episode.style)], {
+          outDir: join(work, `ref ${c.id}`),
+          seed: seed + k,
+          ...CHARACTER_SIZE,
+          signal,
+        });
+        refs.set(c.id, pic!);
+        check();
+      }
+
+      // 4. One picture per shot: characters from their references, others from scratch.
+      const pictures: string[] = [];
+      for (const [i, sh] of episode.shots.entries()) {
+        this.update(id, {
+          stage: `Drawing shot ${i + 1} of ${episode.shots.length}… ${elapsed(started)}`,
+          progress: 0.25 + 0.4 * (i / episode.shots.length),
+        });
+        const prompt = shotPrompt(sh, episode);
+        const shotRefs = sh.characters.map((c) => refs.get(c)).filter((p): p is string => !!p);
+        pictures.push(
+          shotRefs.length
+            ? await this.d.animation.draw({
+                refs: shotRefs,
+                prompt,
+                out: join(work, `shot ${i + 1}.png`),
+                ...CHARACTER_SIZE,
+                seed: seed + 100 + i,
+                signal,
+              })
+            : (
+                await this.d.images.generate([prompt], {
+                  outDir: join(work, `shot ${i + 1}`),
+                  seed: seed + 100 + i,
+                  ...CHARACTER_SIZE,
+                  signal,
+                })
+              )[0]!,
+        );
+        check();
+      }
+
+      // 5. Dialogue shots talk: mouth shapes on the shot, timed to that line.
+      const length = track.duration + TAIL;
+      const visuals = [...pictures];
+      const talking = episode.shots
+        .map((sh, i) => ({ sh, i }))
+        .filter(({ sh }) => sh.speaker !== 'narrator');
+      for (const [k, { i }] of talking.entries()) {
+        this.update(id, {
+          stage: `Animating line ${k + 1} of ${talking.length}… ${elapsed(started)}`,
+          progress: 0.65 + 0.2 * (k / Math.max(1, talking.length)),
+        });
+        const shapes = await this.d.animation.shapes({
+          base: pictures[i]!,
+          outDir: join(work, `shot ${i + 1} shapes`),
+          seed: seed + 200 + i,
+          signal,
+        });
+        const seg = spokenBy.get(i)!.seg;
+        // Until the next shot starts, so the clip fills its whole slot.
+        const until = i + 1 < placed.length ? placed[i + 1]!.start : length;
+        const clip = await this.d.animation.render({
+          shapes,
+          sounds: (seg.sounds ?? []).map((s) => ({
+            ...s,
+            start: s.start - seg.start,
+            end: s.end - seg.start,
+          })),
+          audio: placed[i]!.wav,
+          liveliness: input.liveliness,
+          // A little longer than the slot: frame rounding must never leave it short.
+          duration: until - placed[i]!.start + 0.1,
+          out: join(folder, `episode ${stamp} line ${k + 1}.mp4`),
+          seed: seed + 300 + i,
+          signal,
+        });
+        visuals[i] = clip.video;
+        check();
+      }
+
+      // 6. Import everything and build the episode in one undoable step.
+      this.update(id, { stage: 'Adding the episode to the project…', progress: 0.88 });
+      const paths = [join(folder, `episode voice ${stamp}.wav`), ...visuals];
+      const existing = await Promise.all(paths.map((p) => media().findSame(p)));
+      const fresh = paths.filter((_, i) => !existing[i]);
+      const result = fresh.length
+        ? await media().import(fresh, {
+            source: 'made-in-rec-it',
+            notes: `Episode made by Rec-It: voices (${voiceEngine(input.narrator)} and cast), pictures (Z-Image Turbo, FLUX.2 Klein), mouth shapes (FLUX.2 Klein).`,
+            userAttested: true,
+          })
+        : { imported: [], skipped: [] };
+      if (result.skipped.length)
+        throw new Error(`Could not add the generated files: ${result.skipped[0]!.reason}`);
+      const queue = [...result.imported];
+      const ids = existing.map((x) => x ?? queue.shift()!);
+      const ready = await this.waitReady(media, ids, signal);
+      const [voiceId, ...visualIds] = ids;
+      const voiceWords = words.map((w) => ({ ...w, p: 1 }));
+      this.d.projects
+        .database()
+        .saveTranscript(
+          voiceId!,
+          'en',
+          'rec-it-voice',
+          JSON.stringify({ language: 'en', model: 'rec-it-voice', words: voiceWords }),
+        );
+      this.d.onTranscript();
+      const music = input.musicAssetId ? media().get(input.musicAssetId) : undefined;
+      const sequenceId = createId('sequence');
+      const { command } = storyShort({
+        sequenceId,
+        name: shortName(episode.title),
+        voice: {
+          assetId: voiceId!,
+          duration: ready.get(voiceId!)?.probe?.durationSec ?? track.duration,
+          words: voiceWords,
+          titleEnd: 0,
+        },
+        background: {
+          kind: 'scenes',
+          scenes: episode.shots.map((sh, i) => ({
+            assetId: visualIds[i]!,
+            start: placed[i]!.start,
+            end: placed[i]!.end,
+            // Talking close-ups push in gently; the rest use the planned camera move.
+            motion: sh.speaker === 'narrator' ? sh.motion : 'zoomIn',
+          })),
+        },
+        ...(music?.probe
+          ? {
+              music: {
+                assetId: music.id,
+                duration: music.probe.durationSec,
+                volume: input.musicVolume,
+              },
+            }
+          : {}),
+        captions: { style: input.captionStyle },
+        ids: {
+          voice: createId('item'),
+          card: createId('item'),
+          background: () => createId('item'),
+          music: createId('item'),
+        },
+      });
+      check();
+      this.d.projects.document().execute(command);
+      this.update(id, {
+        state: 'done',
+        stage: `Done in ${duration((Date.now() - started) / 1000)}: ${episode.shots.length} shots, ${talking.length} spoken by characters.`,
         progress: 1,
         sequenceId,
       });

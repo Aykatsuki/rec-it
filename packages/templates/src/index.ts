@@ -603,3 +603,130 @@ export function talkingPrompt(character: string): string {
     'movement, expressive face, clear lip movement'
   );
 }
+
+// ---- Episodes from a brief (ADR-052) -----------------------------------------------------------
+
+export interface EpisodeCharacter {
+  id: string;
+  name: string;
+  gender: 'male' | 'female';
+  age: 'young' | 'adult' | 'old';
+  look: string;
+}
+
+export interface EpisodeShot {
+  /** "narrator" or a character id. */
+  speaker: string;
+  text: string;
+  picture: string;
+  /** Visible character ids (known ones only). */
+  characters: string[];
+  motion: Motion;
+}
+
+export interface Episode {
+  title: string;
+  style: string;
+  characters: EpisodeCharacter[];
+  shots: EpisodeShot[];
+}
+
+/** Most shots per episode: about one every 4 s for a minute. */
+export const MAX_SHOTS = 18;
+
+/**
+ * Makes any AI plan safe to build: unknown speakers become the narrator, unknown visible
+ * characters are dropped (the speaker of a line is always visible), empty lines go, the count
+ * is capped, and every shot gets a camera motion.
+ */
+export function normaliseEpisode(plan: {
+  title: string;
+  style: string;
+  characters: readonly EpisodeCharacter[];
+  shots: readonly {
+    speaker: string;
+    text: string;
+    picture: string;
+    characters?: readonly string[];
+    motion?: Motion | undefined;
+  }[];
+}): Episode {
+  const seen = new Set<string>();
+  const characters = plan.characters.filter((c) => {
+    if (seen.has(c.id)) return false;
+    seen.add(c.id);
+    return true;
+  });
+  const known = new Set(characters.map((c) => c.id));
+  const shots: EpisodeShot[] = [];
+  for (const s of plan.shots) {
+    const text = speakable(s.text);
+    if (!text) continue;
+    const speaker = known.has(s.speaker) ? s.speaker : 'narrator';
+    const visible = [...new Set((s.characters ?? []).filter((c) => known.has(c)))];
+    if (speaker !== 'narrator' && !visible.includes(speaker)) visible.unshift(speaker);
+    shots.push({
+      speaker,
+      text,
+      picture: s.picture.trim(),
+      characters: visible.slice(0, 2),
+      motion: s.motion ?? MOTIONS[shots.length % MOTIONS.length]!,
+    });
+    if (shots.length >= MAX_SHOTS) break;
+  }
+  return { title: plan.title.trim(), style: plan.style.trim(), characters, shots };
+}
+
+/** Kokoro voices to cast characters by gender and age (distinct from the narrator's). */
+const CAST: Record<string, readonly VoiceId[]> = {
+  'male-young': ['am_michael', 'am_liam', 'am_eric'],
+  'male-adult': ['bm_george', 'am_eric', 'am_onyx'],
+  'male-old': ['bm_lewis', 'am_adam', 'bm_george'],
+  'female-young': ['af_sky', 'af_bella', 'af_nicole'],
+  'female-adult': ['af_heart', 'bf_isabella', 'af_sarah'],
+  'female-old': ['bf_emma', 'af_sarah', 'af_heart'],
+};
+
+/**
+ * A voice for every speaker: the narrator's as chosen, and one per character by gender and age,
+ * each different where possible. With the human-like voice installed, characters speak in the
+ * human-like version of their voice (ADR-051).
+ */
+export function castVoices(
+  characters: readonly EpisodeCharacter[],
+  narrator: string,
+  human: boolean,
+): Record<string, string> {
+  const out: Record<string, string> = { narrator };
+  const used = new Set<string>([narrator.replace(/^hq:k-/, '')]);
+  for (const c of characters) {
+    const options = CAST[`${c.gender}-${c.age}`] ?? CAST['male-adult']!;
+    const pick = options.find((v) => !used.has(v)) ?? options[0]!;
+    used.add(pick);
+    out[c.id] = human ? `hq:k-${pick}` : pick;
+  }
+  return out;
+}
+
+/** The picture prompt for a character's reference sheet (drawn once, used for every shot). */
+export function referencePrompt(c: EpisodeCharacter, style: string): string {
+  return (
+    `${c.name}: ${c.look}. Character reference, upper body facing the camera, neutral ` +
+    `expression, mouth closed, plain light background. ${style}, vertical 9:16, no text`
+  );
+}
+
+/** The prompt for one shot, drawn with the characters' references when any are visible. */
+export function shotPrompt(shot: EpisodeShot, episode: Episode): string {
+  const names = shot.characters
+    .map((id) => episode.characters.find((c) => c.id === id))
+    .filter((c): c is EpisodeCharacter => !!c);
+  const keep = names.length
+    ? ` Keep ${names.map((c) => c.name).join(' and ')} exactly as in the reference picture: same face, hair, armour, clothing and colours.`
+    : '';
+  const talk =
+    shot.speaker !== 'narrator'
+      ? ' Close-up facing the camera, face clearly visible, mouth closed.'
+      : '';
+  return `${shot.picture}.${talk}${keep} ${episode.style}, vertical 9:16 composition, no text`;
+}

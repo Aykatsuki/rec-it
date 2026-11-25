@@ -217,6 +217,30 @@ def voicehq_add_sample(params: dict[str, Any]) -> dict[str, Any]:
     return voicehq.add_sample(params)
 
 
+def lipsync_draw_job(params: dict[str, Any], progress: Any, cancelled: Any) -> dict[str, Any]:
+    refs = params.get("refs")
+    if not isinstance(refs, list) or not refs or not all(isinstance(r, str) for r in refs):
+        raise RpcError(INVALID_PARAMS, "refs must be a list of pictures")
+    for key in ("modelsDir", "out", "prompt"):
+        if not isinstance(params.get(key), str):
+            raise RpcError(INVALID_PARAMS, f"{key} must be text")
+    if not lipsync.status(params["modelsDir"])["available"]:
+        raise RpcError(-32001, "The mouth-shape engine is not installed")
+    try:
+        return lipsync.draw_with_references(params, progress, cancelled)
+    except lipsync.Cancelled as e:
+        raise RpcError(-32800, "Cancelled") from e
+
+
+def audio_assemble(params: dict[str, Any]) -> dict[str, Any]:
+    if not isinstance(params.get("pieces"), list) or not params["pieces"]:
+        raise RpcError(INVALID_PARAMS, "pieces must be a list")
+    for key in ("out", "slicesDir"):
+        if not isinstance(params.get(key), str):
+            raise RpcError(INVALID_PARAMS, f"{key} must be a path")
+    return tts.assemble(params)
+
+
 def backgrounds_render(params: dict[str, Any]) -> dict[str, Any]:
     items = params.get("items")
     if not isinstance(items, list) or not items:
@@ -243,6 +267,7 @@ HANDLERS = {
     "talking.status": talking_status,
     "lipsync.status": lipsync_status,
     "voicehq.status": voicehq_status,
+    "audio.assemble": audio_assemble,
     "voicehq.addSample": voicehq_add_sample,
     "backgrounds.render": backgrounds_render,
 }
@@ -263,6 +288,7 @@ def main() -> int:
             "lipsync.install": lipsync_install_job,
             "lipsync.shapes": lipsync_shapes_job,
             "lipsync.render": lipsync_render_job,
+            "lipsync.draw": lipsync_draw_job,
             "voicehq.install": voicehq_install_job,
             "voicehq.speak": voicehq_speak_job,
         },

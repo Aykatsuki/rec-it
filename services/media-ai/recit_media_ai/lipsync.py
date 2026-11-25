@@ -428,13 +428,26 @@ def make_shapes(
 
 
 def _klein_edit(
-    models_dir: str, base: Path, out: Path, prompt: str, seed: int, cancelled: threading.Event
+    models_dir: str,
+    base: Path,
+    out: Path,
+    prompt: str,
+    seed: int,
+    cancelled: threading.Event,
+    refs: list[Path] | None = None,
+    size: tuple[int, int] | None = None,
 ) -> None:
     from PIL import Image
 
-    with Image.open(base) as im:
-        width, height = im.size
+    if size:
+        width, height = size
+    else:
+        with Image.open(base) as im:
+            width, height = im.size
     m = model_dir(models_dir)
+    ref_args: list[str] = []
+    for r in refs or [base]:
+        ref_args += ["-r", str(r)]
     args = [
         "--diffusion-model",
         str(m / KLEIN_FILES[0][0]),
@@ -442,8 +455,7 @@ def _klein_edit(
         str(m / KLEIN_FILES[1][0]),
         "--vae",
         str(m / KLEIN_FILES[2][0]),
-        "-r",
-        str(base),
+        *ref_args,
         "-p",
         prompt,
         "--cfg-scale",
@@ -466,6 +478,37 @@ def _klein_edit(
         images.run_engine(models_dir, args, out, cancelled, None, "The mouth-shape engine")
     except images.Cancelled as e:
         raise Cancelled() from e
+
+
+def draw_with_references(
+    params: dict[str, Any], progress: Callable[..., None], cancelled: threading.Event
+) -> dict[str, Any]:
+    """Draws a new picture of characters from their reference pictures (ADR-052): FLUX.2 Klein
+    keeps their faces, hair and clothing while the prompt sets the scene."""
+    refs = [Path(str(r)) for r in params["refs"]]
+    out = Path(str(params["out"]))
+    out.parent.mkdir(parents=True, exist_ok=True)
+    width, height = int(params.get("width", 768)), int(params.get("height", 1344))
+    progress(0.05, "Drawing the shot…")
+    if _fake():
+        from PIL import Image
+
+        with Image.open(refs[0]) as im:
+            pic = im.convert("RGB").resize((width // 4, height // 4))
+        Image.eval(pic, lambda v: max(0, v - 20)).save(out)
+    else:
+        _klein_edit(
+            str(params["modelsDir"]),
+            refs[0],
+            out,
+            str(params["prompt"]),
+            int(params.get("seed", 42)),
+            cancelled,
+            refs=refs,
+            size=(width, height),
+        )
+    progress(1.0, "Shot drawn")
+    return {"out": str(out)}
 
 
 def _fake_edit(base: Path, out: Path, name: str) -> None:

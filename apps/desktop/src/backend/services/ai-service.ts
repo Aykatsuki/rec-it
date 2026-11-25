@@ -1,6 +1,9 @@
 // AI text for one-click features (ADR-046): Ollama on this PC or Kimi with the user's own key,
 // through packages/ai. The key lives in the secret store and never reaches the renderer.
 import {
+  episodePlanSchema,
+  episodePrompt,
+  type EpisodePlan,
   AI_PROVIDERS,
   AiClient,
   narrationPrompt,
@@ -75,6 +78,13 @@ export class AiService {
   planScenes(title: string, sentences: string[], scenes: number): Promise<ScenePlan> {
     return this.client().json(scenePlanSchema, scenePlanPrompt({ title, sentences, scenes }), {
       temperature: 0.6,
+    });
+  }
+
+  /** The plan of an episode from a brief: cast, shots, lines and pictures (ADR-052). */
+  planEpisode(brief: string, seconds: number): Promise<EpisodePlan> {
+    return this.client().json(episodePlanSchema, episodePrompt({ brief, seconds }), {
+      temperature: 0.7,
     });
   }
 

@@ -921,3 +921,20 @@ Each record states the decision, why it was made and what else was considered. R
 
 **Not tested here:** the real install and model (the PyTorch index and Hugging Face are blocked in the sandbox); the first real run is on the reference PC.
 
+## ADR-052 · Episodes from a brief
+
+**Status:** Accepted (25 Nov 2026).
+
+**Context.** You want to paste a full brief (art direction, colour palette, story beats, exact dialogue, narration notes) and get a finished ~1 minute episode of a series, with the same characters throughout.
+
+**Decisions.**
+- **The AI plans; Rec-It builds.** Ollama or Kimi turns the brief into an episode plan (`episodePlanSchema`): a title, a style line, a cast (id, name, gender, age and one fixed `look`), and 10–16 shots. Each shot has a speaker (narrator or character), the words spoken, one picture, the visible characters and a camera move; dialogue is kept verbatim, and each line is its own close-up of the speaker. `normaliseEpisode` makes any answer safe: unknown speakers become the narrator, unknown characters are dropped, the speaker is always visible, empty lines go, at most 18 shots.
+- **Consistent characters.** Each character in a shot is drawn once by Z-Image as a reference (768×1344). Every shot with characters is then drawn by FLUX.2 Klein from those references (`-r` per character, up to two), with the prompt asking to keep face, hair, armour, clothing and colours. Shots without characters come from Z-Image. Prompts alone do not keep faces the same.
+- **Voices.** The narrator is your choice (default: the human-like Onyx). Characters are cast by gender and age from distinct voices (`castVoices`), human-like when installed. Each voice records all its lines in one go (one model load); `audio.assemble` then joins the pieces in shot order with 0.25 s gaps into one track, plus a file per piece. Words are shifted onto the track for subtitles and the transcript.
+- **Talking close-ups.** Dialogue shots get mouth shapes and blinks (ADR-049), driven by that line's piece (syllables, ADR-051), and fill their whole slot plus 0.1 s so frame rounding never leaves a gap before a dissolve.
+- **Assembly** reuses the story builder: one clip per shot edge to edge, the planned camera move (dialogue: a gentle push-in), 0.3 s dissolves, one voice track, word-by-word subtitles, and optional music. It is one undo step.
+- **Not yet:** fluid character animation (hair, clothing, sword fights) needs video models, too slow on 8 GB (ADR-048); sound effects and generated music need a local audio model, the next addition.
+- **Tests.** Unit (types); integration with a stand-in plan covering a stray speaker and character, two talking close-ups, edge-to-edge clips, captions containing the dialogue; end to end through a stand-in AI server. Sidecar: voice-track assembly and drawing from two references.
+
+**Not tested here:** real planning by Ollama (qwen3:8b) on a long brief, and real Klein drawings from references; the first real run is on the reference PC (about 10–15 minutes per episode).
+

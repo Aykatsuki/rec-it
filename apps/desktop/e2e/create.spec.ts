@@ -51,6 +51,40 @@ const PLAN = {
   ],
 };
 
+const EPISODE = {
+  title: 'Blood of the Shogun',
+  style: '2D anime illustration, dark fantasy, black and crimson',
+  characters: [
+    {
+      id: 'hiroshi',
+      name: 'Hiroshi Takeda',
+      gender: 'male',
+      age: 'young',
+      look: 'young samurai, dark blue armour',
+    },
+  ],
+  shots: [
+    {
+      speaker: 'narrator',
+      text: 'The year is 1582.',
+      picture: 'a burning village at dusk',
+      characters: [],
+    },
+    {
+      speaker: 'narrator',
+      text: 'Hiroshi returns home.',
+      picture: 'Hiroshi on a mountain path',
+      characters: ['hiroshi'],
+    },
+    {
+      speaker: 'hiroshi',
+      text: 'Whoever did this, I will find you.',
+      picture: 'Hiroshi close-up',
+      characters: ['hiroshi'],
+    },
+  ],
+};
+
 test.describe('create a Short', () => {
   test.skip(!bins, 'FFmpeg is not available (run pnpm fetch-ffmpeg)');
   test.beforeAll(async () => {
@@ -68,11 +102,13 @@ test.describe('create a Short', () => {
         const ask = JSON.stringify(JSON.parse(body).messages);
         const content = ask.includes('Rec-It is connected')
           ? 'Rec-It is connected.'
-          : ask.includes('storyboard')
-            ? JSON.stringify(PLAN)
-            : ask.includes('faceless YouTube Shorts')
-              ? JSON.stringify(FACTS)
-              : JSON.stringify(STORY);
+          : ask.includes('director and storyboard artist')
+            ? JSON.stringify(EPISODE)
+            : ask.includes('storyboard')
+              ? JSON.stringify(PLAN)
+              : ask.includes('faceless YouTube Shorts')
+                ? JSON.stringify(FACTS)
+                : JSON.stringify(STORY);
         res.end(JSON.stringify({ choices: [{ message: { content } }] }));
       });
     });
@@ -118,6 +154,7 @@ test.describe('create a Short', () => {
       // Create → Story video → Write it → Create Short.
       await page.getByTestId('create-button').click();
       const dialog = page.getByTestId('create-dialog');
+      await dialog.getByRole('button', { name: /Story or topic video/ }).click();
       await dialog.getByTestId('story-write').click();
       await expect(dialog.getByTestId('story-title')).toHaveValue(STORY.title, { timeout: 15_000 });
       await expect(dialog.getByTestId('story-text')).toHaveValue(STORY.story);
@@ -169,6 +206,7 @@ test.describe('create a Short', () => {
 
       await page.getByTestId('create-button').click();
       const dialog = page.getByTestId('create-dialog');
+      await dialog.getByRole('button', { name: /Story or topic video/ }).click();
       await dialog.getByRole('combobox').first().selectOption('facts');
       await dialog.getByRole('textbox', { name: 'Topic' }).fill('octopus facts');
       await dialog.getByTestId('story-write').click();
@@ -217,6 +255,47 @@ test.describe('create a Short', () => {
       await expect(page.locator('[data-testid=asset-card]')).toHaveCount(3);
       await page.waitForTimeout(500);
       await page.screenshot({ path: test.info().outputPath('talking-shot.png') });
+    } finally {
+      await app.close();
+    }
+  });
+  test('make an episode from a brief', async () => {
+    const { app, page } = await launch(tempUserData(), {
+      ...(bins!.source === 'path' ? {} : { RECIT_FFMPEG_PATH: bins!.ffmpeg }),
+      RECIT_DISABLE_SIDECAR: '0',
+      RECIT_FAKE_TTS: '1',
+      RECIT_FAKE_IMAGES: '1',
+      RECIT_FAKE_LIPSYNC: '1',
+      RECIT_FAKE_VOICEHQ: '1',
+    });
+    try {
+      await createProject(page, 'Episode');
+      await page.getByRole('button', { name: 'Settings' }).click();
+      await page.getByRole('tab', { name: 'AI' }).click();
+      const ai = page.getByTestId('ai-settings');
+      await ai.getByLabel('AI provider').selectOption('custom');
+      await ai.getByLabel('Server address').fill(aiUrl);
+      await ai.getByLabel('Server address').blur();
+      await page.keyboard.press('Escape');
+
+      await page.getByTestId('create-button').click();
+      const dialog = page.getByTestId('create-dialog');
+      // Episode from a brief is the first template; the narrator defaults to a deep human-like voice.
+      await expect(dialog.getByTestId('episode-narrator')).toHaveValue('hq:k-am_onyx', {
+        timeout: 60_000,
+      });
+      await dialog
+        .getByTestId('episode-brief')
+        .fill(
+          'Episode 1 of a dark 2D anime samurai thriller. Hiroshi returns to his burning village.',
+        );
+      await page.screenshot({ path: test.info().outputPath('episode-form.png') });
+      await dialog.getByTestId('episode-create').click();
+      await expect(dialog).toBeHidden({ timeout: 120_000 });
+      // The voice track and one visual per shot (the dialogue shot is a talking clip).
+      await expect(page.locator('[data-testid=asset-card]')).toHaveCount(4);
+      await page.waitForTimeout(500);
+      await page.screenshot({ path: test.info().outputPath('episode.png') });
     } finally {
       await app.close();
     }

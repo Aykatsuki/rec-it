@@ -1,5 +1,6 @@
 import shutil
 import subprocess
+import sys
 import threading
 from pathlib import Path
 
@@ -284,3 +285,72 @@ def test_mouth_follows_the_voice_loudness(tmp_path) -> None:
     lively = lipsync.timeline_from_audio(level, wrong, duration, liveliness=1.0)
     assert len(calm) <= len(segs) <= len(lively)
     assert {s["shape"] for s in talking} <= {"open", "mid", "wide", "round", "fv", "rest"}
+
+
+def test_voice_track_is_assembled_piece_by_piece(tmp_path) -> None:
+    import struct
+    import wave
+
+    from recit_media_ai import tts
+
+    def wav(path: Path, values: list[int]) -> Path:
+        with wave.open(str(path), "wb") as w:
+            w.setnchannels(1)
+            w.setsampwidth(2)
+            w.setframerate(1000)
+            w.writeframes(b"".join(struct.pack("<h", v) for v in values))
+        return path
+
+    narrator = wav(tmp_path / "n.wav", [1] * 1000 + [2] * 1000)  # two 1 s lines
+    hero = wav(tmp_path / "h.wav", [7] * 500)
+    r = tts.assemble(
+        {
+            "pieces": [
+                {"wav": str(narrator), "start": 0.0, "end": 1.0},
+                {"wav": str(hero), "start": 0.0, "end": 0.5},
+                {"wav": str(narrator), "start": 1.0, "end": 2.0},
+            ],
+            "gap": 0.25,
+            "out": str(tmp_path / "track.wav"),
+            "slicesDir": str(tmp_path / "slices"),
+        }
+    )
+    assert [(p["start"], p["end"]) for p in r["pieces"]] == [(0, 1), (1.25, 1.75), (2.0, 3.0)]
+    with wave.open(r["out"], "rb") as w:
+        data = struct.unpack(f"<{w.getnframes()}h", w.readframes(w.getnframes()))
+    assert data[1300] == 7 and data[2100] == 2 and data[1100] == 0  # gap is silent
+    with wave.open(r["pieces"][1]["wav"], "rb") as w:
+        assert w.getnframes() == 500
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="the stand-in engine is a shell script")
+def test_shot_drawn_from_two_character_references(tmp_path, monkeypatch) -> None:
+    script = tmp_path / "sd-cli"
+    script.write_text(
+        "#!/bin/sh\n"
+        'echo "$@" > "$(dirname "$0")/args.txt"\n'
+        'while [ "$1" != "-o" ]; do shift; done\n'
+        'printf "PNG" > "$2"\n'
+    )
+    script.chmod(0o755)
+    monkeypatch.setenv("RECIT_SD_CLI", str(script))
+    monkeypatch.delenv("RECIT_FAKE_LIPSYNC", raising=False)
+    models = str(tmp_path)
+    for name, _, _ in lipsync.KLEIN_FILES:
+        (lipsync.model_dir(models) / name).parent.mkdir(parents=True, exist_ok=True)
+        (lipsync.model_dir(models) / name).write_bytes(b"x")
+    r = lipsync.draw_with_references(
+        {
+            "modelsDir": models,
+            "refs": [str(tmp_path / "hiroshi.png"), str(tmp_path / "warrior.png")],
+            "prompt": "Hiroshi faces the warrior in the doorway",
+            "out": str(tmp_path / "shot.png"),
+            "width": 768,
+            "height": 1344,
+        },
+        lambda *a: None,
+        threading.Event(),
+    )
+    args = (tmp_path / "args.txt").read_text()
+    assert f"-r {tmp_path}/hiroshi.png -r {tmp_path}/warrior.png" in args
+    assert "-W 768 -H 1344" in args and Path(r["out"]).read_bytes() == b"PNG"

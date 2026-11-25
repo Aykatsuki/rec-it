@@ -36,7 +36,7 @@ import { useApp } from '../store';
 const useCreateDialog = create<{ open: boolean }>(() => ({ open: false }));
 export const openCreateDialog = () => useCreateDialog.setState({ open: true });
 
-type TemplateId = 'story' | 'characters' | 'texts' | 'split' | 'clips';
+type TemplateId = 'episode' | 'story' | 'characters' | 'texts' | 'split' | 'clips';
 const TEMPLATES: {
   id: TemplateId;
   title: string;
@@ -44,6 +44,13 @@ const TEMPLATES: {
   icon: React.ReactNode;
   ready: boolean;
 }[] = [
+  {
+    id: 'episode',
+    title: 'Episode from a brief',
+    text: 'Paste a brief (style, story, dialogue): the AI plans the shots; characters stay the same and speak their lines.',
+    icon: <Clapperboard size={18} />,
+    ready: true,
+  },
   {
     id: 'story',
     title: 'Story or topic video',
@@ -95,7 +102,7 @@ export function CreateDialogHost() {
 }
 
 function CreateBody({ onDone }: { onDone: () => void }) {
-  const [template, setTemplate] = useState<TemplateId>('story');
+  const [template, setTemplate] = useState<TemplateId>('episode');
   const project = useApp((s) => s.project);
   return (
     <div className="create" data-testid="create-dialog">
@@ -122,6 +129,7 @@ function CreateBody({ onDone }: { onDone: () => void }) {
           <p className="create__note">Open or create a project first.</p>
         ) : (
           <>
+            {template === 'episode' && <EpisodeForm onDone={onDone} />}
             {template === 'story' && <StoryForm onDone={onDone} />}
             {template === 'characters' && <CharactersForm onDone={onDone} />}
           </>
@@ -988,5 +996,173 @@ function HumanVoiceEngine() {
       install={() => void backend.invoke('voicehq.install', {})}
       cancel={() => void backend.invoke('voicehq.cancelInstall', {})}
     />
+  );
+}
+
+/**
+ * An episode from a brief (ADR-052): the AI plans cast and shots from the brief; characters are
+ * drawn once and kept the same, narration and dialogue are voiced, dialogue close-ups talk.
+ */
+function EpisodeForm({ onDone }: { onDone: () => void }) {
+  const assets = useApp((s) => s.assets);
+  const voiceStatus = useApp((s) => s.voice);
+  const voiceHq = useApp((s) => s.voiceHq);
+  const imageStatus = useApp((s) => s.images);
+  const animationStatus = useApp((s) => s.animation);
+  const jobs = useApp((s) => s.templateJobs);
+  const [brief, setBrief] = useState('');
+  const [seconds, setSeconds] = useState(60);
+  const [narrator, setNarrator] = useState<string>(() =>
+    useApp.getState().voiceHq?.available ? 'hq:k-am_onyx' : 'am_onyx',
+  );
+  const [liveliness, setLiveliness] = useState(0.6);
+  const [music, setMusic] = useState('');
+  const [error, setError] = useState<string | null>(null);
+  const [jobId, setJobId] = useState<string | null>(null);
+  const job = jobs.find((j) => j.id === jobId);
+  const running = job?.state === 'running';
+  const sounds = assets.filter(
+    (a) =>
+      a.status === 'ready' &&
+      a.rights.source !== 'made-in-rec-it' &&
+      (a.kind === 'audio' || (a.kind === 'video' && a.probe?.audioStreamCount)),
+  );
+
+  useEffect(() => {
+    if (job?.state === 'done') {
+      useApp.setState({
+        selectedAssetId: null,
+        selectedItemIds: [],
+        monitor: 'program',
+        playhead: 0,
+        playing: false,
+      });
+      notify(job.stage, 'info');
+      onDone();
+    }
+  }, [job?.state, job?.stage, onDone]);
+
+  const ready =
+    voiceStatus?.available === true &&
+    (!narrator.startsWith('hq:') || !!voiceHq?.available) &&
+    !!imageStatus?.available &&
+    !!animationStatus?.available;
+  const canStart = ready && brief.trim().length >= 20 && !running;
+
+  const start = async () => {
+    setError(null);
+    try {
+      const r = await backend.invoke('templates.episode', {
+        brief,
+        seconds,
+        narrator,
+        liveliness,
+        musicAssetId: music || null,
+      });
+      setJobId(r.jobId);
+    } catch (e) {
+      setError(message(e));
+    }
+  };
+
+  return (
+    <form
+      className="create__story"
+      onSubmit={(e) => {
+        e.preventDefault();
+        if (canStart) void start();
+      }}
+    >
+      <section className="create__section">
+        <h3>Brief</h3>
+        <p className="create__hint">
+          Paste everything: the visual style, the story, the dialogue and how the narration should
+          feel. The AI plans the shots; each character is designed once and kept the same in every
+          shot; lines of dialogue become talking close-ups. Camera moves, dissolves and subtitles
+          are added. Fluid character animation and sound effects are not made yet; add a music track
+          below.
+        </p>
+        {!imageStatus?.available && <PictureEngine />}
+        {!animationStatus?.available && <AnimationEngine />}
+        <label>
+          <textarea
+            className="ui-input create__text"
+            value={brief}
+            rows={10}
+            placeholder="e.g. Episode 1 of a dark 2D anime samurai thriller… VISUAL STYLE: … STORY: …"
+            onChange={(e) => setBrief(e.target.value)}
+            data-testid="episode-brief"
+          />
+        </label>
+        <div className="create__row">
+          <label className="create__grow">
+            Length: about {seconds} s
+            <input
+              type="range"
+              min={40}
+              max={75}
+              step={5}
+              value={seconds}
+              onChange={(e) => setSeconds(Number(e.target.value))}
+            />
+          </label>
+          <label className="create__grow">
+            Mouth movement: {liveliness < 0.3 ? 'calm' : liveliness < 0.75 ? 'balanced' : 'lively'}
+            <input
+              type="range"
+              min={0}
+              max={1}
+              step={0.05}
+              value={liveliness}
+              onChange={(e) => setLiveliness(Number(e.target.value))}
+            />
+          </label>
+        </div>
+        <label>
+          Narrator (characters get their own voices)
+          <VoicePicker value={narrator} onChange={setNarrator} testId="episode-narrator" />
+        </label>
+        <label>
+          Music (optional)
+          <select className="ui-input" value={music} onChange={(e) => setMusic(e.target.value)}>
+            <option value="">None</option>
+            {sounds.map((v) => (
+              <option key={v.id} value={v.id}>
+                {v.name}
+              </option>
+            ))}
+          </select>
+        </label>
+      </section>
+      {error && (
+        <div className="create__error" role="alert">
+          {error}
+        </div>
+      )}
+      {job && job.state !== 'done' && (
+        <div className="create__progress" data-testid="episode-progress">
+          <span>{job.state === 'failed' ? `Failed: ${job.error}` : job.stage}</span>
+          {running && (
+            <>
+              <progress value={job.progress} max={1} />
+              <Button
+                size="sm"
+                variant="ghost"
+                icon={<Square size={12} />}
+                onClick={() => void backend.invoke('templates.cancel', { jobId: job.id })}
+              >
+                Cancel
+              </Button>
+            </>
+          )}
+        </div>
+      )}
+      <footer className="create__footer">
+        <small>About 10–15 minutes on an 8 GB graphics card: every shot is drawn on your PC.</small>
+        <Button type="submit" variant="primary" disabled={!canStart} data-testid="episode-create">
+          {running ? 'Creating…' : 'Create episode'}
+        </Button>
+      </footer>
+    </form>
   );
 }

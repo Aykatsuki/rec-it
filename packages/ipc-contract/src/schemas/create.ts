@@ -157,7 +157,7 @@ export type TalkTestInput = z.input<typeof talkTestSchema>;
 
 export const templateJobSchema = z.object({
   id: z.string(),
-  kind: z.enum(['story', 'talk-test']),
+  kind: z.enum(['story', 'talk-test', 'episode']),
   title: z.string(),
   state: z.enum(['running', 'done', 'failed', 'cancelled']),
   /** What it is doing now, e.g. "Recording the voiceover…". */
@@ -167,3 +167,22 @@ export const templateJobSchema = z.object({
   sequenceId: z.string().optional(),
 });
 export type TemplateJob = z.output<typeof templateJobSchema>;
+
+/**
+ * An episode from a brief (ADR-052): the AI plans the cast and shots from your brief (style,
+ * story, dialogue), then Rec-It draws, voices, lip-syncs and builds it.
+ */
+export const episodeSchema = z
+  .object({
+    brief: z.string().trim().min(20).max(12000),
+    /** Target length in seconds. */
+    seconds: z.number().min(30).max(90).default(60),
+    /** The narrator's voice; characters are cast automatically. */
+    narrator: voiceIdSchema,
+    liveliness: z.number().min(0).max(1).default(0.6),
+    musicAssetId: z.string().min(1).max(100).nullable().default(null),
+    musicVolume: z.number().min(0).max(1).default(0.15),
+    captionStyle: z.enum(['highlight', 'pop', 'karaoke', 'caps', 'clean', 'bebas']).default('pop'),
+  })
+  .strict();
+export type EpisodeInput = z.input<typeof episodeSchema>;

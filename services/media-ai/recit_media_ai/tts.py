@@ -316,3 +316,54 @@ def run(
         progress(0.65 + 0.35 * done_chars / total_chars, "Speaking…")
     duration = _write_wav(str(params["out"]), pieces)
     return {"out": params["out"], "duration": round(duration, 3), "segments": result}
+
+
+def assemble(params: dict[str, Any]) -> dict[str, Any]:
+    """Joins pieces of voice recordings into one track (ADR-052): each piece is (wav, start, end)
+    in seconds, placed one after another with `gap` seconds between them. Writes the track and
+    each piece on its own (for the lip sync of dialogue shots); returns where each piece landed."""
+    import wave as _wave
+
+    gap = float(params.get("gap", 0.25))
+    out = Path(str(params["out"]))
+    slices = Path(str(params["slicesDir"]))
+    slices.mkdir(parents=True, exist_ok=True)
+    cache: dict[str, tuple[int, bytes]] = {}
+    track = bytearray()
+    rate = None
+    placed = []
+    for i, piece in enumerate(params["pieces"]):
+        src = str(piece["wav"])
+        if src not in cache:
+            with _wave.open(src, "rb") as w:
+                if w.getnchannels() != 1 or w.getsampwidth() != 2:
+                    raise ValueError("expected mono 16-bit voice audio")
+                cache[src] = (w.getframerate(), w.readframes(w.getnframes()))
+        r, data = cache[src]
+        if rate is None:
+            rate = r
+        if r != rate:
+            raise ValueError("voice pieces have different sample rates")
+        a = max(0, int(float(piece["start"]) * r)) * 2
+        b = min(len(data), int(float(piece["end"]) * r) * 2)
+        chunk = data[a:b]
+        start = len(track) / 2 / r
+        track += chunk
+        sl = slices / f"piece-{i}.wav"
+        with _wave.open(str(sl), "wb") as w:
+            w.setnchannels(1)
+            w.setsampwidth(2)
+            w.setframerate(r)
+            w.writeframes(chunk)
+        placed.append(
+            {"start": round(start, 4), "end": round(len(track) / 2 / r, 4), "wav": str(sl)}
+        )
+        track += b"\x00\x00" * int(gap * r)
+    rate = rate or SAMPLE_RATE
+    out.parent.mkdir(parents=True, exist_ok=True)
+    with _wave.open(str(out), "wb") as w:
+        w.setnchannels(1)
+        w.setsampwidth(2)
+        w.setframerate(rate)
+        w.writeframes(bytes(track))
+    return {"out": str(out), "duration": round(len(track) / 2 / rate, 4), "pieces": placed}

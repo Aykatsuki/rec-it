@@ -180,3 +180,78 @@ export function scenePlanPrompt(o: {
     },
   ];
 }
+
+// ---- Episodes from a brief (ADR-052) -----------------------------------------------------------
+
+const id = z
+  .string()
+  .regex(/^[a-z][a-z0-9_]{0,23}$/)
+  .or(
+    z.string().transform(
+      (s) =>
+        s
+          .toLowerCase()
+          .replace(/[^a-z0-9_]+/g, '_')
+          .replace(/^_+|_+$/g, '')
+          .slice(0, 24) || 'character',
+    ),
+  );
+
+export const episodePlanSchema = z.object({
+  title: z.string().min(1).max(120),
+  /** Visual style keywords appended to every picture prompt. */
+  style: z.string().min(3).max(400),
+  characters: z
+    .array(
+      z.object({
+        id,
+        name: z.string().min(1).max(60),
+        gender: z.enum(['male', 'female']).catch('male'),
+        age: z.enum(['young', 'adult', 'old']).catch('adult'),
+        /** Fixed look: face, hair, build, clothing, armour, weapons, colours. */
+        look: z.string().min(3).max(500),
+      }),
+    )
+    .max(6)
+    .default([]),
+  shots: z
+    .array(
+      z.object({
+        /** "narrator" or a character id. */
+        speaker: z.string().min(1).max(40),
+        /** What is said in this shot (narration or dialogue), spoken aloud. */
+        text: z.string().min(1).max(400),
+        /** What the picture shows; for dialogue, a close-up of the speaker facing the camera. */
+        picture: z.string().min(3).max(500),
+        /** Character ids visible in the picture. */
+        characters: z.array(z.string()).max(3).default([]),
+        motion: z.enum(MOTIONS).optional().catch(undefined),
+      }),
+    )
+    .min(1)
+    .max(30),
+});
+export type EpisodePlan = z.output<typeof episodePlanSchema>;
+
+/** Turns a brief (style, story, dialogue, narration notes) into an episode plan for a Short. */
+export function episodePrompt(o: { brief: string; seconds: number }): ChatMessage[] {
+  const words = Math.round(o.seconds * 2.4);
+  return [
+    {
+      role: 'system',
+      content:
+        'You are the director and storyboard artist of a vertical (9:16) YouTube Short made of illustrated shots with a narrator and spoken dialogue. ' +
+        `Turn the brief into a plan of 10 to 16 shots whose spoken text totals about ${words} words (about ${o.seconds} seconds). ` +
+        'Rules: follow the story and dialogue of the brief in order; narration is vivid, short sentences, building suspense; keep dialogue lines exactly as written in the brief; ' +
+        'every line of dialogue gets its own shot whose speaker is that character and whose picture is a close-up of that character facing the camera, face clearly visible, mouth closed; ' +
+        'narration shots have speaker "narrator"; ' +
+        'describe each character ONCE in "look" with fixed, specific details (face, hair, build, clothing, armour, weapons, colours) and never change them; ' +
+        'each picture describes ONE striking frame: subject, setting, action, camera angle, lighting, no text or letters; list the visible character ids; ' +
+        'pick a camera motion per shot (zoomIn, zoomOut, panLeft, panRight); ' +
+        '"style" is a short list of visual style keywords taken from the brief (for example: 2D anime illustration, dark fantasy, black and crimson palette). ' +
+        'Reply with JSON only: {"title": "...", "style": "...", "characters": [{"id": "hiroshi", "name": "Hiroshi Takeda", "gender": "male", "age": "young", "look": "..."}], ' +
+        '"shots": [{"speaker": "narrator", "text": "...", "picture": "...", "characters": ["hiroshi"], "motion": "zoomIn"}]}.',
+    },
+    { role: 'user', content: o.brief.trim() },
+  ];
+}

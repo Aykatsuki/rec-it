@@ -78,6 +78,29 @@ export class AnimationService {
     return r.shapes;
   }
 
+  /** Draws a shot of characters from their reference pictures, keeping their looks (ADR-052). */
+  async draw(o: {
+    refs: string[];
+    prompt: string;
+    out: string;
+    width: number;
+    height: number;
+    seed: number;
+    signal?: AbortSignal;
+    onProgress?: (p: number, message?: string) => void;
+  }): Promise<string> {
+    if (!this.engine.available()) throw new Error('Install the mouth-shape engine first.');
+    const r = await this.sidecar().job<{ out: string }>(
+      'lipsync.draw',
+      { ...o, signal: undefined, onProgress: undefined, modelsDir: this.d.modelsDir },
+      {
+        ...(o.signal ? { signal: o.signal } : {}),
+        ...(o.onProgress ? { onProgress: o.onProgress } : {}),
+      },
+    );
+    return r.out;
+  }
+
   /** Renders the character saying a line: an MP4 (30 fps, no sound) of the shapes in time. */
   async render(o: {
     shapes: MouthShapes;

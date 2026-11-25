@@ -280,6 +280,84 @@ describe.skipIf(!bins || !hasUv)('story template (backend, real sidecar, fake vo
     expect(await app.voice.samples()).toEqual([]);
   }, 240_000);
 
+  it('makes an episode from a brief: cast, shots, voices, talking close-ups', async () => {
+    app.ai.planEpisode = async () => ({
+      title: 'The Last Samurai: Episode 1',
+      style: '2D anime illustration, dark fantasy',
+      characters: [
+        { id: 'hiroshi', name: 'Hiroshi', gender: 'male', age: 'young', look: 'young samurai' },
+        {
+          id: 'warrior',
+          name: 'Black Warrior',
+          gender: 'male',
+          age: 'adult',
+          look: 'black armour',
+        },
+      ],
+      shots: [
+        {
+          speaker: 'narrator',
+          text: 'The year is 1582.',
+          picture: 'a village',
+          characters: [],
+          motion: 'panLeft',
+        },
+        {
+          speaker: 'narrator',
+          text: 'His village is burning.',
+          picture: 'Hiroshi runs',
+          characters: ['hiroshi'],
+        },
+        {
+          speaker: 'hiroshi',
+          text: 'Whoever did this, I will find you.',
+          picture: 'Hiroshi close-up',
+          characters: [],
+        },
+        {
+          speaker: 'warrior',
+          text: 'Your father warned us you would return.',
+          picture: 'the warrior',
+          characters: ['warrior'],
+        },
+        {
+          speaker: 'ghost',
+          text: 'He draws his sword.',
+          picture: 'a blade',
+          characters: ['nobody'],
+        },
+      ],
+    });
+    const jobId = app.templates.episode({
+      brief: 'Episode 1 of a dark samurai anime. A young samurai returns to his burning village.',
+      seconds: 45,
+      narrator: 'am_onyx',
+    });
+    const job = await waitFor(() => {
+      const j = app.templates.list().find((x) => x.id === jobId);
+      return j && j.state !== 'running' && j;
+    }, 240_000);
+    expect(job.error).toBeUndefined();
+    expect(job.stage).toMatch(/5 shots, 2 spoken by characters/);
+    expect(job.title).toBe('The Last Samurai: Episode 1');
+    const { doc } = app.projects.document().state();
+    const seq = doc.sequences.find((s) => s.id === job.sequenceId)!;
+    const track = (name: string) => seq.tracks.find((t) => t.name === name)!.items;
+    // One clip per shot, edge to edge; the two dialogue shots are talking videos.
+    const v1 = track('V1');
+    expect(v1).toHaveLength(5);
+    for (let i = 1; i < v1.length; i++)
+      expect(v1[i]!.start).toBe(v1[i - 1]!.start + v1[i - 1]!.duration);
+    const kinds = v1.map((i) => app.projects.media().get(i.assetId).kind);
+    expect(kinds).toEqual(['image', 'image', 'video', 'video', 'image']);
+    // One voice track with every line, captioned.
+    expect(track('A1')).toHaveLength(1);
+    const captions = seq.tracks.find((t) => t.kind === 'caption')!.items;
+    expect(captions.flatMap((c) => c.caption!.words.map((w) => w.text)).join(' ')).toContain(
+      'Your father warned us',
+    );
+  }, 300_000);
+
   it('previews a voice as WAV', async () => {
     const wav = Buffer.from(await app.voice.preview('af_heart', 1, 'Hello there'), 'base64');
     expect(wav.subarray(0, 4).toString()).toBe('RIFF');

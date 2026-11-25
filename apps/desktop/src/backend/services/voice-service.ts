@@ -281,6 +281,21 @@ export class VoiceService {
     await this.saveSamples(list.filter((v) => v.id !== id));
   }
 
+  /**
+   * Joins pieces of voice recordings (wav, start, end in seconds) into one track with short gaps,
+   * and writes each piece alone too; returns where each piece landed (ADR-052).
+   */
+  async assemble(
+    pieces: { wav: string; start: number; end: number }[],
+    out: string,
+    slicesDir: string,
+    gap = 0.25,
+  ): Promise<{ duration: number; pieces: { start: number; end: number; wav: string }[] }> {
+    if (!this.d.sidecar) throw new Error('The AI voice needs the media-ai helper, which is off.');
+    this.d.sidecar.start();
+    return this.d.sidecar.request('audio.assemble', { pieces, out, slicesDir, gap }, 120_000);
+  }
+
   /** A short sample of a voice as base64 WAV (for the voice picker). */
   async preview(voice: string, speed: number, text?: string): Promise<string> {
     const work = await mkdtemp(join(tmpdir(), 'recit-voice-'));

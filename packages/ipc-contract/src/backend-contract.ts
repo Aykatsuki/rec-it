@@ -25,6 +25,7 @@ import {
   aiStatusSchema,
   imageStatusSchema,
   talkTestSchema,
+  episodeSchema,
   voiceIdSchema,
   voiceSampleSchema,
   storyGenreSchema,
@@ -219,6 +220,8 @@ export const backendContract = defineContract({
     /** Starts building a story Short; follow it with templates.changed. */
     'templates.story': { input: storyShortSchema, output: z.object({ jobId: z.string() }) },
     'templates.cancel': { input: z.object({ jobId: z.string() }).strict(), output: ok },
+    /** Starts an episode from a brief; follow it with templates.changed. */
+    'templates.episode': { input: episodeSchema, output: z.object({ jobId: z.string() }) },
     /** Starts one talking-character test shot; follow it with templates.changed. */
     'templates.talkTest': { input: talkTestSchema, output: z.object({ jobId: z.string() }) },
 

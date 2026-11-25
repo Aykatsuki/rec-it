@@ -80,6 +80,8 @@ Phases 0 (foundations) and 1 (media pipeline) are complete. Phase 3 (export, ADR
   `engine-install.ts`, `TemplateService.talkTest`, templates `talkingShot`/`characterPrompt`. S2V (`talking.py`, ADR-048) is parked.
   Human-like voice (ADR-051): sidecar `voicehq.py` (own uv env in `<models>/chatterbox`, `chatterbox_worker.py`, Whisper
   word timing, `RECIT_FAKE_VOICEHQ=1`), voice ids `hq:builtin`/`hq:<sample>` routed by `VoiceService`, samples in `<userData>/voices`.
+  Episodes from a brief (ADR-052): `episodePrompt`/`episodePlanSchema` (packages/ai), `normaliseEpisode`/`castVoices`/
+  `referencePrompt`/`shotPrompt` (templates), `TemplateService.episode`, sidecar `lipsync.draw` (Klein from references) and `audio.assemble`.
 - Renderer `timeline/` — Timeline, SequenceSettings, ClipInspector, ProgramMonitor, TransformOverlay, ExportDialog, CropDialog,
   `menus.tsx` (right-click menus); edits go through `edit.ts`. `ui/ContextMenu.tsx` is the generic menu.
 - `packages/db` — `node:sqlite` (ADR-020), migrations, repositories.
