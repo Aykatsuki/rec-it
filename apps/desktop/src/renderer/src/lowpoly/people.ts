@@ -9,7 +9,7 @@ import { noise, rng, shade, texture } from './textures';
 const SKIN: Record<CastMember['skin'], string> = {
   pale: '#f0d2bd',
   light: '#ebc4a2',
-  tan: '#c98f62',
+  tan: '#d6a27a',
   brown: '#8d5a3b',
   dark: '#5a3826',
 };
@@ -574,6 +574,51 @@ export class Person {
         this.elbowR.rotation.x = -2.1;
         this.head.rotation.z = 0.12;
         this.head.rotation.x = s(t * 0.9) * 0.04 - 0.05;
+        break;
+      }
+      case 'crouch': {
+        this.hips.position.y = 0.55;
+        this.hipL.rotation.x = -1.3;
+        this.hipR.rotation.x = -0.5;
+        this.kneeL.rotation.x = 1.9;
+        this.kneeR.rotation.x = 1.7;
+        this.torso.rotation.x = 0.35;
+        this.shoulderL.rotation.x = this.shoulderR.rotation.x = -0.6;
+        this.elbowL.rotation.x = this.elbowR.rotation.x = -0.9;
+        this.head.rotation.y = s(t * 1.6) * 0.45;
+        this.head.rotation.x = -0.25;
+        break;
+      }
+      case 'eat': {
+        arms(0.05, 0.05);
+        const bite = (Math.sin(t * 3) + 1) / 2;
+        this.shoulderR.rotation.x = -1.2 - bite * 0.3;
+        this.elbowR.rotation.x = -1.6 - bite * 0.4;
+        this.shoulderR.rotation.z = -0.2;
+        mouth = bite > 0.6 ? 2 : 0;
+        break;
+      }
+      case 'salute': {
+        arms(0.05, 0.05);
+        const k = Math.min(1, t / 0.4);
+        this.shoulderR.rotation.x = -1.3 * k;
+        this.shoulderR.rotation.z = 0.9 * k;
+        this.elbowR.rotation.x = -2.2 * k;
+        this.head.rotation.x = -0.05;
+        break;
+      }
+      case 'read': {
+        this.shoulderL.rotation.x = this.shoulderR.rotation.x = -1.0;
+        this.elbowL.rotation.x = this.elbowR.rotation.x = -1.0;
+        this.shoulderL.rotation.z = -0.25;
+        this.shoulderR.rotation.z = 0.25;
+        this.head.rotation.x = 0.35 + s(t * 0.8) * 0.03;
+        break;
+      }
+      case 'wave': {
+        arms(0.05, 2.5);
+        this.elbowR.rotation.z = s(t * 8) * 0.5;
+        this.head.rotation.y = 0.1;
         break;
       }
     }

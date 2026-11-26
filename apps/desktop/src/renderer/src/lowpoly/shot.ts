@@ -2,10 +2,10 @@
 // and a camera that frames the subject and moves over the shot. `update(t)` is a pure function of
 // the time into the shot, so any frame can be drawn on its own.
 import * as THREE from 'three';
-import type { CastMember, ShotSpec } from '@rec-it/lowpoly';
+import type { CastMember, Model, ShotSpec } from '@rec-it/lowpoly';
 import { YOU } from '@rec-it/lowpoly';
 import { Person } from './people';
-import { makeProp, sign, type Prop } from './props';
+import { anyProp, makeProp, sign, type Prop } from './props';
 import { flat } from './ps1';
 import { buildSet } from './sets';
 import { rng, texture } from './textures';
@@ -58,7 +58,7 @@ function povArm(c: CastMember): THREE.Group {
   );
   sleeve.position.z = -0.3;
   const skin = new THREE.MeshLambertMaterial({
-    color: { pale: '#f0d2bd', light: '#e2b48c', tan: '#c98f62', brown: '#8d5a3b', dark: '#5a3826' }[
+    color: { pale: '#f0d2bd', light: '#e2b48c', tan: '#d6a27a', brown: '#8d5a3b', dark: '#5a3826' }[
       c.skin
     ],
   });
@@ -76,6 +76,7 @@ export function buildShot(
   spec: ShotSpec,
   cast: readonly CastMember[],
   duration: number,
+  models: Record<string, Model> = {},
 ): BuiltShot {
   const r = rng(spec.seed + 11);
   const set = buildSet(spec.set, spec.seed);
@@ -141,7 +142,7 @@ export function buildShot(
   let focusProp = null as Prop | null;
   let onSign = false;
   propIds.forEach((id, i) => {
-    const p = makeProp(id as never, spec.bigText);
+    const p = anyProp(id, spec.bigText, models);
     if (id === 'sign' && spec.bigText) onSign = true;
     props.push(p);
     const o = p.object;
@@ -157,7 +158,21 @@ export function buildShot(
         } else o.position.set(0, 1.0, 0);
         o.scale.setScalar(1.6);
       } else o.position.set(0, 0, 0);
-      if (['dog', 'cat', 'cow', 'fish', 'bird', 'rat', 'plane', 'car', 'rocket'].includes(id))
+      if (
+        [
+          'dog',
+          'cat',
+          'cow',
+          'fish',
+          'bird',
+          'rat',
+          'plane',
+          'car',
+          'rocket',
+          'boat',
+          'helicopter',
+        ].includes(id)
+      )
         o.rotation.y = id === 'plane' ? 2.2 : 1.1;
       if (p.placement === 'float' && ['fish', 'bird'].includes(id)) o.position.y = 1.2;
     } else if (p.placement === 'hand' && subject && pov) {
@@ -420,11 +435,18 @@ export function buildShot(
           focus = eyes.clone().add(new THREE.Vector3(0, -0.1, 0));
           dist = 1.05;
           break;
-        case 'medium':
+        case 'medium': {
           focus = subject.point('chest').add(new THREE.Vector3(0, 0.15, 0));
           dist = 2.3;
           lift = 0.1;
+          // Two people: frame them both.
+          const other = others[0] && people.get(others[0].id);
+          if (other) {
+            focus.lerp(other.point('chest').add(new THREE.Vector3(0, 0.15, 0)), 0.5);
+            dist = 3.6;
+          }
           break;
+        }
         case 'overhead':
           focus = subject.point('body');
           dist = 6;
@@ -465,10 +487,16 @@ export function buildShot(
       lift = 1;
     }
     const move = spec.camera;
+    // Gentle moves: a push-in covers a tenth of the distance (a twentieth on faces).
+    const amount = spec.framing === 'extremeCloseUp' || spec.framing === 'closeUp' ? 0.05 : 0.1;
     const scale =
-      move === 'pushIn' ? 1.12 - 0.22 * k : move === 'pullOut' ? 0.9 + 0.22 * k : 1 - 0.04 * k;
+      move === 'pushIn'
+        ? 1 + amount / 2 - amount * k
+        : move === 'pullOut'
+          ? 1 - amount / 2 + amount * k
+          : 1 - 0.02 * k;
     let az = (subject ? facing : 0) * (spec.framing === 'wide' ? 0.5 : 1);
-    if (move === 'orbit') az += (k - 0.5) * 0.9;
+    if (move === 'orbit') az += (k - 0.5) * 0.5;
     const d = dist * scale;
     if (pov) {
       camera.position.set(0, 1.55, 1.9 - k * (move === 'pushIn' ? 0.35 : 0.1));

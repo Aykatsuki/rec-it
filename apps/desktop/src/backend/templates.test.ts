@@ -422,21 +422,32 @@ describe.skipIf(!bins || !hasUv)('story template (backend, real sidecar, fake vo
     let beatsSeen: string[] = [];
     app.ai.lowPolyBoard = async (_title, beats) => {
       beatsSeen = beats;
+      // Plain words, as a small local model answers.
       return {
-        cast: [{ id: 'doc', name: 'Doc', top: 'labcoat', topColor: 'white' }],
+        cast: [{ name: 'Doc', look: 'old scientist in a white lab coat' }],
         shots: [
-          { beat: 1, set: 'street', framing: 'extremeCloseUp', subject: 'you', action: 'shock' },
+          { beat: 1, place: 'street', who: 'you', doing: 'shocked', camera: 'extreme close-up' },
           {
             beat: 2,
-            set: 'lab',
-            framing: 'medium',
-            subject: 'doc',
-            action: 'talk',
-            speaker: 'doc',
+            place: 'laboratory',
+            who: ['Doc'],
+            doing: 'talking',
+            objects: ['time crystal'],
+            speaker: 'Doc',
           },
-          { beat: 3, set: 'void', framing: 'wide', subject: 'you', effect: 'frozen' },
+          { beat: 3, place: 'nothing', who: 'you', effect: 'frozen' },
         ],
       };
+    };
+    let modelsAsked: string[] = [];
+    app.ai.lowPolyModels = async (names) => {
+      modelsAsked = names;
+      return [
+        {
+          name: 'time crystal',
+          parts: [{ shape: 'cone', size: [0.3, 0.6, 0.3], at: [0, 0.3, 0], color: 'purple' }],
+        },
+      ];
     };
     // A stand-in renderer: the same small JPEG for every frame.
     const jpeg = join(dir, 'frame.jpg');
@@ -488,18 +499,25 @@ describe.skipIf(!bins || !hasUv)('story template (backend, real sidecar, fake vo
     ]);
     const s = spec as unknown as RenderSpec;
     expect(s.brand).toBe('Test');
-    expect(s.shots.map((x) => [x.subject, x.framing])).toEqual([
-      ['you', 'extremeCloseUp'],
-      ['doc', 'medium'],
-      ['you', 'wide'],
-      // A beat the AI skipped repeats the previous shot from closer.
-      ['you', 'closeUp'],
+    expect(s.shots.map((x) => [x.set, x.subject, x.framing])).toEqual([
+      ['street', 'you', 'extremeCloseUp'],
+      ['lab', 'doc', 'wide'],
+      ['void', 'you', 'wide'],
+      // A beat the AI skipped is read from its narration ("you") in the last place.
+      ['void', 'you', 'medium'],
     ]);
+    // The object the kit lacks was designed once and kept for the next Short.
+    expect(modelsAsked).toEqual(['time crystal']);
+    expect(s.shots[1]!.props).toEqual(['m:time_crystal']);
+    expect(s.models.time_crystal!.parts[0]!.shape).toBe('cone');
+    const media = join(dir, 'projects', 'Story test media');
+    expect(existsSync(join(media, 'lowpoly-models.json'))).toBe(true);
+    expect(readdirSync(media).some((f) => / plan\.json$/.test(f))).toBe(true);
     // Shots run edge to edge from 0, and the speaker's mouth moves.
     expect(s.shots[0]!.start).toBe(0);
     for (let i = 1; i < s.shots.length; i++) expect(s.shots[i]!.start).toBe(s.shots[i - 1]!.end);
     expect(s.shots[1]!.mouth.length).toBeGreaterThan(0);
-    expect(s.cast.map((c) => c.id).sort()).toEqual(['doc', 'you']);
+    expect(s.cast.find((c) => c.id === 'doc')).toMatchObject({ top: 'labcoat', age: 'old' });
     // The filmed video is the background, under the voice and retro captions.
     const { doc } = app.projects.document().state();
     const seq = doc.sequences.find((x) => x.id === job.sequenceId)!;

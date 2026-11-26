@@ -112,7 +112,7 @@ export async function film(spec: RenderSpec, o: FilmOptions): Promise<void> {
     for (const shot of spec.shots) {
       const [f0, f1] = shotFrames(shot, fps);
       if (f1 <= f0) continue;
-      const built = buildShot(shot, spec.cast, (f1 - f0) / fps);
+      const built = buildShot(shot, spec.cast, (f1 - f0) / fps, spec.models);
       built.camera.aspect = w / h;
       try {
         for (let f = f0; f < f1; f++) {

@@ -209,6 +209,7 @@ export class BackendApp {
       lowPoly: this.lowPoly,
       lowPolyScript: (topic, seconds) => this.ai.lowPolyScript(topic, seconds),
       lowPolyBoard: (title, beats, cast) => this.ai.lowPolyBoard(title, beats, cast),
+      lowPolyModels: (names) => this.ai.lowPolyModels(names),
       onTranscript: () => this.transcripts.changed(),
       onChange: (jobs) => this.emit('templates.changed', jobs),
     });

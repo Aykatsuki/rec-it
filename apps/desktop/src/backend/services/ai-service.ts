@@ -17,6 +17,8 @@ import {
   lowPolyBoardPrompt,
   lowPolyBoardSchema,
   lowPolyIdeasPrompt,
+  lowPolyModelsPrompt,
+  lowPolyModelsSchema,
   lowPolyIdeasSchema,
   lowPolyScriptPrompt,
   lowPolyScriptSchema,
@@ -113,6 +115,14 @@ export class AiService {
     return this.client().json(lowPolyBoardSchema, lowPolyBoardPrompt({ title, beats, cast }), {
       temperature: 0.6,
     });
+  }
+
+  /** Simple primitive-built models of things the 3D kit has no prop for (ADR-054). */
+  async lowPolyModels(names: string[]): Promise<Record<string, unknown>[]> {
+    const r = await this.client().json(lowPolyModelsSchema, lowPolyModelsPrompt(names), {
+      temperature: 0.4,
+    });
+    return r.models;
   }
 
   /** Ten ideas for low-poly Shorts in the formats that work (ADR-054). */

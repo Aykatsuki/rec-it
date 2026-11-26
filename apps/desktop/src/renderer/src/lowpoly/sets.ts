@@ -5,7 +5,7 @@ import * as THREE from 'three';
 import type { SetId } from '@rec-it/lowpoly';
 import { flat, mat } from './ps1';
 import { cloud, house, makeProp, tree } from './props';
-import { rng, shade, SURFACES, texture, type Paint } from './textures';
+import { noise, rng, shade, SURFACES, texture, type Paint } from './textures';
 
 export interface BuiltSet {
   scene: THREE.Scene;
@@ -649,6 +649,241 @@ export function buildSet(id: SetId, seed: number): BuiltSet {
         place(scene, cloud(r), (r() - 0.5) * 120, -40 - r() * 80, 0, -10 + r() * 20);
       const ground = floor(600, surface('grass:far', SURFACES.grass(), [200, 200]), -60);
       scene.add(ground);
+      break;
+    }
+    case 'jungle': {
+      day();
+      scene.fog = new THREE.Fog('#7a9a6a', 6, 45);
+      scene.add(floor(300, surface('grass:jungle', SURFACES.leaves('#3a6a2a'), [70, 70])));
+      for (let i = 0; i < 46; i++) {
+        const a = r() * Math.PI * 2,
+          d = 3 + r() * 26;
+        const x = Math.cos(a) * d,
+          z = -Math.abs(Math.sin(a) * d) + 1.5;
+        if (Math.abs(x) < 1.8 && z > -2.5) continue;
+        const t = tree(0.8 + r() * 0.9, i);
+        if (i % 3 === 0) t.children.slice(1).forEach((c) => c.scale.set(1.6, 0.35, 1.6));
+        place(scene, t, x, z, r() * 6);
+      }
+      const leaf = mat('#2f6a2a', { side: THREE.DoubleSide });
+      for (let i = 0; i < 30; i++) {
+        const fern = m(
+          new THREE.ConeGeometry(0.5 + r() * 0.4, 0.9, 5, 1, true),
+          leaf,
+          (r() - 0.5) * 14,
+          0.45,
+          -1.5 - r() * 8,
+        );
+        scene.add(fern);
+      }
+      const vine = mat('#2a4a1e');
+      for (let i = 0; i < 12; i++)
+        scene.add(
+          m(
+            new THREE.CylinderGeometry(0.02, 0.02, 4 + r() * 3, 3),
+            vine,
+            (r() - 0.5) * 12,
+            4,
+            -3 - r() * 8,
+          ),
+        );
+      break;
+    }
+    case 'island':
+    case 'ocean': {
+      indoor = false;
+      sky = skyDome('#3f8fe0', '#e2f0f8');
+      scene.add(sky);
+      scene.fog = new THREE.Fog('#d8e8f0', 40, 200);
+      lights = light(scene, {
+        sky: '#fff4dc',
+        ground: '#8ab0c0',
+        hemi: 1.6,
+        sun: '#fff0cc',
+        sunI: 2.3,
+        dir: [6, 12, 4],
+      });
+      const water = m(
+        new THREE.PlaneGeometry(500, 500, 50, 50).rotateX(-Math.PI / 2),
+        mat('#ffffff', { map: texture('water', [32, 32], SURFACES.water(), [90, 90]) }),
+        0,
+        id === 'ocean' ? 0 : -0.25,
+        0,
+      );
+      scene.add(water);
+      const tex = (water.material as THREE.MeshLambertMaterial).map!;
+      update = (t) => tex.offset.set(t * 0.02, t * 0.04);
+      if (id === 'island') {
+        const sandGeo = new THREE.CylinderGeometry(14, 18, 1, 16, 1);
+        scene.add(m(sandGeo, surface('sand', SURFACES.sand(), [8, 2]), 0, -0.5, -4));
+        for (let i = 0; i < 9; i++) {
+          const palm = tree(1 + r() * 0.4, 1);
+          palm.children.slice(1).forEach((c) => c.scale.set(1.5, 0.35, 1.5));
+          const a = r() * Math.PI - Math.PI;
+          place(
+            scene,
+            palm,
+            Math.cos(a) * (5 + r() * 6),
+            -4 + Math.sin(a) * (5 + r() * 5),
+            r() * 6,
+          );
+        }
+        for (let i = 0; i < 6; i++) place(scene, tree(1.3, i), (r() - 0.5) * 16, -12 - r() * 4);
+      } else {
+        const boat = makeProp('boat').object;
+        place(scene, boat, 0, -1.5, 0.2, 0);
+        const f = makeProp('boat');
+        place(scene, f.object, -14, -40, 1);
+      }
+      break;
+    }
+    case 'battlefield': {
+      indoor = false;
+      sky = skyDome('#6a6a6a', '#b9b2a0');
+      scene.add(sky);
+      scene.fog = new THREE.Fog('#a8a090', 12, 70);
+      lights = light(scene, {
+        sky: '#d8d0c0',
+        ground: '#4a4030',
+        hemi: 1.3,
+        sun: '#e8dcc0',
+        sunI: 1.4,
+        dir: [4, 9, 6],
+      });
+      scene.add(
+        floor(
+          300,
+          surface(
+            'mud',
+            (g, w, h, rr) => {
+              for (let y = 0; y < h; y++)
+                for (let x = 0; x < w; x++) {
+                  g.fillStyle = rr() > 0.5 ? '#5a4a34' : '#6a5a40';
+                  g.fillRect(x, y, 1, 1);
+                }
+            },
+            [70, 70],
+          ),
+        ),
+      );
+      const sack = mat('#a8925a');
+      for (let i = -4; i <= 4; i++)
+        for (let k = 0; k < 2; k++)
+          scene.add(m(B(0.9, 0.35, 0.5), sack, i * 0.95 + (k ? 0.45 : 0), 0.18 + k * 0.35, -3));
+      const wire = mat('#3a3a3a');
+      for (let i = -8; i <= 8; i++) {
+        const post = m(B(0.08, 1.1, 0.08), mat('#4a3a2a'), i * 2.2, 0.55, -9);
+        post.rotation.z = (r() - 0.5) * 0.3;
+        scene.add(
+          post,
+          m(B(2.2, 0.02, 0.02), wire, i * 2.2 + 1.1, 0.8, -9),
+          m(B(2.2, 0.02, 0.02), wire, i * 2.2 + 1.1, 0.45, -9),
+        );
+      }
+      for (let i = 0; i < 8; i++)
+        scene.add(
+          m(
+            new THREE.TorusGeometry(1 + r(), 0.25, 3, 8).rotateX(Math.PI / 2),
+            mat('#4a3a28'),
+            (r() - 0.5) * 30,
+            0.05,
+            -6 - r() * 25,
+          ),
+        );
+      for (let i = 0; i < 5; i++) {
+        const smoke = m(
+          new THREE.IcosahedronGeometry(2 + r() * 2, 0),
+          flat('#8a8580', { transparent: true, opacity: 0.35 }),
+          (r() - 0.5) * 40,
+          2 + r() * 4,
+          -20 - r() * 20,
+        );
+        scene.add(smoke);
+      }
+      for (let i = 0; i < 4; i++)
+        place(scene, tree(0.9, 0), (r() - 0.5) * 30, -15 - r() * 15)
+          .children.slice(1)
+          .forEach((c) => (c.visible = false));
+      break;
+    }
+    case 'snow': {
+      indoor = false;
+      sky = skyDome('#8fa8c8', '#e8eef4');
+      scene.add(sky);
+      scene.fog = new THREE.Fog('#dfe6ee', 10, 80);
+      lights = light(scene, {
+        sky: '#f0f4ff',
+        ground: '#c8d0dc',
+        hemi: 1.7,
+        sun: '#ffffff',
+        sunI: 1.6,
+        dir: [4, 9, 6],
+      });
+      scene.add(
+        floor(
+          300,
+          surface('snow', (g, w, h, rr) => noise(g, w, h, rr, '#eef2f6', 0.05), [60, 60]),
+        ),
+      );
+      const pine = mat('#2f4a3a');
+      const snowCap = mat('#f2f5f8');
+      for (let i = 0; i < 30; i++) {
+        const g = new THREE.Group();
+        g.add(m(new THREE.CylinderGeometry(0.12, 0.16, 1, 5), mat('#4a3424'), 0, 0.5, 0));
+        for (let k = 0; k < 3; k++)
+          g.add(
+            m(
+              new THREE.ConeGeometry(1.2 - k * 0.3, 1.4, 6),
+              k === 2 ? snowCap : pine,
+              0,
+              1.2 + k * 0.8,
+              0,
+            ),
+          );
+        const a = r() * Math.PI,
+          d = 5 + r() * 30;
+        place(scene, g, Math.cos(a) * d * (r() > 0.5 ? 1 : -1), -Math.sin(a) * d - 2, 0);
+      }
+      for (let i = 0; i < 3; i++) {
+        const mtn = m(new THREE.ConeGeometry(18, 24, 6), mat('#9aa6b4'), -40 + i * 40, 12, -90);
+        scene.add(mtn, m(new THREE.ConeGeometry(7, 9, 6), snowCap, -40 + i * 40, 19.5, -90));
+      }
+      const flakes = new THREE.Group();
+      const flake = flat('#ffffff');
+      for (let i = 0; i < 200; i++) {
+        const f = m(B(0.03, 0.03, 0.03), flake);
+        f.userData = { x: (r() - 0.5) * 12, z: (r() - 0.5) * 10, o: r() * 6 };
+        flakes.add(f);
+      }
+      scene.add(flakes);
+      update = (t) =>
+        flakes.children.forEach((f) =>
+          f.position.set(
+            f.userData.x + Math.sin(t + f.userData.o) * 0.2,
+            6 - ((t * 0.8 + f.userData.o) % 6),
+            f.userData.z,
+          ),
+        );
+      break;
+    }
+    case 'courtroom': {
+      const wood = surface('wood:court', SURFACES.wood('#6a3a22'), [6, 6]);
+      const lamp = room(scene, {
+        floor: surface('wood:courtfloor', SURFACES.wood('#8a5a34'), [10, 10]),
+        wall: surface('wallpaper:court', SURFACES.wallpaper('#b8a07a'), [6, 2]),
+        window: false,
+      });
+      indoorLights(lamp);
+      scene.add(
+        m(B(4, 1.4, 1), wood, 0, 0.7, -3.3),
+        m(B(4.2, 0.08, 1.1), mat('#4a2a1a'), 0, 1.42, -3.3),
+      );
+      scene.add(m(B(0.8, 1.6, 0.08), mat('#c9a23a'), 0, 2.2, -3.85));
+      for (let i = 0; i < 3; i++)
+        scene.add(
+          m(B(3, 0.45, 0.6), wood, (i - 1) * 0.1, 0.3, 1.8 + i * 1.2),
+          m(B(3, 0.8, 0.08), wood, 0, 0.7, 2.1 + i * 1.2),
+        );
       break;
     }
     case 'void': {

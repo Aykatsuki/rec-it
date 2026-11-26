@@ -2,7 +2,7 @@
 // painted textures. Each says how it is placed: held in the hand, standing on the ground, or
 // floating beside the subject (organs, planets, atoms: the "diagram" things).
 import * as THREE from 'three';
-import type { PropId } from '@rec-it/lowpoly';
+import type { Model, PropId } from '@rec-it/lowpoly';
 import { flat, mat } from './ps1';
 import { noise, shade, SURFACES, texture } from './textures';
 
@@ -674,6 +674,230 @@ export function makeProp(id: PropId, text = ''): Prop {
         size: 0.5,
       };
     }
+    case 'rifle': {
+      const wood = mat('#6b4a2a');
+      const metal = mat('#2e3034');
+      const g = group(
+        m(B(0.05, 0.08, 0.35), wood, 0, -0.02, -0.25),
+        m(C(0.012, 0.012, 0.6, 6), metal, 0, 0.02, 0.2).rotateX(Math.PI / 2),
+        m(B(0.04, 0.06, 0.25), metal, 0, 0.01, 0.0),
+      );
+      g.rotation.x = -0.15;
+      return { object: g, placement: 'hand', size: 1 };
+    }
+    case 'sword': {
+      const g = group(
+        m(B(0.03, 0.75, 0.008), mat('#c9ced4', { flat: false }), 0, 0.45, 0),
+        m(B(0.14, 0.02, 0.03), mat('#2a2522'), 0, 0.07, 0),
+        m(C(0.015, 0.015, 0.16, 6), mat('#3a1f1a'), 0, -0.02, 0),
+      );
+      return { object: g, placement: 'hand', size: 1 };
+    }
+    case 'paper': {
+      const sheet = mat('#ffffff', {
+        map: texture('leaflet', [16, 24], (g, w, h, r) => {
+          noise(g, w, h, r, '#efe9d6', 0.04);
+          g.fillStyle = '#3a3a3a';
+          for (let y = 3; y < h - 2; y += 3) g.fillRect(2, y, 4 + r() * (w - 6), 1);
+        }),
+        side: THREE.DoubleSide,
+      });
+      const g = new THREE.Group();
+      for (let i = 0; i < 6; i++) {
+        const leaf = m(
+          B(0.21, 0.003, 0.29),
+          sheet,
+          ((i % 3) - 1) * 0.6,
+          0.3 + i * 0.25,
+          (Math.floor(i / 3) - 0.5) * 0.6,
+        );
+        leaf.rotation.set(i * 0.7, i * 1.3, i * 0.4);
+        g.add(leaf);
+      }
+      return {
+        object: g,
+        placement: 'float',
+        size: 1.4,
+        update: (t) =>
+          g.children.forEach((c, i) => {
+            c.position.y = 2.2 - ((t * 0.5 + i * 0.37) % 2.2);
+            c.rotation.z = Math.sin(t * 3 + i) * 0.8;
+          }),
+      };
+    }
+    case 'banana': {
+      const g = new THREE.Group();
+      for (let i = 0; i < 4; i++) {
+        const b = m(
+          new THREE.TorusGeometry(0.1, 0.022, 4, 6, Math.PI * 0.7),
+          mat('#e8c83a'),
+          0,
+          0,
+          i * 0.03 - 0.045,
+        );
+        b.rotation.set(0, 0, -0.6 + i * 0.1);
+        g.add(b);
+      }
+      return { object: g, placement: 'hand', size: 0.3 };
+    }
+    case 'coconut':
+      return {
+        object: group(
+          m(I(0.1, 0), mat('#6b4a2a')),
+          m(I(0.1, 0), mat('#5a3a20'), 0.22, 0, 0.05),
+          m(I(0.1, 0), mat('#6b4a2a'), 0.1, 0, 0.2),
+        ),
+        placement: 'ground',
+        size: 0.5,
+      };
+    case 'boat': {
+      const wood = mat('#ffffff', {
+        map: texture('wood:boat', [32, 32], SURFACES.wood('#8a5a34')),
+      });
+      const g = group(
+        m(B(1.4, 0.5, 4), wood, 0, 0.25, 0),
+        m(B(1.2, 0.1, 3.6), mat('#5a3a20'), 0, 0.45, 0),
+        m(new THREE.ConeGeometry(0.7, 1, 4), wood, 0, 0.25, 2.4).rotateX(Math.PI / 2),
+        m(C(0.05, 0.05, 2.5, 5), mat('#5a3a20'), 0, 1.5, 0.3),
+        m(B(0.04, 1.6, 1.2), mat('#e8e2d0'), 0, 1.6, -0.1),
+      );
+      return {
+        object: g,
+        placement: 'big',
+        size: 4.5,
+        update: (t) => {
+          g.rotation.z = Math.sin(t * 1.3) * 0.05;
+        },
+      };
+    }
+    case 'helicopter': {
+      const body = mat('#4a5a3a');
+      const rotor = m(B(7, 0.04, 0.25), mat('#1c1c1c'), 0, 2.1, 0);
+      const g = group(
+        m(I(1.1, 0), body, 0, 1.3, 0.4),
+        m(B(0.3, 0.3, 3.5), body, 0, 1.4, -2),
+        m(B(0.06, 0.6, 0.6), body, 0, 1.6, -3.7),
+        m(B(0.06, 0.1, 2.2), mat('#2a2a2a'), -0.6, 0.15, 0.3),
+        m(B(0.06, 0.1, 2.2), mat('#2a2a2a'), 0.6, 0.15, 0.3),
+        m(I(0.6, 0), mat('#9fc6e0', { transparent: true, opacity: 0.8 }), 0, 1.4, 1.2),
+        rotor,
+      );
+      return {
+        object: g,
+        placement: 'big',
+        size: 7,
+        update: (t) => {
+          rotor.rotation.y = t * 25;
+        },
+      };
+    }
+    case 'flag': {
+      const cloth = m(
+        new THREE.PlaneGeometry(1.2, 0.8, 6, 2),
+        mat('#c0302a', { side: THREE.DoubleSide }),
+        0.6,
+        2.4,
+        0,
+      );
+      const pos = (cloth.geometry as THREE.PlaneGeometry).attributes.position!;
+      const base = Float32Array.from(pos.array as Float32Array);
+      return {
+        object: group(m(C(0.03, 0.03, 2.9, 5), mat('#c9c9c9'), 0, 1.45, 0), cloth),
+        placement: 'ground',
+        size: 3,
+        update: (t) => {
+          for (let i = 0; i < pos.count; i++)
+            pos.setZ(i, Math.sin(t * 4 + base[i * 3]! * 4) * 0.08 * (base[i * 3]! + 0.6));
+          pos.needsUpdate = true;
+        },
+      };
+    }
+    case 'tent': {
+      const canvas = mat('#7a7a4a', { side: THREE.DoubleSide });
+      const tent = m(new THREE.CylinderGeometry(0, 1.3, 1.6, 4, 1), canvas, 0, 0.8, 0);
+      tent.rotation.y = Math.PI / 4;
+      return {
+        object: group(tent, m(B(0.5, 0.8, 0.02), flat('#1c1c14'), 0, 0.4, 0.9)),
+        placement: 'big',
+        size: 2.6,
+      };
+    }
+    case 'campfire': {
+      const flames = [0, 1, 2].map((i) =>
+        m(
+          new THREE.ConeGeometry(0.15, 0.5, 5),
+          flat(i ? '#ffb030' : '#ff6a1a', { additive: true, opacity: 0.9 }),
+          (i - 1) * 0.1,
+          0.3,
+          (i % 2) * 0.08,
+        ),
+      );
+      const light = new THREE.PointLight('#ff9a40', 6, 6, 1.4);
+      light.position.y = 0.6;
+      const logs = [0, 1, 2].map((i) =>
+        m(C(0.06, 0.06, 0.6, 5), mat('#4a2e1a'), 0, 0.06, 0)
+          .rotateZ(Math.PI / 2)
+          .rotateX((i * Math.PI) / 3),
+      );
+      return {
+        object: group(...logs, ...flames, light),
+        placement: 'ground',
+        size: 1,
+        update: (t) => {
+          flames.forEach((f, i) =>
+            f.scale.set(1, 0.7 + Math.abs(Math.sin(t * 9 + i * 2)) * 0.6, 1),
+          );
+          light.intensity = 5 + Math.sin(t * 13) * 1.5;
+        },
+      };
+    }
+    case 'binoculars': {
+      const black = mat('#1c1c1e');
+      return {
+        object: group(
+          m(C(0.035, 0.04, 0.14, 8), black, -0.045, 0, 0).rotateX(Math.PI / 2),
+          m(C(0.035, 0.04, 0.14, 8), black, 0.045, 0, 0).rotateX(Math.PI / 2),
+          m(B(0.05, 0.03, 0.05), black),
+        ),
+        placement: 'hand',
+        size: 0.2,
+      };
+    }
+    case 'map': {
+      const t = texture('map', [32, 24], (g, w, h, r) => {
+        noise(g, w, h, r, '#d9c9a0', 0.05);
+        g.fillStyle = '#6a9a5a';
+        for (let i = 0; i < 5; i++) g.fillRect(r() * w, r() * h, 4 + r() * 8, 3 + r() * 6);
+        g.fillStyle = '#b8282a';
+        g.fillRect(w * 0.6, h * 0.4, 2, 2);
+      });
+      return {
+        object: group(m(B(0.42, 0.004, 0.3), mat('#ffffff', { map: t }))),
+        placement: 'hand',
+        size: 0.5,
+      };
+    }
+    case 'radio':
+      return {
+        object: group(
+          m(B(0.3, 0.2, 0.12), mat('#4a5a3a'), 0, 0.1, 0),
+          m(C(0.005, 0.005, 0.4, 4), mat('#2a2a2a'), 0.12, 0.4, 0),
+          m(B(0.1, 0.06, 0.01), mat('#1c1c1c'), -0.06, 0.12, 0.065),
+        ),
+        placement: 'hand',
+        size: 0.4,
+      };
+    case 'medal': {
+      const gold = mat('#d9b53a', { emissive: '#4a3410' });
+      return {
+        object: group(
+          m(B(0.05, 0.08, 0.005), mat('#2f4a8a'), 0, 0.06, 0),
+          m(C(0.035, 0.035, 0.008, 10), gold, 0, 0, 0).rotateX(Math.PI / 2),
+        ),
+        placement: 'hand',
+        size: 0.2,
+      };
+    }
   }
 }
 
@@ -733,4 +957,49 @@ export function cloud(r: () => number): THREE.Group {
   for (let i = 0; i < 5; i++)
     g.add(m(I(1 + r(), 0), white, (r() - 0.5) * 4, (r() - 0.5) * 0.8, (r() - 0.5) * 2));
   return g;
+}
+
+/** A model the AI designed from primitive shapes (ADR-054). */
+export function buildModel(model: Model): Prop {
+  const g = new THREE.Group();
+  for (const p of model.parts) {
+    const [w, h, d] = p.size;
+    const geo =
+      p.shape === 'box'
+        ? B(w, h, d)
+        : p.shape === 'cylinder'
+          ? C(w / 2, w / 2, h, 8)
+          : p.shape === 'cone'
+            ? new THREE.ConeGeometry(w / 2, h, 6)
+            : new THREE.IcosahedronGeometry(0.5, 1).scale(w, h, d);
+    const mesh = m(
+      geo,
+      mat('#ffffff', {
+        map: texture(`model:${p.color}`, [16, 16], (gg, ww, hh, r) =>
+          noise(gg, ww, hh, r, p.color, 0.1),
+        ),
+      }),
+      ...p.at,
+    );
+    mesh.rotation.set(...p.turn);
+    g.add(mesh);
+  }
+  const box = new THREE.Box3().setFromObject(g);
+  const size = box.getSize(new THREE.Vector3());
+  const big = Math.max(size.x, size.y, size.z);
+  return {
+    object: g,
+    placement: big > 2.5 ? 'big' : big < 0.45 ? 'hand' : 'ground',
+    size: Math.max(0.2, big),
+  };
+}
+
+/** A kit prop or an AI-designed model ("m:<id>"). */
+export function anyProp(id: string, text: string, models: Record<string, Model>): Prop {
+  if (id.startsWith('m:')) {
+    const model = models[id.slice(2)];
+    if (model) return buildModel(model);
+    return makeProp('box');
+  }
+  return makeProp(id as PropId, text);
 }

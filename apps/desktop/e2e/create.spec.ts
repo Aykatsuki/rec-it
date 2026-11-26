@@ -429,6 +429,8 @@ test.describe('create a Short', () => {
       await dialog.getByTestId('lowpoly-narrator').selectOption('am_michael');
       await dialog.getByTestId('lowpoly-brand').fill('Rec It Shorts');
       await page.screenshot({ path: test.info().outputPath('lowpoly-form.png') });
+      // The voice engine starts in the background.
+      await expect(dialog.getByTestId('lowpoly-create')).toBeEnabled({ timeout: 90_000 });
       await dialog.getByTestId('lowpoly-create').click();
       await expect(dialog).toBeHidden({ timeout: 840_000 });
       // The narration and the filmed 3D video.

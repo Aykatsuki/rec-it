@@ -3,6 +3,22 @@
 // shapes from the voice's sounds, a safe plan from whatever the AI answered). No three.js here:
 // the renderer builds the pictures (apps/desktop/src/renderer/src/lowpoly).
 import { z } from 'zod';
+import {
+  ACTION_WORDS,
+  EFFECT_WORDS,
+  EXTRA_WORDS,
+  FRAMING_WORDS,
+  PROP_WORDS,
+  ROLE_WORDS,
+  SET_WORDS,
+  TOP_WORDS,
+  firstMention,
+  mentions,
+  secondPerson,
+  wordList,
+} from './words';
+
+export * from './words';
 
 // ---- Vocabulary -------------------------------------------------------------------------------
 
@@ -27,6 +43,12 @@ export const SETS = [
   'sky',
   'farm',
   'void',
+  'jungle',
+  'island',
+  'battlefield',
+  'snow',
+  'ocean',
+  'courtroom',
 ] as const;
 export type SetId = (typeof SETS)[number];
 
@@ -58,6 +80,11 @@ export const ACTIONS = [
   'shiver',
   'celebrate',
   'think',
+  'crouch',
+  'eat',
+  'salute',
+  'read',
+  'wave',
 ] as const;
 export type Action = (typeof ACTIONS)[number];
 
@@ -127,6 +154,20 @@ export const PROPS = [
   'rat',
   'box',
   'trophy',
+  'rifle',
+  'sword',
+  'paper',
+  'banana',
+  'coconut',
+  'boat',
+  'helicopter',
+  'flag',
+  'tent',
+  'campfire',
+  'binoculars',
+  'map',
+  'radio',
+  'medal',
 ] as const;
 export type PropId = (typeof PROPS)[number];
 
@@ -184,7 +225,8 @@ export const shotSpecSchema = z.object({
   /** Other cast members in the shot. */
   others: z.array(z.string().max(24)).max(4),
   action: z.enum(ACTIONS),
-  props: z.array(z.enum(PROPS)).max(4),
+  /** Kit props, or "m:<id>" for a model the AI designed (see RenderSpec.models). */
+  props: z.array(z.string().regex(/^(?:[a-z]+|m:[a-z0-9_]{1,24})$/i)).max(4),
   effect: z.enum(EFFECTS),
   camera: z.enum(CAMERAS),
   /** Big words in the picture (a sign, a joke), at most a few words. */
@@ -197,6 +239,20 @@ export const shotSpecSchema = z.object({
 });
 export type ShotSpec = z.output<typeof shotSpecSchema>;
 
+/** One primitive of a model the AI designed: metres, y up, ground at y = 0, front towards +z. */
+export const modelPartSchema = z.object({
+  shape: z.enum(['box', 'cylinder', 'sphere', 'cone']),
+  size: z.tuple([z.number(), z.number(), z.number()]),
+  at: z.tuple([z.number(), z.number(), z.number()]),
+  turn: z.tuple([z.number(), z.number(), z.number()]).default([0, 0, 0]),
+  color: hex,
+});
+export const modelSchema = z.object({
+  name: z.string().max(40),
+  parts: z.array(modelPartSchema).min(1).max(16),
+});
+export type Model = z.output<typeof modelSchema>;
+
 export const renderSpecSchema = z.object({
   width: z.number().int().min(64).max(2160),
   height: z.number().int().min(64).max(3840),
@@ -207,6 +263,8 @@ export const renderSpecSchema = z.object({
   shots: z.array(shotSpecSchema).min(1).max(120),
   /** Channel name flashed on screen early on, like a watermark ("" for none). */
   brand: z.string().max(40).default(''),
+  /** Models the AI designed for things the kit has no prop for, by id ("m:<id>" in shots). */
+  models: z.record(z.string().regex(/^[a-z0-9_]{1,24}$/), modelSchema).default({}),
 });
 export type RenderSpec = z.output<typeof renderSpecSchema>;
 
@@ -261,9 +319,18 @@ export function splitBeats(script: string): string[] {
     const parts = text.split(/\s+(?=(?:and|but|so|because|while|until|which|that|then|or)\s)/i);
     if (parts.length > 1 && parts.every((p) => words(p).length >= MIN_BEAT))
       return parts.flatMap(cut);
+    // Split before a small joining word nearest the middle, else in half.
     const all = text.split(/\s+/);
-    const half = Math.ceil(all.length / 2);
-    return [...cut(all.slice(0, half).join(' ')), ...cut(all.slice(half).join(' '))];
+    const joins =
+      /^(?:in|on|at|with|to|from|for|after|before|until|while|and|but|so|because|which|that|who|when|where|saying)$/i;
+    let at = Math.ceil(all.length / 2);
+    let best = Infinity;
+    for (let k = MIN_BEAT; k <= all.length - MIN_BEAT; k++)
+      if (joins.test(all[k]!) && Math.abs(k - all.length / 2) < best) {
+        best = Math.abs(k - all.length / 2);
+        at = k;
+      }
+    return [...cut(all.slice(0, at).join(' ')), ...cut(all.slice(at).join(' '))];
   };
   for (const s of sentences) {
     const pieces = cut(s);
@@ -391,6 +458,17 @@ const COLOURS: Record<string, string> = {
   blonde: '#d4b46a',
   ginger: '#b5562a',
   silver: '#b8bcc0',
+  khaki: '#a8925a',
+  cream: '#e8dcc0',
+  crimson: '#8a1f24',
+  scarlet: '#b8282a',
+  violet: '#6a4a9a',
+  lime: '#7ab83a',
+  turquoise: '#3ab0a8',
+  camo: '#5a6a3a',
+  camouflage: '#5a6a3a',
+  charcoal: '#36383c',
+  ivory: '#efe8d8',
 };
 
 /** A colour from a name or "#rrggbb", or the fallback. */
@@ -439,38 +517,105 @@ function slug(s: string): string {
   );
 }
 
-/** Any AI cast member made safe to build. */
+/** The value a description asks for, from a field or from its words. */
+function fromText<T extends string>(
+  options: readonly T[],
+  field: unknown,
+  text: string,
+  table: Record<string, string>,
+  fallback: T,
+): T {
+  const exact = pick(options, field, '' as T);
+  if (exact) return exact;
+  const said =
+    (typeof field === 'string' ? firstMention(field, table) : undefined) ??
+    firstMention(text, table);
+  return (said && options.includes(said as T) ? said : fallback) as T;
+}
+
+/** Colour words in a description, in order ("olive uniform, black cap" → olive, black). */
+function colourWords(text: string): string[] {
+  return wordList(text)
+    .map((w) => colour(w, ''))
+    .filter(Boolean);
+}
+
+/**
+ * Any AI cast member made safe to build. Fields the AI left out or got wrong are read from its
+ * description instead ("an old Japanese soldier in an olive uniform and cap, thin moustache").
+ */
 export function normaliseCastMember(raw: Record<string, unknown>): CastMember {
   const name = typeof raw.name === 'string' && raw.name.trim() ? raw.name.trim() : 'Person';
   const id = slug(typeof raw.id === 'string' && raw.id.trim() ? raw.id : name);
-  const gender = pick(['male', 'female'] as const, raw.gender, 'male');
+  const text = ['look', 'description', 'appearance', 'clothes', 'outfit', 'role']
+    .map((k) => (typeof raw[k] === 'string' ? (raw[k] as string) : ''))
+    .concat(name)
+    .join(' ');
+  const ws = new Set(wordList(text));
+  const said = (...w: string[]) => w.some((x) => ws.has(x));
+  const gender =
+    pick(['male', 'female'] as const, raw.gender, '' as 'male') ||
+    (said('woman', 'girl', 'she', 'her', 'female', 'lady', 'mother', 'wife', 'queen', 'nurse')
+      ? 'female'
+      : 'male');
+  const age =
+    pick(['child', 'young', 'adult', 'old'] as const, raw.age, '' as 'adult') ||
+    (said('old', 'elderly', 'grandfather', 'grandmother', 'aged', 'grey', 'gray')
+      ? 'old'
+      : said('child', 'boy', 'girl', 'kid', 'baby', 'son', 'daughter')
+        ? 'child'
+        : said('young', 'teen', 'teenager', 'student')
+          ? 'young'
+          : 'adult');
+  const top = fromText(TOPS, raw.top, text, TOP_WORDS, 'tshirt');
+  const colours = colourWords(text);
+  const hair =
+    pick(HAIRS, raw.hair, '' as 'short') ||
+    (said('bald')
+      ? 'bald'
+      : said('ponytail')
+        ? 'ponytail'
+        : said('curly', 'afro')
+          ? 'curly'
+          : said('spiky')
+            ? 'spiky'
+            : gender === 'female' || said('long')
+              ? 'long'
+              : 'short');
+  const extra = fromText(EXTRAS, raw.extra, text, EXTRA_WORDS, 'none');
+  const soldier = top === 'uniform' && said('soldier', 'army', 'military');
   return {
     id,
     name: name.slice(0, 60),
     gender,
-    age: pick(['child', 'young', 'adult', 'old'] as const, raw.age, 'adult'),
-    skin: pick(SKINS, raw.skin, 'light'),
-    hair: pick(HAIRS, raw.hair, gender === 'female' ? 'long' : 'short'),
-    hairColor: colour(raw.hairColor, '#3a2a1e'),
-    top: pick(TOPS, raw.top, 'tshirt'),
-    topColor: colour(raw.topColor, '#4a6fa5'),
-    bottomColor: colour(raw.bottomColor, '#3a3f4a'),
-    extra: pick(EXTRAS, raw.extra, 'none'),
+    age,
+    skin: fromText(
+      SKINS,
+      raw.skin,
+      text,
+      {
+        pale: 'pale',
+        white: 'light',
+        fair: 'light',
+        tan: 'tan',
+        asian: 'tan',
+        japanese: 'tan',
+        brown: 'brown',
+        black: 'dark',
+        dark: 'dark',
+      },
+      'light',
+    ),
+    hair,
+    hairColor: colour(
+      raw.hairColor,
+      said('blonde', 'blond') ? '#d4b46a' : said('ginger', 'redhead') ? '#b5562a' : '#2a1f18',
+    ),
+    top,
+    topColor: colour(raw.topColor, colours[0] ?? (soldier ? '#6b6b3a' : '#4a6fa5')),
+    bottomColor: colour(raw.bottomColor, colours[1] ?? (soldier ? '#5a5a34' : '#3a3f4a')),
+    extra,
   };
-}
-
-export interface PlannedShot {
-  beat?: unknown;
-  set?: unknown;
-  framing?: unknown;
-  subject?: unknown;
-  others?: unknown;
-  action?: unknown;
-  props?: unknown;
-  effect?: unknown;
-  camera?: unknown;
-  bigText?: unknown;
-  speaker?: unknown;
 }
 
 /** One shot of a plan, before it has times. */
@@ -479,104 +624,356 @@ export type ShotPlan = Omit<ShotSpec, 'start' | 'end' | 'mouth' | 'seed'> & {
   speaker: string;
 };
 
+const PRONOUNS = new Set([
+  'he',
+  'him',
+  'his',
+  'she',
+  'her',
+  'they',
+  'them',
+  'i',
+  'me',
+  'we',
+  'protagonist',
+  'hero',
+  'main',
+]);
+const NOBODY = new Set(['none', 'nobody', 'no one', 'noone', 'narrator', 'nothing', '']);
+
+function texts(v: unknown): string[] {
+  if (typeof v === 'string')
+    return v
+      .split(/,|\band\b|;|\//)
+      .map((x) => x.trim())
+      .filter(Boolean);
+  if (Array.isArray(v))
+    return v
+      .flatMap((x) =>
+        typeof x === 'string'
+          ? [x.trim()]
+          : x && typeof x === 'object' && typeof (x as { name?: unknown }).name === 'string'
+            ? [(x as { name: string }).name]
+            : [],
+      )
+      .filter(Boolean);
+  return [];
+}
+
+function field(s: Record<string, unknown>, ...keys: string[]): unknown {
+  for (const k of keys) if (s[k] !== undefined && s[k] !== null && s[k] !== '') return s[k];
+  return undefined;
+}
+
+function str(v: unknown): string {
+  return typeof v === 'string'
+    ? v
+    : Array.isArray(v)
+      ? v.filter((x) => typeof x === 'string').join(' ')
+      : '';
+}
+
+/** A short id for an object the kit has no prop for ("Bamboo raft" → "bamboo_raft"). */
+export function modelId(name: string): string {
+  return slug(name.replace(/^(a|an|the|some|his|her|their)\s+/i, '')).slice(0, 24);
+}
+
+export interface PlanOptions {
+  /** Characters to keep (remembered or chosen); planned ones with the same id or name are replaced. */
+  keep?: readonly CastMember[];
+  /** The whole script (decides "you" versus a story's own hero, and default places). */
+  script?: string;
+}
+
 /**
- * Makes any AI storyboard safe to build: one shot per beat (a beat the AI skipped repeats the
- * previous set with a closer camera), every value from the vocabulary, subjects that exist, and
- * some variety (never the same framing three times running).
+ * Makes any AI storyboard safe and true to the script. The AI may answer in its own words
+ * ("place": "a dense jungle", "who": ["he"], "objects": ["leaflets", "rifle"]); words are mapped
+ * onto the kit, and whatever the AI left out is read from the beat's own narration, so each shot
+ * shows what is being said. People default to the story's hero (or "you" in a what-if), never to
+ * a stranger. Objects the kit lacks come back in `models`, to be designed. Framing follows simple
+ * film rules: a wide shot to open each new place, close-ups at most every other shot, and
+ * extreme close-ups only now and then.
  */
 export function normalisePlan(
   plan: { cast?: unknown; shots?: unknown },
-  beats: number,
-  /** Characters to keep (remembered or chosen); planned ones with the same id or name are replaced. */
-  keep: readonly CastMember[] = [YOU],
-): { cast: CastMember[]; shots: ShotPlan[] } {
-  const cast: CastMember[] = [...keep];
+  beats: readonly string[],
+  o: PlanOptions = {},
+): { cast: CastMember[]; shots: ShotPlan[]; models: { id: string; name: string }[] } {
+  const script = o.script ?? beats.join(' ');
+  const you = secondPerson(script);
+  const cast: CastMember[] = [...(o.keep ?? (you ? [YOU] : []))];
   const rawCast = Array.isArray(plan.cast) ? (plan.cast as Record<string, unknown>[]) : [];
+  const roles = new Map<string, string[]>();
   for (const raw of rawCast.slice(0, 6)) {
     if (!raw || typeof raw !== 'object') continue;
     const c = normaliseCastMember(raw);
+    roles.set(
+      c.id,
+      mentions(
+        Object.values(raw)
+          .filter((v) => typeof v === 'string')
+          .join(' '),
+        ROLE_WORDS,
+      ),
+    );
     if (cast.some((k) => k.id === c.id || k.name.toLowerCase() === c.name.toLowerCase())) continue;
+    if (c.id === 'you' && !you) continue;
     if (cast.length < 8) cast.push(c);
   }
+  // The hero: "you" in a what-if, else the AI's first character, else one read from the script.
+  let hero = you ? 'you' : (cast.find((c) => c.id !== 'you')?.id ?? '');
+  if (you && !cast.some((c) => c.id === 'you')) cast.unshift(YOU);
+  if (!hero) {
+    const ws = wordList(script);
+    const she =
+      ws.filter((w) => w === 'she' || w === 'her').length >
+      ws.filter((w) => w === 'he' || w === 'his' || w === 'him').length;
+    const h = normaliseCastMember({
+      id: 'hero',
+      name: she ? 'Her' : 'Him',
+      description: script.slice(0, 400),
+      gender: she ? 'female' : 'male',
+    });
+    cast.push(h);
+    hero = h.id;
+  }
   const ids = new Set(cast.map((c) => c.id));
-  const resolve = (v: unknown): string | null => {
-    if (typeof v !== 'string') return null;
-    const s = slug(v);
+  const person = (v: string): string | null => {
+    const t = v.trim().toLowerCase();
+    if (NOBODY.has(t)) return null;
+    const s = slug(t);
     if (ids.has(s)) return s;
-    const first = s.split('_')[0]!;
-    const byName = cast.find((c) => c.name.toLowerCase().split(/\s+/).includes(first));
-    if (byName) return byName.id;
-    const prop = pick(PROPS, v, '' as PropId);
-    if (prop) return prop;
-    if (/^(none|nothing|scene|set)$/i.test(v.trim())) return 'none';
-    return null;
+    const words = wordList(t);
+    if (words.some((w) => w === 'you' || w === 'your' || w === 'viewer')) return you ? 'you' : hero;
+    if (words.length && words.every((w) => PRONOUNS.has(w))) return hero;
+    const named = cast.find((c) => {
+      const nameWords = wordList(c.name);
+      return words.some((w) => w.length > 2 && nameWords.includes(w));
+    });
+    if (named) return named.id;
+    const role = firstMention(t, ROLE_WORDS);
+    return (role && cast.find((c) => roles.get(c.id)?.includes(role))?.id) || null;
   };
-  const raw = Array.isArray(plan.shots) ? (plan.shots as PlannedShot[]) : [];
-  const shots: ShotPlan[] = [];
-  // Shots are matched by beat number when the AI numbered them, else by position.
+  const prop = (v: string): string | null => {
+    const exact = pick(PROPS, v, '' as PropId);
+    if (exact) return exact;
+    const said = firstMention(v, PROP_WORDS);
+    return said ?? null;
+  };
+  const models = new Map<string, string>();
+  const raw = Array.isArray(plan.shots) ? (plan.shots as Record<string, unknown>[]) : [];
   const numbered = raw.some((x) => x && typeof x === 'object' && Number.isFinite(Number(x.beat)));
-  for (let i = 0; i < beats; i++) {
-    const s = numbered
+  const opening = firstMention(script, SET_WORDS) ?? 'street';
+  const shots: ShotPlan[] = [];
+  for (let i = 0; i < beats.length; i++) {
+    const beat = beats[i]!;
+    const found = numbered
       ? raw.find((x) => x && typeof x === 'object' && Number(x.beat) === i + 1)
       : raw[i] && typeof raw[i] === 'object'
         ? raw[i]
         : undefined;
+    const s: Record<string, unknown> = found ?? {};
     const prev = shots.at(-1);
-    if (!s) {
-      shots.push(
-        prev
-          ? { ...prev, framing: prev.framing === 'wide' ? 'closeUp' : 'wide', bigText: '' }
-          : {
-              set: 'street',
-              framing: 'medium',
-              subject: 'you',
-              others: [],
-              action: 'idle',
-              props: [],
-              effect: 'none',
-              camera: 'pushIn',
-              bigText: '',
-              speaker: '',
-            },
+    const place = str(field(s, 'place', 'set', 'location', 'scene', 'setting'));
+    const set =
+      pick(SETS, place, '' as SetId) ||
+      ((firstMention(place, SET_WORDS) ?? firstMention(beat, SET_WORDS)) as SetId | undefined) ||
+      prev?.set ||
+      (opening as SetId);
+
+    // People.
+    const whoRaw = texts(field(s, 'who', 'characters', 'people', 'subject', 'character'));
+    const people = [...new Set(whoRaw.map(person).filter((p): p is string => !!p))];
+    if (!people.length && !whoRaw.some((w) => NOBODY.has(w.toLowerCase()))) {
+      const ws = wordList(beat);
+      const named = cast.find((c) => wordList(c.name).some((w) => w.length > 2 && ws.includes(w)));
+      const beatRoles = mentions(beat, ROLE_WORDS);
+      const byRole = cast.find(
+        (c) => c.id !== hero && roles.get(c.id)?.some((r) => beatRoles.includes(r)),
       );
-      continue;
+      if (named) people.push(named.id);
+      else if (byRole) people.push(byRole.id);
+      else if (
+        ws.some((w) => (you ? ['you', 'your'] : ['he', 'she', 'his', 'her', 'him']).includes(w))
+      )
+        people.push(hero);
     }
-    const subject =
-      resolve(s.subject) ?? (prev?.subject && ids.has(prev.subject) ? prev.subject : 'you');
-    const others = (Array.isArray(s.others) ? s.others : [])
-      .map(resolve)
-      .filter((o): o is string => !!o && ids.has(o) && o !== subject)
-      .slice(0, 4);
-    const props = [
-      ...new Set(
-        (Array.isArray(s.props) ? s.props : [])
-          .map((p) => pick(PROPS, p, '' as PropId))
-          .filter((p): p is PropId => !!p),
-      ),
-    ].slice(0, 4);
-    const speaker = resolve(s.speaker);
+
+    // Objects: the AI's, then whatever the narration names.
+    const objectsRaw = texts(field(s, 'objects', 'props', 'things', 'items'));
+    const subjectRaw = str(field(s, 'subject'));
+    const props: string[] = [];
+    for (const name of [...(people.length ? [] : [subjectRaw]), ...objectsRaw]) {
+      if (!name || person(name)) continue;
+      const p = prop(name);
+      if (p) props.push(p);
+      else if (
+        wordList(name).length &&
+        wordList(name).length <= 4 &&
+        !firstMention(name, SET_WORDS)
+      ) {
+        const id = modelId(name);
+        if (id && id !== 'person') {
+          models.set(id, name.trim().slice(0, 40));
+          props.push(`m:${id}`);
+        }
+      }
+    }
+    for (const p of mentions(beat, PROP_WORDS)) props.push(p);
+    const uniqueProps = [...new Set(props)]
+      .filter((p) => !(set === 'space' && p === 'planet' && people.length))
+      .slice(0, 3);
+
+    const subject = people[0] ?? uniqueProps[0] ?? 'none';
+    const doing = str(field(s, 'doing', 'action', 'activity', 'pose'));
+    const speaker = person(str(field(s, 'speaker')) || '') ?? '';
+    const action =
+      pick(ACTIONS, doing, '' as Action) ||
+      ((firstMention(doing, ACTION_WORDS) ?? firstMention(beat, ACTION_WORDS)) as
+        Action | undefined) ||
+      (speaker ? 'talk' : 'idle');
+    const effectText = str(field(s, 'effect', 'effects'));
+    const effect =
+      pick(EFFECTS, effectText, '' as Effect) ||
+      ((firstMention(effectText, EFFECT_WORDS) ??
+        firstMention(`${doing} ${beat}`, EFFECT_WORDS)) as Effect | undefined) ||
+      'none';
+    const cameraText = str(field(s, 'camera', 'framing', 'shot', 'view'));
+    let framing =
+      pick(FRAMINGS, cameraText, '' as Framing) ||
+      ((firstMention(cameraText, FRAMING_WORDS) as Framing | undefined) ?? 'medium');
+    let move = pick(CAMERAS, field(s, 'move', 'motion', 'camera'), '' as CameraMove);
+
+    // Film rules.
+    const personShot = people.length > 0;
+    if (
+      !personShot &&
+      subject !== 'none' &&
+      ['extremeCloseUp', 'closeUp', 'medium', 'lowAngle'].includes(framing)
+    )
+      framing = 'object';
+    if (subject === 'none') framing = 'wide';
+    if (framing === 'pov' && !personShot) framing = 'object';
+    if (prev && set !== prev.set && personShot && !['pov', 'object', 'overhead'].includes(framing))
+      framing = 'wide';
+    if (framing === 'extremeCloseUp') {
+      const recent = shots.slice(-3).some((x) => x.framing === 'extremeCloseUp');
+      if (recent || prev?.framing === 'closeUp') framing = 'medium';
+    }
+    if (
+      framing === 'closeUp' &&
+      (prev?.framing === 'closeUp' || prev?.framing === 'extremeCloseUp')
+    )
+      framing = 'medium';
+    if (prev && shots.length >= 2 && shots.at(-2)!.framing === framing && prev.framing === framing)
+      framing = framing === 'wide' ? 'medium' : 'wide';
+    if (!move)
+      move =
+        framing === 'wide'
+          ? i % 2
+            ? 'orbit'
+            : 'pushIn'
+          : framing === 'object'
+            ? 'orbit'
+            : framing === 'extremeCloseUp' || framing === 'closeUp'
+              ? 'static'
+              : 'pushIn';
+
     shots.push({
-      set: pick(SETS, s.set, prev?.set ?? 'street'),
-      framing: pick(FRAMINGS, s.framing, 'medium'),
+      set,
+      framing,
       subject,
-      others,
-      action: pick(ACTIONS, s.action, 'idle'),
-      props,
-      effect: pick(EFFECTS, s.effect, 'none'),
-      camera: pick(CAMERAS, s.camera, 'pushIn'),
+      others: people.slice(1, 4),
+      action: action as Action,
+      props: uniqueProps.filter((p) => p !== subject),
+      effect: effect as Effect,
+      camera: move,
       bigText: typeof s.bigText === 'string' ? s.bigText.trim().slice(0, 24) : '',
       speaker: speaker && ids.has(speaker) ? speaker : '',
     });
   }
-  // Variety: never the same framing three times in a row.
-  for (let i = 2; i < shots.length; i++) {
-    const a = shots[i - 2]!.framing;
-    if (a === shots[i - 1]!.framing && a === shots[i]!.framing)
-      shots[i] = { ...shots[i]!, framing: a === 'closeUp' ? 'wide' : 'closeUp' };
-  }
-  // A cast member nobody uses is not built.
-  const used = new Set(shots.flatMap((s) => [s.subject, ...s.others, s.speaker]));
-  return { cast: cast.filter((c) => used.has(c.id)), shots };
+  const used = new Set(shots.flatMap((x) => [x.subject, ...x.others, x.speaker]));
+  const usedModels = new Set(
+    shots
+      .flatMap((x) => [x.subject, ...x.props])
+      .filter((p) => p.startsWith('m:'))
+      .map((p) => p.slice(2)),
+  );
+  return {
+    cast: cast.filter((c) => used.has(c.id)),
+    shots,
+    models: [...models]
+      .filter(([id]) => usedModels.has(id))
+      .slice(0, 8)
+      .map(([id, name]) => ({ id, name })),
+  };
+}
+
+const SHAPES: Record<string, Model['parts'][number]['shape']> = {
+  box: 'box',
+  cube: 'box',
+  block: 'box',
+  plank: 'box',
+  cylinder: 'cylinder',
+  tube: 'cylinder',
+  pipe: 'cylinder',
+  disc: 'cylinder',
+  sphere: 'sphere',
+  ball: 'sphere',
+  dome: 'sphere',
+  cone: 'cone',
+  pyramid: 'cone',
+};
+
+function triple(
+  v: unknown,
+  fallback: [number, number, number],
+  min: number,
+  max: number,
+): [number, number, number] {
+  const arr = Array.isArray(v)
+    ? v
+    : typeof v === 'number'
+      ? [v, v, v]
+      : v && typeof v === 'object'
+        ? [
+            (v as Record<string, unknown>).x,
+            (v as Record<string, unknown>).y,
+            (v as Record<string, unknown>).z,
+          ]
+        : [];
+  return [0, 1, 2].map((i) => {
+    const n = Number(arr[i]);
+    return Number.isFinite(n) ? Math.min(max, Math.max(min, n)) : fallback[i]!;
+  }) as [number, number, number];
+}
+
+/** A model the AI designed, made safe: known shapes, sane sizes, standing on the ground. */
+export function normaliseModel(raw: unknown, name: string): Model | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const parts = (
+    Array.isArray((raw as { parts?: unknown }).parts) ? (raw as { parts: unknown[] }).parts : []
+  )
+    .slice(0, 16)
+    .flatMap((p) => {
+      if (!p || typeof p !== 'object') return [];
+      const r = p as Record<string, unknown>;
+      const shape = SHAPES[String(r.shape ?? r.type ?? '').toLowerCase()] ?? 'box';
+      return [
+        {
+          shape,
+          size: triple(r.size ?? r.scale ?? r.dimensions, [0.3, 0.3, 0.3], 0.01, 30),
+          at: triple(r.at ?? r.position ?? r.pos, [0, 0.15, 0], -30, 30),
+          turn: triple(r.turn ?? r.rotation ?? r.rotate, [0, 0, 0], -7, 7),
+          color: colour(r.color ?? r.colour, '#8a8a8a'),
+        },
+      ];
+    });
+  if (!parts.length) return null;
+  // Stand it on the ground.
+  const bottom = Math.min(...parts.map((p) => p.at[1] - p.size[1] / 2));
+  for (const p of parts) p.at = [p.at[0], p.at[1] - bottom, p.at[2]];
+  return { name: name.slice(0, 40), parts };
 }
 
 /** Words per second the narration is written for (the genre talks fast). */

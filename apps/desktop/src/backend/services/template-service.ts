@@ -2,7 +2,7 @@
 // and story; a title card is drawn; both are imported into the project as ordinary media (rights
 // "Made in Rec-It"), the voice's word times become its transcript, and packages/templates builds
 // the sequence as one undoable batch of commands.
-import { mkdir } from 'node:fs/promises';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { basename, dirname, extname, join } from 'node:path';
 import { createId } from '@rec-it/core';
 import type { MediaAsset, TemplateJob } from '@rec-it/ipc-contract';
@@ -14,12 +14,14 @@ import {
 } from '@rec-it/ipc-contract';
 import {
   beatTimes,
+  modelSchema,
   mouthFrames,
+  normaliseModel,
   normalisePlan,
   renderSpecSchema,
   splitBeats,
-  YOU,
   type CastMember,
+  type Model,
   type RenderSpec,
 } from '@rec-it/lowpoly';
 import {
@@ -83,6 +85,7 @@ export interface TemplateDeps {
   lowPoly?: LowPolyService;
   lowPolyScript?: (topic: string, seconds: number) => Promise<LowPolyScript>;
   lowPolyBoard?: (title: string, beats: string[], cast: CastMember[]) => Promise<LowPolyBoard>;
+  lowPolyModels?: (names: string[]) => Promise<Record<string, unknown>[]>;
   /** Frees the graphics card (unloads Ollama's models) before the picture engine runs. */
   releaseGpu?: () => Promise<unknown>;
   /** A transcript was stored outside transcription (the voiceover's). */
@@ -580,8 +583,20 @@ export class TemplateService {
 
       // 3. The storyboard: one shot per beat, from the kit's vocabulary.
       this.update(id, { stage: 'Planning the shots…', progress: 0.2 });
-      const board = await this.d.lowPolyBoard!(title, beats, [YOU]);
-      const plan = normalisePlan(board, beats.length, [YOU]);
+      const board = await this.d.lowPolyBoard!(title, beats, []);
+      const plan = normalisePlan(board, beats, { script: text });
+      check();
+
+      // 3b. Things the kit has no prop for are designed by the AI from simple shapes, once per
+      // project (kept in "<project> media/lowpoly-models.json").
+      const models = await this.lowPolyModels(folder, plan.models, (stage) =>
+        this.update(id, { stage }),
+      );
+      const has = (p: string) => !p.startsWith('m:') || !!models[p.slice(2)];
+      for (const sh of plan.shots) {
+        sh.props = sh.props.filter(has);
+        if (!has(sh.subject)) sh.subject = sh.props[0] ?? 'none';
+      }
       check();
 
       // 4. Film it in the renderer, frame by frame.
@@ -594,6 +609,11 @@ export class TemplateService {
         pixelHeight: { chunky: 320, classic: 480, clean: 720 }[input.pixels],
         cast: plan.cast,
         brand: input.brand,
+        models: Object.fromEntries(
+          Object.entries(models).filter(([m]) =>
+            plan.shots.some((sh) => sh.subject === `m:${m}` || sh.props.includes(`m:${m}`)),
+          ),
+        ),
         shots: plan.shots.map((sh, i) => {
           const start = times[i]!.start;
           const end = i + 1 < times.length ? times[i + 1]!.start : length;
@@ -608,6 +628,22 @@ export class TemplateService {
       });
       this.update(id, { stage: `Filming ${spec.shots.length} shots in 3D…`, progress: 0.22 });
       const videoPath = join(folder, `3d ${stamp}.mp4`);
+      // The plan next to the film: what the AI answered and what was built from it.
+      await writeFile(
+        join(folder, `3d ${stamp} plan.json`),
+        JSON.stringify(
+          {
+            title,
+            beats,
+            board,
+            cast: plan.cast,
+            shots: spec.shots.map(({ mouth: _m, ...sh }) => sh),
+            models: Object.keys(spec.models),
+          },
+          null,
+          2,
+        ),
+      ).catch(() => undefined);
       await this.d.lowPoly!.render(spec, videoPath, {
         signal,
         onProgress: (p) =>
@@ -698,6 +734,46 @@ export class TemplateService {
         this.update(id, { state: 'cancelled', stage: 'Cancelled' });
       else this.update(id, { state: 'failed', stage: 'Failed', error: message });
     }
+  }
+
+  /** Designs (or reuses) primitive models for objects the 3D kit lacks; missing ones are skipped. */
+  private async lowPolyModels(
+    folder: string,
+    wanted: { id: string; name: string }[],
+    stage: (s: string) => void,
+  ): Promise<Record<string, Model>> {
+    const file = join(folder, 'lowpoly-models.json');
+    const cache: Record<string, Model> = {};
+    try {
+      const raw = JSON.parse(await readFile(file, 'utf8')) as Record<string, unknown>;
+      for (const [k, v] of Object.entries(raw)) {
+        const m = modelSchema.safeParse(v);
+        if (m.success) cache[k] = m.data;
+      }
+    } catch {
+      // No models yet.
+    }
+    const missing = wanted.filter((w) => !cache[w.id]);
+    if (missing.length && this.d.lowPolyModels) {
+      stage(
+        `Building ${missing.length === 1 ? 'a 3D model' : `${missing.length} 3D models`}: ${missing.map((m) => m.name).join(', ')}…`,
+      );
+      try {
+        const answer = await this.d.lowPolyModels(missing.map((m) => m.name));
+        missing.forEach((w, i) => {
+          const named = answer.find(
+            (a) =>
+              typeof a.name === 'string' && a.name.trim().toLowerCase() === w.name.toLowerCase(),
+          );
+          const m = normaliseModel(named ?? answer[i], w.name);
+          if (m) cache[w.id] = m;
+        });
+        await writeFile(file, JSON.stringify(cache, null, 2)).catch(() => undefined);
+      } catch {
+        // Without the models the shots simply leave those things out.
+      }
+    }
+    return Object.fromEntries(wanted.filter((w) => cache[w.id]).map((w) => [w.id, cache[w.id]!]));
   }
 
   /** The project's remembered characters, for the Make a Short dialog. */

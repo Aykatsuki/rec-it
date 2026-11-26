@@ -2,20 +2,7 @@
 // short, concrete instructions best, and every token counts with a paid key.
 import { z } from 'zod';
 import type { ChatMessage } from './index';
-import {
-  ACTIONS,
-  CAMERAS,
-  EFFECTS,
-  EXTRAS,
-  FRAMINGS,
-  HAIRS,
-  PROPS,
-  SETS,
-  SKINS,
-  TOPS,
-  WORDS_PER_SECOND as FAST_WORDS_PER_SECOND,
-  type CastMember,
-} from '@rec-it/lowpoly';
+import { WORDS_PER_SECOND as FAST_WORDS_PER_SECOND, type CastMember } from '@rec-it/lowpoly';
 
 /** Spoken words per second for a story narrator at normal speed. */
 export const WORDS_PER_SECOND = 2.6;
@@ -386,32 +373,53 @@ export const lowPolyBoardSchema = z.object({
 });
 export type LowPolyBoard = z.output<typeof lowPolyBoardSchema>;
 
-/** Turns numbered beats of narration into low-poly 3D shots built from the kit's vocabulary. */
+/**
+ * Turns numbered beats of narration into low-poly 3D shots. The AI answers in plain words
+ * (small local models do that far better than picking from long lists); @rec-it/lowpoly maps the
+ * words onto the 3D kit and reads anything missing from the narration itself.
+ */
 export function lowPolyBoardPrompt(o: {
   title: string;
   beats: readonly string[];
-  /** Characters that already exist (kept exactly; reuse their ids). */
+  /** Characters that already exist (kept exactly; reuse their names). */
   cast: readonly CastMember[];
 }): ChatMessage[] {
-  const list = (xs: readonly string[]) => xs.join(', ');
   return [
     {
       role: 'system',
       content:
-        'You storyboard a vertical low-poly 3D Short (PlayStation 1 look). Each numbered beat of narration becomes exactly one shot; reply with one shot per beat, in order, with "beat" set to its number. ' +
-        'Show the literal thing being said, simply: one clear subject per shot. Cut between extreme close-ups of a face or eye, wide shots of the place, first-person hands (framing "pov") and close-ups of one object. Never use the same framing three times in a row. ' +
-        'The viewer "you" is the cast member with id "you". Invisible or extreme things use an effect: light into the eyes = beam, energy or a soul = silhouette or glow, seeing bones = xray, stopped time = frozen, illness = sick, death or nothing = darkness. ' +
-        'Use "bigText" (at most 3 words) only for a joke or a sign, otherwise leave it empty. Set "speaker" only when a cast member says the line out loud. ' +
-        `Choose values ONLY from these lists. set: ${list(SETS)}. framing: ${list(FRAMINGS)}. action: ${list(ACTIONS)}. effect: ${list(EFFECTS)}. camera: ${list(CAMERAS)}. props (0 to 3): ${list(PROPS)}. ` +
-        '"subject" is a cast id or one prop (for an object close-up); "others" lists other cast ids in the shot. ' +
-        `Add every other person who appears to "cast" with: id, name, gender (male/female), age (child/young/adult/old), skin (${list(SKINS)}), hair (${list(HAIRS)}), hairColor, top (${list(TOPS)}), topColor, bottomColor, extra (${list(EXTRAS)}). Colours are simple names or #rrggbb. ` +
-        `Existing cast (reuse these ids, do not redescribe them): ${o.cast.map((c) => `${c.id} (${c.name})`).join(', ') || 'none'}. ` +
-        'Reply with JSON only: {"cast": [{"id": "doctor", "name": "Doctor", "gender": "female", "age": "adult", "skin": "brown", "hair": "ponytail", "hairColor": "black", "top": "labcoat", "topColor": "white", "bottomColor": "navy", "extra": "glasses"}], ' +
-        '"shots": [{"beat": 1, "set": "street", "framing": "extremeCloseUp", "subject": "you", "others": [], "action": "shock", "props": [], "effect": "none", "camera": "pushIn", "bigText": "", "speaker": ""}]}.',
+        'You storyboard a vertical low-poly 3D Short (PlayStation 1 look). Each numbered line of narration gets exactly ONE shot that shows literally what that line says. Reply with one shot per line, in order, with "beat" set to the line number. ' +
+        'For each shot give, in a few plain words: "place" (where it happens: jungle, island, street, kitchen, hospital, lab, space, battlefield, ocean, snow, office, prison, bank, farm, desert, beach, classroom, courtroom, city…), ' +
+        '"who" (the names of the people in the picture, or "nobody"), "doing" (what they do: walking, hiding, eating, saluting, running, falling, talking, sleeping, reading, waving, shocked…), ' +
+        '"objects" (up to 3 things that must be visible, named simply: "rifle", "leaflets", "plane", "bananas", "brain"…), ' +
+        '"camera" (wide, medium, close-up, extreme close-up, overhead, low angle, first person or object close-up), and optionally "effect" (glow, light beam, x-ray, frozen, darkness, explosion, fire, rain, ghost, sick, spotlight) and "bigText" (at most 3 words, only for a joke or a sign). ' +
+        'Rules: keep the story\'s own people (the narration\'s "he" or "she" is the main character; "you" is the viewer); open each new place with a wide shot; use close-ups only when a face matters, and never more than two in a row. ' +
+        'Describe every person once in "cast" with "name" and "look": gender, age, skin, hair and clothes with colours (for example "young Japanese man, short black hair, olive army uniform and cap"). ' +
+        `Existing cast (reuse these names): ${o.cast.map((c) => c.name).join(', ') || 'none'}. ` +
+        'Reply with JSON only: {"cast": [{"name": "...", "look": "..."}], "shots": [{"beat": 1, "place": "...", "who": ["..."], "doing": "...", "objects": ["..."], "camera": "wide", "effect": "", "bigText": ""}]}.',
     },
     {
       role: 'user',
       content: `Title: ${o.title}\n\n${o.beats.map((b, i) => `${i + 1}. ${b}`).join('\n')}`,
     },
+  ];
+}
+
+export const lowPolyModelsSchema = z.object({
+  models: z.array(z.record(z.string(), z.unknown())).catch([]).default([]),
+});
+
+/** Asks for simple low-poly models, built from primitives, of things the 3D kit has no prop for. */
+export function lowPolyModelsPrompt(names: readonly string[]): ChatMessage[] {
+  return [
+    {
+      role: 'system',
+      content:
+        'You design very simple low-poly 3D models for a PlayStation 1 style video, built only from primitive shapes. ' +
+        'For each requested object use 3 to 10 parts. Each part has "shape" (box, cylinder, sphere or cone), "size" [width, height, depth] in metres, "at" [x, y, z] its centre in metres (y is up, the ground is y = 0, the front faces +z), optional "turn" [x, y, z] in radians, and "color" as #rrggbb. ' +
+        'Use real-world sizes (a hut is about 3 m tall, a leaflet 0.2 m, a banana 0.2 m) and colours that make the object recognisable. ' +
+        'Reply with JSON only: {"models": [{"name": "bamboo hut", "parts": [{"shape": "box", "size": [3, 2, 3], "at": [0, 1, 0], "color": "#b8925a"}, {"shape": "cone", "size": [4.2, 1.5, 4.2], "at": [0, 2.75, 0], "color": "#8a7a3a"}]}]}.',
+    },
+    { role: 'user', content: names.join('\n') },
   ];
 }

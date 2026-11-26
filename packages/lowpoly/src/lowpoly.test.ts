@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   beatTimes,
+  normaliseModel,
   colour,
   mouthFrames,
   normalisePlan,
@@ -57,27 +58,32 @@ describe('mouth', () => {
   });
 });
 
+const ONODA = `In 1944, a Japanese soldier was sent to a tiny island in the Philippines with one order: never surrender. So he hid in the jungle and kept fighting. A year later, the war ended. Nobody told him. People dropped leaflets from planes saying the war was over. He decided they were fake. He lived on bananas and coconuts, patched his own uniform, and kept his rifle clean for decades. It took his old commander flying to the island in 1974 to finally give him the order to stop.`;
+
 describe('plans', () => {
-  it('makes any storyboard safe: vocabulary, subjects, one shot per beat, variety', () => {
+  it('makes a what-if storyboard safe: vocabulary, "you", one shot per beat, film rules', () => {
+    const beats = [
+      'If you stop time, you go blind.',
+      'Your doctor would be amazed.',
+      'You reach for a cup.',
+      'So you would be rich.',
+    ];
     const p = normalisePlan(
       {
-        cast: [
-          { id: 'Dr Bob', name: 'Dr Bob', top: 'lab coat', topColor: 'white', hair: 'bald' },
-          { id: 'you', name: 'You', top: 'suit' }, // "you" is kept as given
-        ],
+        cast: [{ id: 'Dr Bob', name: 'Dr Bob', top: 'lab coat', topColor: 'white', hair: 'bald' }],
         shots: [
           { beat: 1, set: 'Living room', framing: 'close up', subject: 'you', action: 'SHOCK' },
+          { beat: 2, set: 'moon base', framing: 'closeUp', subject: 'bob', props: ['Brain'] },
           {
-            beat: 2,
-            set: 'moon base',
-            framing: 'closeUp',
-            subject: 'bob',
-            props: ['Brain', 'laser gun'],
+            beat: 4,
+            framing: 'extremeCloseUp',
+            subject: 'you',
+            effect: 'glow',
+            bigText: 'IM RICH',
           },
-          { beat: 4, framing: 'closeUp', subject: 'brain', effect: 'glow', bigText: 'IM RICH' },
         ],
       },
-      4,
+      beats,
     );
     expect(p.cast.map((c) => [c.id, c.top])).toEqual([
       ['you', 'jacket'],
@@ -85,14 +91,123 @@ describe('plans', () => {
     ]);
     expect(p.cast[1]!.topColor).toBe('#e8e6e0');
     expect(p.shots).toHaveLength(4);
-    expect(p.shots[0]).toMatchObject({ set: 'livingRoom', framing: 'closeUp', action: 'shock' });
-    // Unknown set keeps the last one; "bob" is Dr Bob; unknown props are dropped.
-    expect(p.shots[1]).toMatchObject({ set: 'livingRoom', subject: 'dr_bob', props: ['brain'] });
-    // A skipped beat repeats the previous shot from another distance.
-    expect(p.shots[2]!.subject).toBe('dr_bob');
-    // Never three close-ups in a row.
-    expect(p.shots[2]!.framing).toBe('wide');
-    expect(p.shots[3]).toMatchObject({ subject: 'brain', effect: 'glow', bigText: 'IM RICH' });
+    expect(p.shots[0]).toMatchObject({
+      set: 'livingRoom',
+      framing: 'closeUp',
+      action: 'shock',
+      effect: 'darkness',
+      props: [],
+    });
+    // "moon base" is space; a new place opens wide; "bob" is Dr Bob.
+    expect(p.shots[1]).toMatchObject({
+      set: 'space',
+      subject: 'dr_bob',
+      props: ['brain'],
+      framing: 'wide',
+    });
+    // A beat the AI skipped is read from its narration: you, reaching, a cup.
+    expect(p.shots[2]).toMatchObject({ subject: 'you', action: 'point', props: ['cup'] });
+    expect(p.shots[3]).toMatchObject({
+      subject: 'you',
+      effect: 'glow',
+      bigText: 'IM RICH',
+      framing: 'extremeCloseUp',
+    });
+  });
+
+  it('follows a true story told in its own words: the hero, places, objects, new models', () => {
+    const beats = splitBeats(ONODA);
+    // What a small local model tends to answer: free words, missing fields, skipped beats.
+    const answer = {
+      cast: [
+        { name: 'Hiroo Onoda', description: 'young Japanese soldier, olive uniform and cap' },
+        { name: 'Major Taniguchi', look: 'old officer in a khaki uniform with glasses' },
+      ],
+      shots: [
+        {
+          beat: 1,
+          place: 'a tropical island',
+          who: ['Hiroo Onoda'],
+          doing: 'salutes',
+          camera: 'wide',
+        },
+        { beat: 2, place: 'dense jungle', who: 'he', doing: 'hiding behind trees' },
+        {
+          beat: 5,
+          place: 'jungle',
+          who: 'nobody',
+          objects: ['leaflets', 'plane'],
+          camera: 'wide shot',
+        },
+        {
+          beat: 8,
+          who: ['Onoda'],
+          objects: ['bananas', 'coconuts', 'bamboo hut'],
+          doing: 'eating',
+        },
+      ],
+    };
+    const p = normalisePlan(answer, beats, { script: ONODA });
+    const onoda = p.cast.find((c) => c.id === 'hiroo_onoda')!;
+    expect(onoda).toMatchObject({
+      top: 'uniform',
+      topColor: '#6b6b3a',
+      extra: 'cap',
+      skin: 'tan',
+      age: 'young',
+    });
+    expect(p.cast.find((c) => c.id === 'major_taniguchi')).toMatchObject({
+      age: 'old',
+      extra: 'glasses',
+      top: 'uniform',
+      topColor: '#a8925a',
+    });
+    // Never the red-jacket "you": this story is about him.
+    expect(p.cast.some((c) => c.id === 'you')).toBe(false);
+    expect(p.shots[0]).toMatchObject({
+      set: 'island',
+      subject: 'hiroo_onoda',
+      action: 'salute',
+      framing: 'wide',
+    });
+    expect(p.shots[1]).toMatchObject({ set: 'jungle', subject: 'hiroo_onoda', action: 'crouch' });
+    const leaflets = p.shots.find((s) => s.props.includes('plane'))!;
+    expect(leaflets).toMatchObject({ set: 'jungle', subject: 'paper', props: ['plane'] });
+    const food = p.shots.find((s) => s.action === 'eat')!;
+    expect(food.props).toEqual(['banana', 'coconut', 'm:bamboo_hut']);
+    expect(p.models).toEqual([{ id: 'bamboo_hut', name: 'bamboo hut' }]);
+    // The rifle and uniform beat shows the rifle even though the AI skipped that beat.
+    expect(p.shots.some((s) => s.props.includes('rifle'))).toBe(true);
+    // "His old commander flying to the island": read from the narration alone, found by his role.
+    expect(p.shots[9]).toMatchObject({
+      set: 'island',
+      subject: 'major_taniguchi',
+      framing: 'wide',
+    });
+    expect(p.shots[9]!.action).not.toBe('float');
+    // Close-ups never pile up.
+    for (let i = 1; i < p.shots.length; i++)
+      expect(
+        ['closeUp', 'extremeCloseUp'].includes(p.shots[i]!.framing) &&
+          ['closeUp', 'extremeCloseUp'].includes(p.shots[i - 1]!.framing),
+      ).toBe(false);
+  });
+
+  it('makes AI-designed models safe and stands them on the ground', () => {
+    const m = normaliseModel(
+      {
+        parts: [
+          { shape: 'cube', size: [2, 1, 2], position: [0, -1, 0], color: 'brown' },
+          { type: 'pyramid', scale: 1.5, pos: { x: 0, y: 0.2, z: 0 }, colour: 'green' },
+          'junk',
+        ],
+      },
+      'bamboo hut',
+    )!;
+    expect(m.parts.map((x) => x.shape)).toEqual(['box', 'cone']);
+    expect(m.parts[0]!.at[1]).toBeCloseTo(0.5);
+    expect(m.parts[1]!.color).toBe('#3f7a3a');
+    expect(normaliseModel({ parts: [] }, 'x')).toBeNull();
   });
 
   it('reads colours by name or hex', () => {
