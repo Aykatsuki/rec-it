@@ -14,7 +14,16 @@ import {
   writeStoryPrompt,
   type FetchLike,
   type StoryGenre,
+  lowPolyBoardPrompt,
+  lowPolyBoardSchema,
+  lowPolyIdeasPrompt,
+  lowPolyIdeasSchema,
+  lowPolyScriptPrompt,
+  lowPolyScriptSchema,
+  type LowPolyBoard,
+  type LowPolyScript,
 } from '@rec-it/ai';
+import type { CastMember } from '@rec-it/lowpoly';
 import type { AiStatus, Settings } from '@rec-it/ipc-contract';
 
 export interface AiDeps {
@@ -90,6 +99,28 @@ export class AiService {
     return this.client().json(episodePlanSchema, episodePrompt({ brief, seconds, ...extra }), {
       temperature: 0.7,
     });
+  }
+
+  /** A low-poly 3D Short's script in the genre's style (ADR-054). */
+  lowPolyScript(topic: string, seconds: number): Promise<LowPolyScript> {
+    return this.client().json(lowPolyScriptSchema, lowPolyScriptPrompt({ topic, seconds }), {
+      temperature: 0.8,
+    });
+  }
+
+  /** The storyboard of a low-poly 3D Short: one shot per beat (ADR-054). */
+  lowPolyBoard(title: string, beats: string[], cast: CastMember[]): Promise<LowPolyBoard> {
+    return this.client().json(lowPolyBoardSchema, lowPolyBoardPrompt({ title, beats, cast }), {
+      temperature: 0.6,
+    });
+  }
+
+  /** Ten ideas for low-poly Shorts in the formats that work (ADR-054). */
+  async lowPolyIdeas(theme: string): Promise<{ title: string; premise: string }[]> {
+    const r = await this.client().json(lowPolyIdeasSchema, lowPolyIdeasPrompt(theme), {
+      temperature: 0.9,
+    });
+    return r.ideas;
   }
 
   /** Unloads local models so the picture engine has the graphics card (ADR-047). */

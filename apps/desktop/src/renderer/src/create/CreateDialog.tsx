@@ -3,6 +3,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   BookOpen,
+  Box,
+  Lightbulb,
   Clapperboard,
   MessagesSquare,
   Play,
@@ -36,7 +38,7 @@ import { useApp } from '../store';
 const useCreateDialog = create<{ open: boolean }>(() => ({ open: false }));
 export const openCreateDialog = () => useCreateDialog.setState({ open: true });
 
-type TemplateId = 'episode' | 'story' | 'characters' | 'texts' | 'split' | 'clips';
+type TemplateId = 'episode' | 'lowpoly' | 'story' | 'characters' | 'texts' | 'split' | 'clips';
 const TEMPLATES: {
   id: TemplateId;
   title: string;
@@ -49,6 +51,13 @@ const TEMPLATES: {
     title: 'Episode from a brief',
     text: 'Paste a brief (style, story, dialogue): the AI plans the shots; characters stay the same and speak their lines.',
     icon: <Clapperboard size={18} />,
+    ready: true,
+  },
+  {
+    id: 'lowpoly',
+    title: 'Low-poly 3D story',
+    text: 'Strange true stories and what-ifs in retro PS1-style 3D: the AI writes, storyboards and films it on this PC.',
+    icon: <Box size={18} />,
     ready: true,
   },
   {
@@ -130,6 +139,7 @@ function CreateBody({ onDone }: { onDone: () => void }) {
         ) : (
           <>
             {template === 'episode' && <EpisodeForm onDone={onDone} />}
+            {template === 'lowpoly' && <LowPolyForm onDone={onDone} />}
             {template === 'story' && <StoryForm onDone={onDone} />}
             {template === 'characters' && <CharactersForm onDone={onDone} />}
           </>
@@ -980,6 +990,250 @@ function VoicePicker(p: { value: string; onChange: (voice: string) => void; test
       )}
       {error && <div className="create__error">{error}</div>}
     </>
+  );
+}
+
+/**
+ * Low-poly 3D story (ADR-054): a topic (or your script) becomes a narrated PS1-style 3D Short.
+ * The AI writes in the genre's style, storyboards one shot per clause from the 3D kit, and the
+ * renderer films it; captions, voice and music are ordinary clips afterwards.
+ */
+function LowPolyForm({ onDone }: { onDone: () => void }) {
+  const assets = useApp((s) => s.assets);
+  const voiceStatus = useApp((s) => s.voice);
+  const voiceHq = useApp((s) => s.voiceHq);
+  const jobs = useApp((s) => s.templateJobs);
+  const [topic, setTopic] = useState('');
+  const [script, setScript] = useState('');
+  const [seconds, setSeconds] = useState(40);
+  const [speed, setSpeed] = useState(1.1);
+  const [narrator, setNarrator] = useState<string>(() =>
+    useApp.getState().voiceHq?.available ? 'hq:k-am_michael' : 'am_michael',
+  );
+  const [brand, setBrand] = useState('');
+  const [pixels, setPixels] = useState<'chunky' | 'classic' | 'clean'>('classic');
+  const [music, setMusic] = useState('');
+  const [ideas, setIdeas] = useState<{ title: string; premise: string }[]>([]);
+  const [thinking, setThinking] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [jobId, setJobId] = useState<string | null>(null);
+  const job = jobs.find((j) => j.id === jobId);
+  const running = job?.state === 'running';
+  const sounds = assets.filter(
+    (a) =>
+      a.status === 'ready' &&
+      a.rights.source !== 'made-in-rec-it' &&
+      (a.kind === 'audio' || (a.kind === 'video' && a.probe?.audioStreamCount)),
+  );
+
+  useEffect(() => {
+    if (job?.state === 'done') {
+      useApp.setState({
+        selectedAssetId: null,
+        selectedItemIds: [],
+        monitor: 'program',
+        playhead: 0,
+        playing: false,
+      });
+      notify(job.stage, 'info');
+      onDone();
+    }
+  }, [job?.state, job?.stage, onDone]);
+
+  const ready =
+    voiceStatus?.available === true && (!narrator.startsWith('hq:') || !!voiceHq?.available);
+  const canStart = ready && (topic.trim().length >= 3 || script.trim().length >= 10) && !running;
+
+  const suggest = async () => {
+    setError(null);
+    setThinking(true);
+    try {
+      setIdeas(await backend.invoke('lowpoly.ideas', { theme: topic.slice(0, 300) }));
+    } catch (e) {
+      setError(message(e));
+    } finally {
+      setThinking(false);
+    }
+  };
+
+  const start = async () => {
+    setError(null);
+    try {
+      const r = await backend.invoke('templates.lowPoly', {
+        topic,
+        script,
+        seconds,
+        narrator,
+        speed,
+        brand,
+        pixels,
+        musicAssetId: music || null,
+      });
+      setJobId(r.jobId);
+    } catch (e) {
+      setError(message(e));
+    }
+  };
+
+  return (
+    <form
+      className="create__story"
+      onSubmit={(e) => {
+        e.preventDefault();
+        if (canStart) void start();
+      }}
+    >
+      <section className="create__section">
+        <h3>Topic</h3>
+        <p className="create__hint">
+          A strange true story, a body or science fact, or a what-if. The AI writes it the way the
+          big low-poly channels do: no intro, the premise in the first words, short clauses, a
+          twist, and a joke or a loop at the end. Each clause becomes one 3D shot.
+        </p>
+        <label>
+          <textarea
+            className="ui-input create__text"
+            value={topic}
+            rows={3}
+            placeholder="e.g. Why stopping time is a bad idea"
+            onChange={(e) => setTopic(e.target.value)}
+            data-testid="lowpoly-topic"
+          />
+        </label>
+        <div className="create__row">
+          <Button
+            size="sm"
+            variant="ghost"
+            icon={<Lightbulb size={14} />}
+            disabled={thinking}
+            onClick={() => void suggest()}
+            data-testid="lowpoly-ideas"
+          >
+            {thinking ? 'Thinking…' : 'Suggest ideas'}
+          </Button>
+        </div>
+        {ideas.length > 0 && (
+          <ul className="create__ideas" data-testid="lowpoly-idea-list">
+            {ideas.map((i) => (
+              <li key={i.title}>
+                <button
+                  type="button"
+                  className="create__idea"
+                  onClick={() => setTopic(`${i.title}. ${i.premise}`.trim())}
+                >
+                  <strong>{i.title}</strong>
+                  {i.premise && <small>{i.premise}</small>}
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
+        <label>
+          Script (optional, spoken exactly as written)
+          <textarea
+            className="ui-input create__text"
+            value={script}
+            rows={5}
+            placeholder="If you could stop time with the snap of your fingers, you would instantly go blind…"
+            onChange={(e) => setScript(e.target.value)}
+            data-testid="lowpoly-script"
+          />
+        </label>
+        <div className="create__row">
+          <label className="create__grow">
+            Length: about {seconds} s{script.trim() ? ' (follows the script)' : ''}
+            <input
+              type="range"
+              min={20}
+              max={75}
+              step={5}
+              value={seconds}
+              onChange={(e) => setSeconds(Number(e.target.value))}
+            />
+          </label>
+          <label className="create__grow">
+            Pace: {speed.toFixed(2)}×
+            <input
+              type="range"
+              min={0.9}
+              max={1.3}
+              step={0.05}
+              value={speed}
+              onChange={(e) => setSpeed(Number(e.target.value))}
+            />
+          </label>
+        </div>
+        <label>
+          Narrator
+          <VoicePicker value={narrator} onChange={setNarrator} testId="lowpoly-narrator" />
+        </label>
+        <div className="create__row">
+          <label className="create__grow">
+            Channel name on screen (optional)
+            <input
+              className="ui-input"
+              value={brand}
+              maxLength={40}
+              placeholder="e.g. Low Poly Facts"
+              onChange={(e) => setBrand(e.target.value)}
+              data-testid="lowpoly-brand"
+            />
+          </label>
+          <label className="create__grow">
+            Pixels
+            <select
+              className="ui-input"
+              value={pixels}
+              onChange={(e) => setPixels(e.target.value as typeof pixels)}
+            >
+              <option value="chunky">Chunky (PS1, 320 lines)</option>
+              <option value="classic">Classic (480 lines)</option>
+              <option value="clean">Clean (720 lines)</option>
+            </select>
+          </label>
+        </div>
+        <label>
+          Music (optional; chiptune suits the style)
+          <select className="ui-input" value={music} onChange={(e) => setMusic(e.target.value)}>
+            <option value="">None</option>
+            {sounds.map((v) => (
+              <option key={v.id} value={v.id}>
+                {v.name}
+              </option>
+            ))}
+          </select>
+        </label>
+      </section>
+      {error && (
+        <div className="create__error" role="alert">
+          {error}
+        </div>
+      )}
+      {job && job.state !== 'done' && (
+        <div className="create__progress" data-testid="lowpoly-progress">
+          <span>{job.state === 'failed' ? `Failed: ${job.error}` : job.stage}</span>
+          {running && (
+            <>
+              <progress value={job.progress} max={1} />
+              <Button
+                size="sm"
+                variant="ghost"
+                icon={<Square size={12} />}
+                onClick={() => void backend.invoke('templates.cancel', { jobId: job.id })}
+              >
+                Cancel
+              </Button>
+            </>
+          )}
+        </div>
+      )}
+      <footer className="create__footer">
+        <small>Filmed on this PC in a minute or two; keep Rec-It open while it films.</small>
+        <Button type="submit" variant="primary" disabled={!canStart} data-testid="lowpoly-create">
+          {running ? 'Creating…' : 'Create 3D Short'}
+        </Button>
+      </footer>
+    </form>
   );
 }
 

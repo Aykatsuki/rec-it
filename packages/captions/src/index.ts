@@ -141,6 +141,20 @@ export const CAPTION_STYLE_DEFS: Record<CaptionStyleId, CaptionStyle> = {
     spacing: 3,
     uppercase: true,
   },
+  retro: {
+    // Small yellow lower-case words with a hard dark edge, as on low-poly 3D story channels.
+    id: 'retro',
+    name: 'Retro yellow',
+    font: 'Poppins',
+    bold: true,
+    size: 60,
+    fill: '#F2E23C',
+    outline: '#141414',
+    outlineWidth: 4,
+    shadow: 2,
+    animation: 'none',
+    spacing: 2,
+  },
 };
 
 /** Font family → bundled file (resources/fonts). Both renderers get exactly these files. */

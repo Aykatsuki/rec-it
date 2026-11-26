@@ -953,3 +953,36 @@ Each record states the decision, why it was made and what else was considered. R
 - **Tests.** Unit: script parsing (names, screenplay form, notes, stage directions, narration split), applying a script over an AI plan that rewrote and skipped lines, cast reuse under a different id, kept voices, numbered references in prompts, and a picture naming a character. Integration: a second episode from a script reuses the remembered cast (one new design sheet only, the AI's new look ignored) and its subtitles match the script, then Forget.
 
 **Not tested here:** how much more consistent Klein is with the face and sheet references on the reference PC. FLUX.2 Klein 9B (more VRAM) is the next step if the 4B still drifts.
+
+## ADR-054 · Low-poly 3D Shorts, made and filmed in Rec-It
+
+**Status:** Accepted (26 Nov 2026).
+
+**Context.** You want "what if" and strange-true-story Shorts in the low-poly PS1 style of channels like LowPolyShorts (1.3 M subscribers; 99 Shorts studied, the best at 24–53 M views), made locally with Rec-It's AI. A third-party plugin (3D Kaz) does something similar, but its licence forbids redistributing modified or derived code, so it cannot be part of a GPL project. Its blocky explainer style and Claude-written scene code also don't suit a local model. Rec-It's own kit is written from scratch; only three.js (MIT) is used.
+
+**What the genre does (from the channel's top Shorts):**
+- 24–47 s long, about 2.8–3 spoken words a second.
+- No intro: the first words are the premise as a concrete image ("They would put the nuclear launch codes inside a capsule…").
+- "You" for what-ifs and body facts; past tense with numbers for true stories.
+- A new picture every 1.5–3 s, often an extreme close-up of a face or eye.
+- An escalating "but" turn, then a dry joke or meme moral, or a last word cut off so the Short loops.
+- Small yellow lower-case captions of 2–4 words in the lower third; the channel name flashes as a yellow logo in the first seconds.
+- PS1-era textured models, a recurring "you" (red jacket, jeans), suburban streets, ragdoll falls, simple effects (light beams into eyes, auras, white silhouettes).
+
+**Decisions.**
+- **Pipeline.** Topic → the AI writes a script by the genre's rules (`lowPolyScriptPrompt`), or your script is spoken as written. `splitBeats` cuts it into clauses of up to 12 words, one picture each. The narrator records it once, with word and sound times, and `beatTimes` matches beats to word times by letter share (robust to spoken numbers). The AI storyboards one shot per numbered beat from a fixed vocabulary (`lowPolyBoardPrompt`), and `normalisePlan` makes any answer safe: values from the lists, subjects that exist, a skipped beat re-shot from another distance, and never the same framing three times running. Rec-It then films it, and `storyShort` builds the Short (film as background, voice, retro captions, optional music) as one undo step. "Suggest ideas" asks the AI for ten titles in the five winning formats.
+- **Vocabulary (`@rec-it/lowpoly`).** 19 sets, 8 framings (extreme close-up … first-person "pov"), 13 actions, 13 effects (beam, glow, x-ray, frozen, silhouette, darkness, spotlight, explosion, fire, rain, sparkles, sick), 6 camera moves, 43 props (organs, planets, animals, vehicles, furniture…), and cast members (gender, age, skin, hair, top, colours, extras). The render spec is checked with zod at the IPC boundary.
+- **The kit (renderer `lowpoly/`).**
+  - Procedural canvas textures only (seeded; nothing to download or license).
+  - Blocky people with a painted face (four mouth shapes timed to the voice's sounds, blinking, wide eyes in shock, wrinkles, beards, glasses) and jointed limbs posed as a pure function of time. The skeleton is used for x-ray.
+  - Props and sets dressed behind the subject.
+  - The PS1 look: vertices snap to the low-res grid, textures are partly affine-mapped, the scene is drawn at 320/480/720 lines and enlarged with hard pixels, and colour is cut to 15-bit with a 4×4 ordered dither and slight grain.
+- **Filming.** WebGL lives in the renderer, so the backend's job emits `lowpoly.render` with the spec. The always-mounted `LowPolyHost` films each frame (big words and the channel name drawn over it) and streams JPEG batches back with `lowpoly.frames`. `LowPolyService` pipes them into FFmpeg (libx264, CRF 17) with backpressure. A renderer that goes quiet for 90 s fails the job with a clear message.
+- **Captions.** A new `retro` caption style: small yellow Poppins Bold with a dark edge, at 68% height, not upper-cased.
+- **Tests.**
+  - Unit: beats, beat timing, mouth shapes, plan repair, colours, spec.
+  - Integration: a topic Short with a stand-in renderer (beats, edge-to-edge shots, the speaker's mouth, retro captions, film as background).
+  - End to end: the real renderer films a seven-shot Short with SwiftShader and writes a contact sheet.
+  - A stills harness was used to check the look of every set, framing and effect.
+
+**Not yet:** a remembered "you" and cast across Shorts (as ADR-053 does for episodes), sound effects, and imported CC-BY PS1 models.

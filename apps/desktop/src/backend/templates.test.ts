@@ -1,10 +1,11 @@
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdtempSync, readdirSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { FLICKS_PER_SECOND } from '@rec-it/core';
 import { findTestFfmpeg, makeFixtures, type Fixtures } from '@rec-it/ffmpeg/testing';
+import { totalFrames, type RenderSpec } from '@rec-it/lowpoly';
 import { BackendApp } from './app';
 
 // The story template end to end with the real sidecar and the fake voice (a tone per word at
@@ -410,6 +411,105 @@ describe.skipIf(!bins || !hasUv)('story template (backend, real sidecar, fake vo
     );
     await app.templates.forget('kenji');
     expect((await app.templates.cast()).map((c) => c.id)).toEqual(['hiroshi', 'warrior']);
+  }, 300_000);
+
+  it('makes a low-poly 3D Short: script, beats, storyboard, filmed frames, captions', async () => {
+    app.ai.lowPolyScript = async () => ({
+      title: 'Why Stopping Time Is A Bad Idea',
+      script:
+        'If you could stop time with the snap of your fingers, you would instantly go blind. The air would turn solid. So you instant-',
+    });
+    let beatsSeen: string[] = [];
+    app.ai.lowPolyBoard = async (_title, beats) => {
+      beatsSeen = beats;
+      return {
+        cast: [{ id: 'doc', name: 'Doc', top: 'labcoat', topColor: 'white' }],
+        shots: [
+          { beat: 1, set: 'street', framing: 'extremeCloseUp', subject: 'you', action: 'shock' },
+          {
+            beat: 2,
+            set: 'lab',
+            framing: 'medium',
+            subject: 'doc',
+            action: 'talk',
+            speaker: 'doc',
+          },
+          { beat: 3, set: 'void', framing: 'wide', subject: 'you', effect: 'frozen' },
+        ],
+      };
+    };
+    // A stand-in renderer: the same small JPEG for every frame.
+    const jpeg = join(dir, 'frame.jpg');
+    execFileSync(bins!.ffmpeg, [
+      '-v',
+      'error',
+      '-y',
+      '-f',
+      'lavfi',
+      '-i',
+      'color=c=0x336699:s=108x192',
+      '-frames:v',
+      '1',
+      jpeg,
+    ]);
+    const frame = new Uint8Array(readFileSync(jpeg));
+    let spec: RenderSpec | null = null;
+    (app.lowPoly as unknown as { d: { emit: (r: string, s: RenderSpec) => void } }).d.emit = (
+      request,
+      s,
+    ) => {
+      spec = s;
+      void (async () => {
+        const total = totalFrames(s);
+        for (let i = 0; i < total; i += 16)
+          await app.lowPoly.frames(
+            request,
+            Array.from({ length: Math.min(16, total - i) }, () => frame),
+          );
+        app.lowPoly.finished(request);
+      })();
+    };
+    const jobId = app.templates.lowPolyShort({
+      topic: 'stopping time',
+      narrator: 'am_michael',
+      brand: 'Test',
+    });
+    const job = await waitFor(() => {
+      const j = app.templates.list().find((x) => x.id === jobId);
+      return j && j.state !== 'running' && j;
+    }, 240_000);
+    expect(job.error).toBeUndefined();
+    expect(job.title).toBe('Why Stopping Time Is A Bad Idea');
+    expect(beatsSeen).toEqual([
+      'If you could stop time with the snap of your fingers,',
+      'you would instantly go blind.',
+      'The air would turn solid.',
+      'So you instant-',
+    ]);
+    const s = spec as unknown as RenderSpec;
+    expect(s.brand).toBe('Test');
+    expect(s.shots.map((x) => [x.subject, x.framing])).toEqual([
+      ['you', 'extremeCloseUp'],
+      ['doc', 'medium'],
+      ['you', 'wide'],
+      // A beat the AI skipped repeats the previous shot from closer.
+      ['you', 'closeUp'],
+    ]);
+    // Shots run edge to edge from 0, and the speaker's mouth moves.
+    expect(s.shots[0]!.start).toBe(0);
+    for (let i = 1; i < s.shots.length; i++) expect(s.shots[i]!.start).toBe(s.shots[i - 1]!.end);
+    expect(s.shots[1]!.mouth.length).toBeGreaterThan(0);
+    expect(s.cast.map((c) => c.id).sort()).toEqual(['doc', 'you']);
+    // The filmed video is the background, under the voice and retro captions.
+    const { doc } = app.projects.document().state();
+    const seq = doc.sequences.find((x) => x.id === job.sequenceId)!;
+    const v1 = seq.tracks.find((t) => t.name === 'V1')!.items;
+    expect(app.projects.media().get(v1[0]!.assetId).kind).toBe('video');
+    expect(seq.captions?.style).toBe('retro');
+    const captions = seq.tracks.find((t) => t.kind === 'caption')!.items;
+    expect(captions.flatMap((c) => c.caption!.words.map((w) => w.text)).join(' ')).toContain(
+      'snap',
+    );
   }, 300_000);
 
   it('previews a voice as WAV', async () => {

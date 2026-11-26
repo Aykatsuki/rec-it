@@ -115,7 +115,9 @@ export const storyShortSchema = z
     musicVolume: z.number().min(0).max(1).default(0.12),
     card: z.boolean().default(true),
     theme: z.enum(['light', 'dark']).default('light'),
-    captionStyle: z.enum(['highlight', 'pop', 'karaoke', 'caps', 'clean', 'bebas']).default('pop'),
+    captionStyle: z
+      .enum(['highlight', 'pop', 'karaoke', 'caps', 'clean', 'bebas', 'retro'])
+      .default('pop'),
     upvotes: z.number().int().min(0).max(10_000_000).default(0),
     comments: z.number().int().min(0).max(10_000_000).default(0),
   })
@@ -157,7 +159,7 @@ export type TalkTestInput = z.input<typeof talkTestSchema>;
 
 export const templateJobSchema = z.object({
   id: z.string(),
-  kind: z.enum(['story', 'talk-test', 'episode']),
+  kind: z.enum(['story', 'talk-test', 'episode', 'lowpoly']),
   title: z.string(),
   state: z.enum(['running', 'done', 'failed', 'cancelled']),
   /** What it is doing now, e.g. "Recording the voiceover…". */
@@ -185,7 +187,9 @@ export const episodeSchema = z
     liveliness: z.number().min(0).max(1).default(0.6),
     musicAssetId: z.string().min(1).max(100).nullable().default(null),
     musicVolume: z.number().min(0).max(1).default(0.15),
-    captionStyle: z.enum(['highlight', 'pop', 'karaoke', 'caps', 'clean', 'bebas']).default('pop'),
+    captionStyle: z
+      .enum(['highlight', 'pop', 'karaoke', 'caps', 'clean', 'bebas', 'retro'])
+      .default('pop'),
   })
   .strict()
   .refine((e) => e.brief.length >= 20 || e.script.length >= 10, {
@@ -198,3 +202,34 @@ export const storedCharacterSchema = z.object({
   look: z.string(),
 });
 export type EpisodeInput = z.input<typeof episodeSchema>;
+
+/**
+ * A low-poly 3D Short (ADR-054): a topic the AI writes up in the genre's style, or your own
+ * script spoken as written; the AI storyboards it with the 3D kit and Rec-It films it.
+ */
+export const lowPolySchema = z
+  .object({
+    topic: z.string().trim().max(2000).default(''),
+    script: z.string().trim().max(6000).default(''),
+    /** Target length when the AI writes the script. */
+    seconds: z.number().min(15).max(90).default(40),
+    narrator: voiceIdSchema,
+    /** Narration speed (the genre talks fast). */
+    speed: z.number().min(0.7).max(1.5).default(1.1),
+    /** Channel name flashed early on, like a watermark ("" for none). */
+    brand: z.string().trim().max(40).default(''),
+    /** How chunky the pixels are: the height the 3D is drawn at. */
+    pixels: z.enum(['chunky', 'classic', 'clean']).default('classic'),
+    musicAssetId: z.string().min(1).max(100).nullable().default(null),
+    musicVolume: z.number().min(0).max(1).default(0.12),
+    captionStyle: z
+      .enum(['highlight', 'pop', 'karaoke', 'caps', 'clean', 'bebas', 'retro'])
+      .default('retro'),
+  })
+  .strict()
+  .refine((e) => e.topic.length >= 3 || e.script.length >= 10, {
+    message: 'Give a topic or a script.',
+  });
+export type LowPolyInput = z.input<typeof lowPolySchema>;
+
+export const lowPolyIdeaSchema = z.object({ title: z.string(), premise: z.string() });

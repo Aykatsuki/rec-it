@@ -6,8 +6,29 @@ import { mkdir } from 'node:fs/promises';
 import { basename, dirname, extname, join } from 'node:path';
 import { createId } from '@rec-it/core';
 import type { MediaAsset, TemplateJob } from '@rec-it/ipc-contract';
-import { episodeSchema, storyShortSchema, talkTestSchema } from '@rec-it/ipc-contract';
-import { PICTURE_STYLES, type EpisodePlan, type ScenePlan } from '@rec-it/ai';
+import {
+  episodeSchema,
+  lowPolySchema,
+  storyShortSchema,
+  talkTestSchema,
+} from '@rec-it/ipc-contract';
+import {
+  beatTimes,
+  mouthFrames,
+  normalisePlan,
+  renderSpecSchema,
+  splitBeats,
+  YOU,
+  type CastMember,
+  type RenderSpec,
+} from '@rec-it/lowpoly';
+import {
+  PICTURE_STYLES,
+  type EpisodePlan,
+  type LowPolyBoard,
+  type LowPolyScript,
+  type ScenePlan,
+} from '@rec-it/ai';
 import {
   fallbackScenes,
   normaliseScenes,
@@ -35,6 +56,7 @@ import {
 import type { AnimationService } from './animation-service';
 import { CharacterStore, type CharacterFiles } from './character-store';
 import type { ImageService } from './image-service';
+import type { LowPolyService } from './lowpoly-service';
 import type { z } from 'zod';
 import type { ProjectService } from './project-service';
 import type { SpokenSegment, VoiceService } from './voice-service';
@@ -42,6 +64,7 @@ import type { SpokenSegment, VoiceService } from './voice-service';
 type StoryInput = z.output<typeof storyShortSchema>;
 type TalkInput = z.output<typeof talkTestSchema>;
 type EpisodeInput = z.output<typeof episodeSchema>;
+type LowPolyInput = z.output<typeof lowPolySchema>;
 
 export interface TemplateDeps {
   projects: ProjectService;
@@ -56,6 +79,10 @@ export interface TemplateDeps {
     seconds: number,
     extra?: { script?: string; cast?: readonly { id: string; name: string; look: string }[] },
   ) => Promise<EpisodePlan>;
+  /** Low-poly 3D Shorts (ADR-054): the renderer-backed filmer and the AI's script and storyboard. */
+  lowPoly?: LowPolyService;
+  lowPolyScript?: (topic: string, seconds: number) => Promise<LowPolyScript>;
+  lowPolyBoard?: (title: string, beats: string[], cast: CastMember[]) => Promise<LowPolyBoard>;
   /** Frees the graphics card (unloads Ollama's models) before the picture engine runs. */
   releaseGpu?: () => Promise<unknown>;
   /** A transcript was stored outside transcription (the voiceover's). */
@@ -466,6 +493,202 @@ export class TemplateService {
       this.update(id, {
         state: 'done',
         stage: `Done in ${duration((Date.now() - started) / 1000)}; the mouth shapes took ${duration(shapesSeconds)} (${new Set(drawn.map((k) => shapes[k])).size} of 7 drawn).`,
+        progress: 1,
+        sequenceId,
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (signal.aborted || error instanceof Cancelled || /cancel/i.test(message))
+        this.update(id, { state: 'cancelled', stage: 'Cancelled' });
+      else this.update(id, { state: 'failed', stage: 'Failed', error: message });
+    }
+  }
+
+  /** Starts a low-poly 3D Short (ADR-054); returns at once with the job id. */
+  lowPolyShort(raw: unknown): string {
+    const input = lowPolySchema.parse(raw);
+    if (!this.d.projects.info()) throw new Error('Open or create a project first.');
+    if (!this.d.lowPoly || !this.d.lowPolyBoard)
+      throw new Error('3D Shorts are not available here.');
+    if (!input.script && !this.d.lowPolyScript)
+      throw new Error('Writing a script needs the AI (Settings → AI).');
+    if (input.musicAssetId) {
+      const m = this.d.projects.media().get(input.musicAssetId);
+      if (!m.probe?.audioStreamCount) throw new Error('The music has no sound.');
+    }
+    const id = createId('tpl');
+    this.jobs = [
+      ...this.jobs.filter((j) => j.state === 'running'),
+      { id, kind: 'lowpoly', title: '3D Short', state: 'running', stage: 'Starting…', progress: 0 },
+    ];
+    this.d.onChange(this.jobs);
+    const controller = new AbortController();
+    this.controllers.set(id, controller);
+    void this.runLowPoly(id, input, controller.signal).finally(() => this.controllers.delete(id));
+    return id;
+  }
+
+  private async runLowPoly(id: string, input: LowPolyInput, signal: AbortSignal): Promise<void> {
+    const started = Date.now();
+    try {
+      const projectId = this.d.projects.info()!.id;
+      const media = () => {
+        const p = this.d.projects.info();
+        if (!p || p.id !== projectId) throw new Error('The project was closed.');
+        return this.d.projects.media();
+      };
+      const check = () => {
+        if (signal.aborted) throw new Cancelled();
+      };
+      const folder = await this.generatedFolder();
+      const stamp = id.replace(/^tpl[_-]?/, '').slice(-10);
+      const seed = Math.floor(Math.random() * 100_000);
+
+      // 1. The script: yours as written, or the AI's in the genre's style.
+      let title =
+        input.topic
+          .split(/[.!?\n]/)[0]!
+          .trim()
+          .slice(0, 80) || '3D Short';
+      let script = input.script;
+      if (!script) {
+        this.update(id, { stage: 'Writing the script…', progress: 0.02 });
+        const written = await this.d.lowPolyScript!(input.topic, input.seconds);
+        title = written.title.trim() || title;
+        script = written.script;
+      }
+      const text = speakable(script);
+      const beats = splitBeats(text);
+      if (!beats.length) throw new Error('The script has nothing to say.');
+      this.update(id, { title: title.slice(0, 80) });
+      check();
+
+      // 2. The narration, with a time for every word and sound.
+      this.update(id, { stage: 'Recording the narration…', progress: 0.08 });
+      const voicePath = join(folder, `3d voice ${stamp}.wav`);
+      const spoken = await this.d.voice.speak([{ id: 'all', text }], {
+        voice: input.narrator,
+        speed: input.speed,
+        out: voicePath,
+        signal,
+        onProgress: (p) => this.update(id, { progress: 0.08 + 0.12 * p }),
+      });
+      const words = spoken.segments.flatMap((s) => s.words);
+      const sounds = spoken.segments.flatMap((s) => s.sounds ?? []);
+      const times = beatTimes(beats, words, spoken.duration);
+      check();
+
+      // 3. The storyboard: one shot per beat, from the kit's vocabulary.
+      this.update(id, { stage: 'Planning the shots…', progress: 0.2 });
+      const board = await this.d.lowPolyBoard!(title, beats, [YOU]);
+      const plan = normalisePlan(board, beats.length, [YOU]);
+      check();
+
+      // 4. Film it in the renderer, frame by frame.
+      const fps = 30;
+      const length = spoken.duration + TAIL;
+      const spec: RenderSpec = renderSpecSchema.parse({
+        width: 1080,
+        height: 1920,
+        fps,
+        pixelHeight: { chunky: 320, classic: 480, clean: 720 }[input.pixels],
+        cast: plan.cast,
+        brand: input.brand,
+        shots: plan.shots.map((sh, i) => {
+          const start = times[i]!.start;
+          const end = i + 1 < times.length ? times[i + 1]!.start : length;
+          return {
+            ...sh,
+            start,
+            end,
+            mouth: sh.speaker ? mouthFrames(sounds, start, end, fps) : [],
+            seed: seed + i * 17,
+          };
+        }),
+      });
+      this.update(id, { stage: `Filming ${spec.shots.length} shots in 3D…`, progress: 0.22 });
+      const videoPath = join(folder, `3d ${stamp}.mp4`);
+      await this.d.lowPoly!.render(spec, videoPath, {
+        signal,
+        onProgress: (p) =>
+          this.update(id, {
+            stage: `Filming ${spec.shots.length} shots in 3D… ${Math.round(p * 100)}% ${elapsed(started)}`,
+            progress: 0.22 + 0.63 * p,
+          }),
+      });
+      check();
+
+      // 5. Import and build the Short in one undoable step.
+      this.update(id, { stage: 'Adding the Short to the project…', progress: 0.88 });
+      const paths = [voicePath, videoPath];
+      const existing = await Promise.all(paths.map((p) => media().findSame(p)));
+      const fresh = paths.filter((_, i) => !existing[i]);
+      const result = fresh.length
+        ? await media().import(fresh, {
+            source: 'made-in-rec-it',
+            notes: `3D Short made by Rec-It: voice (${voiceEngine(input.narrator)}), low-poly 3D filmed by Rec-It.`,
+            userAttested: true,
+          })
+        : { imported: [], skipped: [] };
+      if (result.skipped.length)
+        throw new Error(`Could not add the generated files: ${result.skipped[0]!.reason}`);
+      const queue = [...result.imported];
+      const ids = existing.map((x) => x ?? queue.shift()!);
+      const ready = await this.waitReady(media, ids, signal);
+      const [voiceId, videoId] = ids;
+      const voiceWords = words.map((w) => ({ ...w, p: 1 }));
+      this.d.projects
+        .database()
+        .saveTranscript(
+          voiceId!,
+          'en',
+          'rec-it-voice',
+          JSON.stringify({ language: 'en', model: 'rec-it-voice', words: voiceWords }),
+        );
+      this.d.onTranscript();
+      const music = input.musicAssetId ? media().get(input.musicAssetId) : undefined;
+      const sequenceId = createId('sequence');
+      const { command } = storyShort({
+        sequenceId,
+        name: shortName(title),
+        voice: {
+          assetId: voiceId!,
+          duration: ready.get(voiceId!)?.probe?.durationSec ?? spoken.duration,
+          words: voiceWords,
+          titleEnd: 0,
+        },
+        background: {
+          kind: 'footage',
+          assetId: videoId!,
+          // The film covers the whole Short (frame-rounded); never let rounding add a sliver.
+          duration: Math.max(ready.get(videoId!)?.probe?.durationSec ?? 0, length),
+          start: 0,
+        },
+        ...(music?.probe
+          ? {
+              music: {
+                assetId: music.id,
+                duration: music.probe.durationSec,
+                volume: input.musicVolume,
+              },
+            }
+          : {}),
+        captions: {
+          style: input.captionStyle,
+          ...(input.captionStyle === 'retro' ? { position: 0.68, uppercase: false } : {}),
+        },
+        ids: {
+          voice: createId('item'),
+          card: createId('item'),
+          background: () => createId('item'),
+          music: createId('item'),
+        },
+      });
+      check();
+      this.d.projects.document().execute(command);
+      this.update(id, {
+        state: 'done',
+        stage: `Done in ${duration((Date.now() - started) / 1000)}: ${spec.shots.length} shots, ${duration(length)} long.`,
         progress: 1,
         sequenceId,
       });

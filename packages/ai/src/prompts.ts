@@ -2,6 +2,20 @@
 // short, concrete instructions best, and every token counts with a paid key.
 import { z } from 'zod';
 import type { ChatMessage } from './index';
+import {
+  ACTIONS,
+  CAMERAS,
+  EFFECTS,
+  EXTRAS,
+  FRAMINGS,
+  HAIRS,
+  PROPS,
+  SETS,
+  SKINS,
+  TOPS,
+  WORDS_PER_SECOND as FAST_WORDS_PER_SECOND,
+  type CastMember,
+} from '@rec-it/lowpoly';
 
 /** Spoken words per second for a story narrator at normal speed. */
 export const WORDS_PER_SECOND = 2.6;
@@ -292,5 +306,112 @@ export function episodePrompt(o: {
         '"shots": [{"speaker": "narrator", "text": "...", "picture": "...", "characters": ["hiroshi"], "motion": "zoomIn"}]}.',
     },
     { role: 'user', content: o.brief.trim() },
+  ];
+}
+
+// ---- Low-poly 3D Shorts (ADR-054) -------------------------------------------------------------
+
+/**
+ * The script rules, from studying the low-poly "true story / what if" Shorts that reach tens of
+ * millions of views: no intro, the first words are the premise, short clauses that each give a
+ * new picture, escalation with "but" turns, and a joke or a looping cut-off as the ending.
+ */
+const LOWPOLY_SCRIPT_RULES = [
+  'The title names the premise in 3 to 7 words, like "Why Stopping Time Is A Bad Idea", "You\'ve Never Touched Anything", "He Wore Upside-Down Glasses For 124 Days", "A Cow With A Window" or "The Eye Socket Problem".',
+  'No intro, no "did you know", no greeting: the very first words are the premise as a concrete image ("If you could stop time with the snap of your fingers, you would instantly go blind." / "They would put the nuclear launch codes inside a capsule…" / "He put on special glasses that made him see the world upside down.").',
+  'What-ifs and body facts talk to the viewer as "you"; true stories are told in the past tense with specific numbers, dates and names of places.',
+  'Short clauses of 4 to 10 words; every clause must be something that can be shown as one picture.',
+  'Escalate: each consequence or twist is stranger than the last; turn the story with "But" at least once.',
+  'End with a dry joke or a meme-like moral in one short line (for example "So you\'ve never touched grass, and she technically didn\'t cheat on you." or "A lie told long enough becomes your reality."), OR cut the last sentence off mid-word ("so you instant-") so the video loops back into the first line.',
+  'Facts must be true and checkable; no gore, no graphic injury detail, nothing hateful, no real private people.',
+  'Plain spoken English for a text-to-speech narrator: no emojis, hashtags, lists or stage directions.',
+];
+
+export const lowPolyScriptSchema = z.object({
+  title: z.string().min(2).max(100),
+  script: z.string().min(20).max(3000),
+});
+export type LowPolyScript = z.output<typeof lowPolyScriptSchema>;
+
+/** A narrated script for a low-poly 3D Short about a topic. */
+export function lowPolyScriptPrompt(o: { topic: string; seconds: number }): ChatMessage[] {
+  const words = Math.round(o.seconds * FAST_WORDS_PER_SECOND);
+  return [
+    {
+      role: 'system',
+      content:
+        'You write viral narrated YouTube Shorts in the style of low-poly 3D story channels (strange true stories, body and science facts, "what if" scenarios). ' +
+        `Write one script of about ${words} words (about ${o.seconds} seconds read quickly). Rules: ` +
+        LOWPOLY_SCRIPT_RULES.join(' ') +
+        ' Reply with JSON only: {"title": "...", "script": "..."}.',
+    },
+    { role: 'user', content: o.topic.trim() || 'Pick a surprising true story or what-if.' },
+  ];
+}
+
+export const lowPolyIdeasSchema = z.object({
+  ideas: z
+    .array(
+      z
+        .object({ title: z.string().min(2).max(100), premise: z.string().max(400).catch('') })
+        .catch({ title: '', premise: '' }),
+    )
+    .max(20)
+    .transform((a) => a.filter((i) => i.title)),
+});
+
+/** Ten ideas for low-poly Shorts, optionally around a theme. */
+export function lowPolyIdeasPrompt(theme: string): ChatMessage[] {
+  return [
+    {
+      role: 'system',
+      content:
+        'You plan viral narrated YouTube Shorts for a low-poly 3D story channel. The formats that get the most views are: ' +
+        '(1) "Why X Is A Bad Idea" what-ifs with escalating consequences (stopping time, living forever, solar-powered humans); ' +
+        '(2) "You…" facts that make the viewer doubt their own body or reality (you\'ve never touched anything, you are radioactive); ' +
+        '(3) bizarre but true stories about one person, told with numbers (upside-down glasses for 124 days, a nose grown on an arm, the nuclear codes proposal); ' +
+        '(4) strange true facts about one animal or body part (a cow with a window, the eye socket problem, how anglerfish mate); ' +
+        '(5) dumb criminals and weird laws. ' +
+        'Give 10 different ideas, each a short punchy title in that style and a one-sentence premise. Only true facts or clearly hypothetical what-ifs. ' +
+        'Reply with JSON only: {"ideas": [{"title": "...", "premise": "..."}]}.',
+    },
+    { role: 'user', content: theme.trim() || 'Any topics.' },
+  ];
+}
+
+/** The storyboard: lenient on purpose; @rec-it/lowpoly normalisePlan makes every value safe. */
+export const lowPolyBoardSchema = z.object({
+  cast: z.array(z.record(z.string(), z.unknown())).catch([]).default([]),
+  shots: z.array(z.record(z.string(), z.unknown())).catch([]).default([]),
+});
+export type LowPolyBoard = z.output<typeof lowPolyBoardSchema>;
+
+/** Turns numbered beats of narration into low-poly 3D shots built from the kit's vocabulary. */
+export function lowPolyBoardPrompt(o: {
+  title: string;
+  beats: readonly string[];
+  /** Characters that already exist (kept exactly; reuse their ids). */
+  cast: readonly CastMember[];
+}): ChatMessage[] {
+  const list = (xs: readonly string[]) => xs.join(', ');
+  return [
+    {
+      role: 'system',
+      content:
+        'You storyboard a vertical low-poly 3D Short (PlayStation 1 look). Each numbered beat of narration becomes exactly one shot; reply with one shot per beat, in order, with "beat" set to its number. ' +
+        'Show the literal thing being said, simply: one clear subject per shot. Cut between extreme close-ups of a face or eye, wide shots of the place, first-person hands (framing "pov") and close-ups of one object. Never use the same framing three times in a row. ' +
+        'The viewer "you" is the cast member with id "you". Invisible or extreme things use an effect: light into the eyes = beam, energy or a soul = silhouette or glow, seeing bones = xray, stopped time = frozen, illness = sick, death or nothing = darkness. ' +
+        'Use "bigText" (at most 3 words) only for a joke or a sign, otherwise leave it empty. Set "speaker" only when a cast member says the line out loud. ' +
+        `Choose values ONLY from these lists. set: ${list(SETS)}. framing: ${list(FRAMINGS)}. action: ${list(ACTIONS)}. effect: ${list(EFFECTS)}. camera: ${list(CAMERAS)}. props (0 to 3): ${list(PROPS)}. ` +
+        '"subject" is a cast id or one prop (for an object close-up); "others" lists other cast ids in the shot. ' +
+        `Add every other person who appears to "cast" with: id, name, gender (male/female), age (child/young/adult/old), skin (${list(SKINS)}), hair (${list(HAIRS)}), hairColor, top (${list(TOPS)}), topColor, bottomColor, extra (${list(EXTRAS)}). Colours are simple names or #rrggbb. ` +
+        `Existing cast (reuse these ids, do not redescribe them): ${o.cast.map((c) => `${c.id} (${c.name})`).join(', ') || 'none'}. ` +
+        'Reply with JSON only: {"cast": [{"id": "doctor", "name": "Doctor", "gender": "female", "age": "adult", "skin": "brown", "hair": "ponytail", "hairColor": "black", "top": "labcoat", "topColor": "white", "bottomColor": "navy", "extra": "glasses"}], ' +
+        '"shots": [{"beat": 1, "set": "street", "framing": "extremeCloseUp", "subject": "you", "others": [], "action": "shock", "props": [], "effect": "none", "camera": "pushIn", "bigText": "", "speaker": ""}]}.',
+    },
+    {
+      role: 'user',
+      content: `Title: ${o.title}\n\n${o.beats.map((b, i) => `${i + 1}. ${b}`).join('\n')}`,
+    },
   ];
 }

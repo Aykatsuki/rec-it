@@ -2961,6 +2961,33 @@ button.statusbar__item:hover {
 .create__hint {
   color: var(--text-3);
 }
+.create__ideas {
+  display: grid;
+  gap: var(--space-1);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  max-height: 220px;
+  overflow: auto;
+}
+.create__idea {
+  display: grid;
+  width: 100%;
+  gap: 2px;
+  padding: var(--space-1) var(--space-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-1);
+  text-align: left;
+  cursor: pointer;
+}
+.create__idea:hover {
+  border-color: var(--border-strong);
+}
+.create__idea small {
+  color: var(--text-3);
+}
 .create__cast {
   display: flex;
   flex-wrap: wrap;

@@ -27,6 +27,8 @@ import {
   talkTestSchema,
   episodeSchema,
   storedCharacterSchema,
+  lowPolySchema,
+  lowPolyIdeaSchema,
   voiceIdSchema,
   voiceSampleSchema,
   storyGenreSchema,
@@ -35,6 +37,7 @@ import {
   templateJobSchema,
   voiceStatusSchema,
 } from './schemas/create';
+import { renderSpecSchema } from '@rec-it/lowpoly';
 
 const empty = z.object({}).strict();
 const ok = z.object({ ok: z.literal(true) });
@@ -223,6 +226,30 @@ export const backendContract = defineContract({
     'templates.cancel': { input: z.object({ jobId: z.string() }).strict(), output: ok },
     /** Starts an episode from a brief; follow it with templates.changed. */
     'templates.episode': { input: episodeSchema, output: z.object({ jobId: z.string() }) },
+    /** Starts a low-poly 3D Short (ADR-054); follow it with templates.changed. */
+    'templates.lowPoly': { input: lowPolySchema, output: z.object({ jobId: z.string() }) },
+    /** Ten ideas for low-poly Shorts in the genre's winning formats. */
+    'lowpoly.ideas': {
+      input: z.object({ theme: z.string().trim().max(300) }).strict(),
+      output: z.array(lowPolyIdeaSchema),
+    },
+    /** Frames the renderer filmed for a lowpoly.render request (JPEG each, in order). */
+    'lowpoly.frames': {
+      input: z
+        .object({
+          request: z.string().min(1).max(100),
+          frames: z.array(z.instanceof(Uint8Array)).min(1).max(64),
+        })
+        .strict(),
+      output: z.object({ ok: z.boolean() }),
+    },
+    /** The renderer finished (or failed) a lowpoly.render request. */
+    'lowpoly.finished': {
+      input: z
+        .object({ request: z.string().min(1).max(100), error: z.string().max(2000).optional() })
+        .strict(),
+      output: ok,
+    },
     /** Characters the open project remembers from earlier episodes (ADR-053). */
     'characters.list': { input: empty, output: z.array(storedCharacterSchema) },
     /** Forgets one: the next episode designs it afresh. */
@@ -319,6 +346,8 @@ export const backendContract = defineContract({
     'voicehq.changed': imageStatusSchema,
     'voices.changed': z.array(voiceSampleSchema),
     'templates.changed': z.array(templateJobSchema),
+    /** The backend asks the renderer to film a low-poly spec (ADR-054). */
+    'lowpoly.render': z.object({ request: z.string(), spec: renderSpecSchema }),
   },
 });
 

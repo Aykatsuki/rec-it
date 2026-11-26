@@ -41,6 +41,7 @@ import { TranscriptService } from './services/transcript-service';
 import { FaceService } from './services/face-service';
 import { AiService } from './services/ai-service';
 import { VoiceService } from './services/voice-service';
+import { LowPolyService } from './services/lowpoly-service';
 import { TemplateService } from './services/template-service';
 import { ImageService } from './services/image-service';
 import { AnimationService } from './services/animation-service';
@@ -78,6 +79,7 @@ export class BackendApp {
   readonly ai: AiService;
   readonly voice: VoiceService;
   readonly templates: TemplateService;
+  readonly lowPoly: LowPolyService;
   readonly images: ImageService;
   readonly animation: AnimationService;
   readonly claude: ClaudeService;
@@ -192,6 +194,10 @@ export class BackendApp {
       ffmpeg: async () => (await this.toolchain()).bins.ffmpeg,
       onChange: (status) => this.emit('animation.changed', status),
     });
+    this.lowPoly = new LowPolyService({
+      ffmpeg: async () => (await this.toolchain()).bins.ffmpeg,
+      emit: (request, spec) => this.emit('lowpoly.render', { request, spec }),
+    });
     this.templates = new TemplateService({
       projects: this.projects,
       voice: this.voice,
@@ -200,6 +206,9 @@ export class BackendApp {
       planScenes: (title, sentences, count) => this.ai.planScenes(title, sentences, count),
       releaseGpu: () => this.ai.releaseGpu(),
       planEpisode: (brief, seconds, extra) => this.ai.planEpisode(brief, seconds, extra),
+      lowPoly: this.lowPoly,
+      lowPolyScript: (topic, seconds) => this.ai.lowPolyScript(topic, seconds),
+      lowPolyBoard: (title, beats, cast) => this.ai.lowPolyBoard(title, beats, cast),
       onTranscript: () => this.transcripts.changed(),
       onChange: (jobs) => this.emit('templates.changed', jobs),
     });
@@ -380,6 +389,15 @@ export class BackendApp {
     'templates.story': (input) => ({ jobId: this.templates.story(input) }),
     'templates.talkTest': (input) => ({ jobId: this.templates.talkTest(input) }),
     'templates.episode': (input) => ({ jobId: this.templates.episode(input) }),
+    'templates.lowPoly': (input) => ({ jobId: this.templates.lowPolyShort(input) }),
+    'lowpoly.ideas': ({ theme }) => this.ai.lowPolyIdeas(theme),
+    'lowpoly.frames': async ({ request, frames }) => ({
+      ok: await this.lowPoly.frames(request, frames),
+    }),
+    'lowpoly.finished': ({ request, error }) => {
+      this.lowPoly.finished(request, error);
+      return { ok: true as const };
+    },
     'characters.list': () => this.templates.cast(),
     'characters.remove': async ({ id }) => {
       await this.templates.forget(id);
