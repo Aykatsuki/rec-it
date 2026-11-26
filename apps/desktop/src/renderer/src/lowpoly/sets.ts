@@ -4,6 +4,7 @@
 import * as THREE from 'three';
 import type { SetId } from '@rec-it/lowpoly';
 import { flat, mat } from './ps1';
+import { addLife } from './life';
 import { cloud, house, makeProp, tree } from './props';
 import { noise, rng, shade, SURFACES, texture, type Paint } from './textures';
 
@@ -119,7 +120,9 @@ function place(
   return o;
 }
 
-export function buildSet(id: SetId, seed: number): BuiltSet {
+export function buildSet(id: SetId, seed: number, opts: { clearing?: boolean } = {}): BuiltSet {
+  // A clearing ahead of the subject, so the sky is in view (planes, birds).
+  const clear = (x: number, z: number) => !!opts.clearing && Math.abs(x) < 10 && z > -40 && z < 2;
   const scene = new THREE.Scene();
   const r = rng(seed * 7 + 3);
   let indoor = true;
@@ -437,7 +440,7 @@ export function buildSet(id: SetId, seed: number): BuiltSet {
             d = 4 + r() * 30;
           const x = Math.cos(a) * d,
             z = -Math.abs(Math.sin(a) * d) + 1;
-          if (Math.abs(x) < 2 && z > -3) continue;
+          if ((Math.abs(x) < 2 && z > -3) || clear(x, z)) continue;
           place(scene, tree(0.9 + r() * 0.8, i), x, z, r() * 6);
         }
         for (let i = 0; i < 10; i++)
@@ -537,6 +540,7 @@ export function buildSet(id: SetId, seed: number): BuiltSet {
           0.05,
           -110,
         );
+        water.userData.waves = true;
         scene.add(water);
         const tex = (water.material as THREE.MeshLambertMaterial).map!;
         update = (t) => {
@@ -653,14 +657,16 @@ export function buildSet(id: SetId, seed: number): BuiltSet {
     }
     case 'jungle': {
       day();
-      scene.fog = new THREE.Fog('#7a9a6a', 6, 45);
+      scene.fog = opts.clearing
+        ? new THREE.Fog('#9ab08a', 14, 80)
+        : new THREE.Fog('#7a9a6a', 6, 45);
       scene.add(floor(300, surface('grass:jungle', SURFACES.leaves('#3a6a2a'), [70, 70])));
       for (let i = 0; i < 46; i++) {
         const a = r() * Math.PI * 2,
           d = 3 + r() * 26;
         const x = Math.cos(a) * d,
           z = -Math.abs(Math.sin(a) * d) + 1.5;
-        if (Math.abs(x) < 1.8 && z > -2.5) continue;
+        if ((Math.abs(x) < 1.8 && z > -2.5) || clear(x, z)) continue;
         const t = tree(0.8 + r() * 0.9, i);
         if (i % 3 === 0) t.children.slice(1).forEach((c) => c.scale.set(1.6, 0.35, 1.6));
         place(scene, t, x, z, r() * 6);
@@ -677,16 +683,12 @@ export function buildSet(id: SetId, seed: number): BuiltSet {
         scene.add(fern);
       }
       const vine = mat('#2a4a1e');
-      for (let i = 0; i < 12; i++)
-        scene.add(
-          m(
-            new THREE.CylinderGeometry(0.02, 0.02, 4 + r() * 3, 3),
-            vine,
-            (r() - 0.5) * 12,
-            4,
-            -3 - r() * 8,
-          ),
-        );
+      for (let i = 0; i < 12; i++) {
+        const x = (r() - 0.5) * 12,
+          z = -3 - r() * 8;
+        if (!clear(x, z))
+          scene.add(m(new THREE.CylinderGeometry(0.02, 0.02, 4 + r() * 3, 3), vine, x, 4, z));
+      }
       break;
     }
     case 'island':
@@ -710,6 +712,7 @@ export function buildSet(id: SetId, seed: number): BuiltSet {
         id === 'ocean' ? 0 : -0.25,
         0,
       );
+      water.userData.waves = true;
       scene.add(water);
       const tex = (water.material as THREE.MeshLambertMaterial).map!;
       update = (t) => tex.offset.set(t * 0.02, t * 0.04);
@@ -720,6 +723,7 @@ export function buildSet(id: SetId, seed: number): BuiltSet {
           const palm = tree(1 + r() * 0.4, 1);
           palm.children.slice(1).forEach((c) => c.scale.set(1.5, 0.35, 1.5));
           const a = r() * Math.PI - Math.PI;
+          if (clear(Math.cos(a) * 8, -4 + Math.sin(a) * 8)) continue;
           place(
             scene,
             palm,
@@ -728,7 +732,11 @@ export function buildSet(id: SetId, seed: number): BuiltSet {
             r() * 6,
           );
         }
-        for (let i = 0; i < 6; i++) place(scene, tree(1.3, i), (r() - 0.5) * 16, -12 - r() * 4);
+        for (let i = 0; i < 6; i++) {
+          const x = (r() - 0.5) * 16,
+            z = -12 - r() * 4;
+          if (!clear(x, z)) place(scene, tree(1.3, i), x, z);
+        }
       } else {
         const boat = makeProp('boat').object;
         place(scene, boat, 0, -1.5, 0.2, 0);
@@ -926,11 +934,16 @@ export function buildSet(id: SetId, seed: number): BuiltSet {
       dir: [3, 8, 5],
     });
   void shade;
+  const life = addLife(scene, id, rng(seed * 13 + 5), sky);
+  const own = update;
   return {
     scene,
     indoor,
     tableTop: indoor ? tableTop : 0,
-    ...(update ? { update } : {}),
+    update: (t: number) => {
+      own?.(t);
+      life(t);
+    },
     lights,
     sky,
   };

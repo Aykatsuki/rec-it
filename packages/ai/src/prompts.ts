@@ -390,13 +390,15 @@ export function lowPolyBoardPrompt(o: {
       content:
         'You storyboard a vertical low-poly 3D Short (PlayStation 1 look). Each numbered line of narration gets exactly ONE shot that shows literally what that line says. Reply with one shot per line, in order, with "beat" set to the line number. ' +
         'For each shot give, in a few plain words: "place" (where it happens: jungle, island, street, kitchen, hospital, lab, space, battlefield, ocean, snow, office, prison, bank, farm, desert, beach, classroom, courtroom, city…), ' +
-        '"who" (the names of the people in the picture, or "nobody"), "doing" (what they do: walking, hiding, eating, saluting, running, falling, talking, sleeping, reading, waving, shocked…), ' +
+        '"who" (the names of the people in the picture, or "nobody"), "doing" (one physical action that acts out the line: walking, patrolling, hiding, looking up at the sky, picking something up, reading, shaking his head, nodding, eating, cleaning or fixing something, saluting, running, falling, waving, sleeping, celebrating, shocked…), ' +
+        '"feeling" (how they feel right now: happy, sad, scared, angry, determined, confused, tired, proud, lonely, surprised or neutral), "crowd" (how many extra background people, 0 to 6), ' +
         '"objects" (up to 3 things that must be visible, named simply: "rifle", "leaflets", "plane", "bananas", "brain"…), ' +
         '"camera" (wide, medium, close-up, extreme close-up, overhead, low angle, first person or object close-up), and optionally "effect" (glow, light beam, x-ray, frozen, darkness, explosion, fire, rain, ghost, sick, spotlight) and "bigText" (at most 3 words, only for a joke or a sign). ' +
+        'Make every shot lively and specific: the main character always DOES something that shows the line and how they feel (for "nobody told him" show him alone, patrolling the jungle, unaware; for "leaflets dropped from planes" show the plane in the sky and him looking up as leaflets fall). ' +
         'Rules: keep the story\'s own people (the narration\'s "he" or "she" is the main character; "you" is the viewer); open each new place with a wide shot; use close-ups only when a face matters, and never more than two in a row. ' +
         'Describe every person once in "cast" with "name" and "look": gender, age, skin, hair and clothes with colours (for example "young Japanese man, short black hair, olive army uniform and cap"). ' +
         `Existing cast (reuse these names): ${o.cast.map((c) => c.name).join(', ') || 'none'}. ` +
-        'Reply with JSON only: {"cast": [{"name": "...", "look": "..."}], "shots": [{"beat": 1, "place": "...", "who": ["..."], "doing": "...", "objects": ["..."], "camera": "wide", "effect": "", "bigText": ""}]}.',
+        'Reply with JSON only: {"cast": [{"name": "...", "look": "..."}], "shots": [{"beat": 1, "place": "...", "who": ["..."], "doing": "...", "feeling": "...", "objects": ["..."], "crowd": 0, "camera": "wide", "effect": "", "bigText": ""}]}.',
     },
     {
       role: 'user',

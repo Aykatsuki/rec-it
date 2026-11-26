@@ -2,7 +2,7 @@
 // head (eyes, brows, nose, one of four mouth shapes, blinking), jointed arms and legs, and the
 // actions a shot can ask for. Every pose is a pure function of time.
 import * as THREE from 'three';
-import type { Action, CastMember } from '@rec-it/lowpoly';
+import type { Action, CastMember, Mood } from '@rec-it/lowpoly';
 import { mat } from './ps1';
 import { noise, rng, shade, texture } from './textures';
 
@@ -14,7 +14,7 @@ const SKIN: Record<CastMember['skin'], string> = {
   dark: '#5a3826',
 };
 
-type Eyes = 'open' | 'closed' | 'wide';
+type Eyes = 'open' | 'closed' | 'wide' | 'tired';
 
 function px(g: CanvasRenderingContext2D, c: string, x: number, y: number, w: number, h: number) {
   g.fillStyle = c;
@@ -22,8 +22,8 @@ function px(g: CanvasRenderingContext2D, c: string, x: number, y: number, w: num
 }
 
 /** The face painted on the front of the head: 64×64, for one eye state and mouth shape. */
-function faceTexture(c: CastMember, eyes: Eyes, mouth: number): THREE.Texture {
-  const key = `face:${c.id}:${c.skin}:${c.hairColor}:${c.age}:${c.gender}:${c.extra}:${eyes}:${mouth}`;
+function faceTexture(c: CastMember, eyes: Eyes, mouth: number, mood: Mood): THREE.Texture {
+  const key = `face:${c.id}:${c.skin}:${c.hairColor}:${c.age}:${c.gender}:${c.extra}:${eyes}:${mouth}:${mood}`;
   return texture(key, [64, 64], (g, w, h, r) => {
     const skin = SKIN[c.skin];
     noise(g, w, h, r, skin, 0.05);
@@ -41,8 +41,8 @@ function faceTexture(c: CastMember, eyes: Eyes, mouth: number): THREE.Texture {
         px(g, shade(skin, -0.35), ex, ey + 3, 11, 2);
         continue;
       }
-      const tall = eyes === 'wide' ? 8 : 6;
-      const top = eyes === 'wide' ? ey : ey + 1;
+      const tall = eyes === 'wide' ? 8 : eyes === 'tired' ? 4 : 6;
+      const top = eyes === 'wide' ? ey : eyes === 'tired' ? ey + 3 : ey + 1;
       px(g, '#f4f1ea', ex, top, 11, tall);
       px(g, c.id.length % 3 === 0 ? '#3f6f9a' : '#4a3020', ex + 3, top + 1, 5, tall - 1);
       px(g, '#0e0a08', ex + 4, top + 2, 3, tall - 3);
@@ -51,9 +51,22 @@ function faceTexture(c: CastMember, eyes: Eyes, mouth: number): THREE.Texture {
       if (c.gender === 'female') px(g, '#1a1210', ex - 1, top - 1, 13, 2);
     }
     // Brows.
-    const lift = eyes === 'wide' ? -3 : 0;
-    px(g, brow, 13, ey - 5 + lift, 13, c.gender === 'female' ? 2 : 3);
-    px(g, brow, 38, ey - 5 + lift, 13, c.gender === 'female' ? 2 : 3);
+    // Brows tell the feeling: inner ends up (sad), down (angry), both raised (scared).
+    const lift =
+      eyes === 'wide' || mood === 'scared' || mood === 'surprised' ? -3 : mood === 'happy' ? -1 : 0;
+    const slant = ['sad', 'lonely', 'tired', 'scared'].includes(mood)
+      ? -2
+      : ['angry', 'determined'].includes(mood)
+        ? 2
+        : 0;
+    const bh = c.gender === 'female' ? 2 : 3;
+    for (let k = 0; k < 13; k++) {
+      // Left brow: inner end at k = 12; right brow: inner end at k = 0.
+      const dl = Math.round((slant * k) / 12);
+      const dr = Math.round((slant * (12 - k)) / 12);
+      px(g, brow, 13 + k, ey - 5 + lift + dl, 1, bh);
+      px(g, brow, 38 + k, ey - 5 + lift + dr + (mood === 'confused' ? -2 : 0), 1, bh);
+    }
     // Nose.
     px(g, shade(skin, -0.2), 31, 31, 2, 10);
     px(g, shade(skin, -0.35), 28, 41, 3, 2);
@@ -76,8 +89,28 @@ function faceTexture(c: CastMember, eyes: Eyes, mouth: number): THREE.Texture {
     const lips = c.gender === 'female' ? '#a8434a' : shade(skin, -0.38);
     // Mouth: 0 shut, 1 parted, 2 open, 3 round.
     const my = 49;
-    if (mouth === 0) px(g, lips, 24, my, 16, 2);
-    else if (mouth === 1) {
+    if (mouth === 0) {
+      // A closed mouth shows the feeling: a smile, a frown, a tight line, a twist.
+      if (mood === 'happy' || mood === 'proud') {
+        px(g, lips, 26, my + 1, 12, 2);
+        px(g, lips, 23, my - 1, 3, 2);
+        px(g, lips, 38, my - 1, 3, 2);
+      } else if (mood === 'sad' || mood === 'lonely' || mood === 'tired') {
+        px(g, lips, 26, my - 1, 12, 2);
+        px(g, lips, 23, my + 1, 3, 2);
+        px(g, lips, 38, my + 1, 3, 2);
+      } else if (mood === 'angry' || mood === 'determined') px(g, lips, 25, my, 14, 3);
+      else if (mood === 'scared') {
+        px(g, lips, 26, my - 1, 12, 4);
+        px(g, '#3a1512', 28, my, 8, 2);
+      } else if (mood === 'surprised') {
+        px(g, lips, 29, my - 2, 6, 6);
+        px(g, '#2a0d0b', 30, my - 1, 4, 4);
+      } else if (mood === 'confused') {
+        px(g, lips, 24, my + 1, 8, 2);
+        px(g, lips, 32, my, 8, 2);
+      } else px(g, lips, 24, my, 16, 2);
+    } else if (mouth === 1) {
       px(g, lips, 24, my - 1, 16, 4);
       px(g, '#3a1512', 26, my, 12, 2);
     } else if (mouth === 2) {
@@ -391,11 +424,11 @@ export class Person {
     });
   }
 
-  private faceTex(eyes: Eyes, mouth: number): THREE.Texture {
-    const key = `${eyes}${mouth}`;
+  private faceTex(eyes: Eyes, mouth: number, mood: Mood = 'neutral'): THREE.Texture {
+    const key = `${eyes}${mouth}${mood}`;
     let t = this.faces.get(key);
     if (!t) {
-      t = faceTexture(this.c, eyes, mouth);
+      t = faceTexture(this.c, eyes, mouth, mood);
       this.faces.set(key, t);
     }
     return t;
@@ -432,7 +465,14 @@ export class Person {
   }
 
   /** Poses the person for an action at time t (seconds into the shot). */
-  pose(action: Action, t: number, mouth: number, start = new THREE.Vector3(), facing = 0): void {
+  pose(
+    action: Action,
+    t: number,
+    mouth: number,
+    start = new THREE.Vector3(),
+    facing = 0,
+    mood: Mood = 'neutral',
+  ): void {
     const s = Math.sin;
     const reset = [
       this.hips,
@@ -451,7 +491,11 @@ export class Person {
     this.hips.position.set(0, 0.92, 0);
     this.root.rotation.set(0, facing, 0);
     this.root.position.copy(start);
-    let eyes: Eyes = 'open';
+    let eyes: Eyes =
+      mood === 'tired' ? 'tired' : mood === 'scared' || mood === 'surprised' ? 'wide' : 'open';
+    // Sad, lonely and tired people move slowly.
+    if (['sad', 'lonely', 'tired'].includes(mood) && !['fall', 'shock', 'pickUp'].includes(action))
+      t *= 0.65;
     // Blink every few seconds.
     const r = rng(this.blinkSeed);
     const period = 2.6 + r() * 2;
@@ -621,7 +665,121 @@ export class Person {
         this.head.rotation.y = 0.1;
         break;
       }
+      case 'lookUp': {
+        arms(0.06, 0.05);
+        const k = Math.min(1, t / 0.5);
+        this.head.rotation.x = -0.65 * k;
+        this.torso.rotation.x = -0.12 * k;
+        this.shoulderR.rotation.x = -2.2 * k;
+        this.shoulderR.rotation.z = 0.35 * k;
+        this.elbowR.rotation.x = -1.5 * k;
+        this.head.rotation.y = s(t * 0.6) * 0.18;
+        break;
+      }
+      case 'patrol': {
+        const ph = t * 5;
+        this.hipL.rotation.x = s(ph) * 0.38;
+        this.hipR.rotation.x = -s(ph) * 0.38;
+        this.kneeL.rotation.x = Math.max(0, -s(ph)) * 0.5;
+        this.kneeR.rotation.x = Math.max(0, s(ph)) * 0.5;
+        this.shoulderL.rotation.x = this.shoulderR.rotation.x = -0.55;
+        this.elbowL.rotation.x = this.elbowR.rotation.x = -0.9;
+        this.torso.rotation.x = 0.12;
+        this.head.rotation.y = s(t * 1.2) * 0.6;
+        this.hips.position.y = 0.9 + Math.abs(s(ph)) * 0.02;
+        this.root.position.addScaledVector(forward, t * 0.55);
+        break;
+      }
+      case 'pickUp': {
+        const down = Math.min(1, t / 0.6) * (1 - Math.min(1, Math.max(0, (t - 1.0) / 0.6)));
+        this.torso.rotation.x = 0.95 * down;
+        this.hips.position.y = 0.92 - 0.28 * down;
+        this.hipL.rotation.x = this.hipR.rotation.x = -0.9 * down;
+        this.kneeL.rotation.x = this.kneeR.rotation.x = 1.3 * down;
+        const up = Math.min(1, Math.max(0, (t - 1.0) / 0.6));
+        this.shoulderR.rotation.x = -0.4 * down - 1.1 * up;
+        this.elbowR.rotation.x = -0.7 * up;
+        this.shoulderL.rotation.x = -0.3 * up;
+        this.head.rotation.x = 0.35 * up + 0.2 * down;
+        break;
+      }
+      case 'shakeHead': {
+        this.shoulderL.rotation.x = this.shoulderR.rotation.x = -0.7;
+        arms(-0.5, -0.5);
+        this.elbowL.rotation.x = this.elbowR.rotation.x = -1.8;
+        this.head.rotation.y = s(t * 8) * 0.4 * Math.max(0.15, 1 - t / 2);
+        break;
+      }
+      case 'nod': {
+        arms(0.06, 0.06);
+        this.head.rotation.x = s(t * 7) * 0.18 * Math.max(0.15, 1 - t / 2);
+        break;
+      }
+      case 'work': {
+        this.shoulderL.rotation.x = -0.8 + s(t * 7) * 0.08;
+        this.shoulderR.rotation.x = -0.75 + s(t * 9) * 0.14;
+        this.elbowL.rotation.x = this.elbowR.rotation.x = -1.1;
+        this.shoulderL.rotation.z = 0.2;
+        this.shoulderR.rotation.z = -0.2;
+        this.head.rotation.x = 0.45;
+        this.torso.rotation.x = 0.12;
+        break;
+      }
     }
-    this.face.map = this.faceTex(eyes, mouth);
+    // The feeling shapes the whole body.
+    if (!['fall', 'sleep', 'float'].includes(action)) {
+      switch (mood) {
+        case 'sad':
+        case 'lonely':
+        case 'tired':
+          this.torso.rotation.x += 0.15;
+          this.head.rotation.x += action === 'lookUp' ? 0 : 0.28;
+          this.shoulderL.rotation.z *= 0.5;
+          this.shoulderR.rotation.z *= 0.5;
+          break;
+        case 'scared':
+          this.torso.rotation.x += 0.12;
+          if (['idle', 'talk', 'crouch', 'patrol'].includes(action)) {
+            this.shoulderL.rotation.x -= 0.35;
+            this.shoulderR.rotation.x -= 0.35;
+            this.elbowL.rotation.x -= 0.8;
+            this.elbowR.rotation.x -= 0.8;
+          }
+          this.head.rotation.y += s(t * 3.1) * 0.3;
+          this.root.position.x += s(t * 41) * 0.004;
+          break;
+        case 'angry':
+          this.torso.rotation.x += 0.07;
+          this.head.rotation.x += 0.08;
+          if (action === 'idle' || action === 'talk') {
+            arms(0.25, 0.25);
+            this.elbowR.rotation.x -= 0.7 * Math.max(0, s(t * 2.5));
+          }
+          break;
+        case 'determined':
+        case 'proud':
+          this.torso.rotation.x -= 0.06;
+          this.head.rotation.x -= 0.08;
+          break;
+        case 'happy':
+          if (action === 'idle' || action === 'talk')
+            this.root.position.y += Math.abs(s(t * 4)) * 0.025;
+          this.head.rotation.z += s(t * 2) * 0.05;
+          break;
+        case 'confused':
+          this.head.rotation.z += 0.2;
+          if (action === 'idle' || action === 'think') {
+            this.shoulderR.rotation.x = -2.5;
+            this.shoulderR.rotation.z = 0.4;
+            this.elbowR.rotation.x = -1.9 + s(t * 12) * 0.12;
+          }
+          break;
+        case 'surprised':
+          this.torso.rotation.x -= 0.08;
+          this.head.rotation.x -= 0.1;
+          break;
+      }
+    }
+    this.face.map = this.faceTex(eyes, mouth, mood);
   }
 }

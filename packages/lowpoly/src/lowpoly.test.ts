@@ -172,7 +172,24 @@ describe('plans', () => {
     });
     expect(p.shots[1]).toMatchObject({ set: 'jungle', subject: 'hiroo_onoda', action: 'crouch' });
     const leaflets = p.shots.find((s) => s.props.includes('plane'))!;
-    expect(leaflets).toMatchObject({ set: 'jungle', subject: 'paper', props: ['plane'] });
+    // Leaflets from planes: the hero looks up at the plane as the leaflets fall.
+    expect(leaflets).toMatchObject({
+      set: 'jungle',
+      subject: 'hiroo_onoda',
+      props: ['paper', 'plane'],
+      action: 'lookUp',
+    });
+    // Feelings from the lines; years as big words; no crowd for "a soldier".
+    expect(p.shots[0]).toMatchObject({ bigText: '1944', crowd: 0 });
+    expect(p.shots.find((s, i) => beats[i] === 'A year later, the war ended.')).toMatchObject({
+      bigText: '1945',
+      mood: 'sad',
+    });
+    expect(p.shots.find((s, i) => beats[i] === 'Nobody told him.')).toMatchObject({
+      subject: 'hiroo_onoda',
+      mood: 'lonely',
+    });
+    expect(p.shots.at(-1)!.bigText).toBe('1974');
     const food = p.shots.find((s) => s.action === 'eat')!;
     expect(food.props).toEqual(['banana', 'coconut', 'm:bamboo_hut']);
     expect(p.models).toEqual([{ id: 'bamboo_hut', name: 'bamboo hut' }]);

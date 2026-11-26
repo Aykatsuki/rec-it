@@ -9,6 +9,8 @@ import { noise, shade, SURFACES, texture } from './textures';
 export type Placement = 'hand' | 'ground' | 'float' | 'big';
 
 export interface Prop {
+  /** Which prop it is (set by the shot). */
+  id?: string;
   object: THREE.Object3D;
   placement: Placement;
   /** Rough size (metres) for framing a close-up of it. */
@@ -925,6 +927,8 @@ export function tree(scale = 1, seed = 1): THREE.Group {
     g.add(blob);
   }
   g.scale.setScalar(scale);
+  // Trees sway in the wind (sets animate everything marked so).
+  g.userData.sway = seed * 1.7 + scale;
   return g;
 }
 

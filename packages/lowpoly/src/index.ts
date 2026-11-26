@@ -8,6 +8,8 @@ import {
   EFFECT_WORDS,
   EXTRA_WORDS,
   FRAMING_WORDS,
+  MOOD_WORDS,
+  CROWD_WORDS,
   PROP_WORDS,
   ROLE_WORDS,
   SET_WORDS,
@@ -85,6 +87,12 @@ export const ACTIONS = [
   'salute',
   'read',
   'wave',
+  'lookUp',
+  'patrol',
+  'pickUp',
+  'shakeHead',
+  'nod',
+  'work',
 ] as const;
 export type Action = (typeof ACTIONS)[number];
 
@@ -105,6 +113,22 @@ export const EFFECTS = [
   'spotlight',
 ] as const;
 export type Effect = (typeof EFFECTS)[number];
+
+/** How the people in a shot feel: shapes their faces, posture and how they move. */
+export const MOODS = [
+  'neutral',
+  'happy',
+  'sad',
+  'scared',
+  'angry',
+  'determined',
+  'confused',
+  'tired',
+  'proud',
+  'lonely',
+  'surprised',
+] as const;
+export type Mood = (typeof MOODS)[number];
 
 export const CAMERAS = ['pushIn', 'pullOut', 'orbit', 'static', 'shake', 'tilt'] as const;
 export type CameraMove = (typeof CAMERAS)[number];
@@ -229,6 +253,10 @@ export const shotSpecSchema = z.object({
   props: z.array(z.string().regex(/^(?:[a-z]+|m:[a-z0-9_]{1,24})$/i)).max(4),
   effect: z.enum(EFFECTS),
   camera: z.enum(CAMERAS),
+  /** How the people feel. */
+  mood: z.enum(MOODS).default('neutral'),
+  /** Extra people in the background (villagers, soldiers, a crowd). */
+  crowd: z.number().int().min(0).max(8).default(0),
   /** Big words in the picture (a sign, a joke), at most a few words. */
   bigText: z.string().max(24).default(''),
   /** The cast member who says this line on screen ("" when it is narration). */
@@ -533,11 +561,30 @@ function fromText<T extends string>(
   return (said && options.includes(said as T) ? said : fallback) as T;
 }
 
-/** Colour words in a description, in order ("olive uniform, black cap" → olive, black). */
-function colourWords(text: string): string[] {
-  return wordList(text)
-    .map((w) => colour(w, ''))
-    .filter(Boolean);
+const CLOTHES =
+  /^(uniform|shirt|t-shirt|tshirt|jacket|coat|suit|hoodie|dress|sweater|jumper|top|blouse|robe|cloak|vest|armour|armor|overalls|scrubs|gown|tunic|kimono)s?$/;
+const LEGS = /^(trousers|pants|jeans|shorts|skirt|leggings|bottoms|slacks)$/;
+
+/**
+ * Clothes colours from a description: the colour words just before a garment ("olive army
+ * uniform", "blue jeans"), never the hair's ("short black hair" is not a black uniform).
+ */
+function clothesColours(text: string): { top?: string; bottom?: string; hair?: string } {
+  const ws = wordList(text);
+  const out: { top?: string; bottom?: string; hair?: string } = {};
+  const before = (i: number) => {
+    for (let k = i - 1; k >= Math.max(0, i - 3); k--) {
+      const c = colour(ws[k], '');
+      if (c) return c;
+    }
+    return '';
+  };
+  ws.forEach((w, i) => {
+    if (!out.top && CLOTHES.test(w)) out.top = before(i) || undefined;
+    if (!out.bottom && LEGS.test(w)) out.bottom = before(i) || undefined;
+    if (!out.hair && w === 'hair') out.hair = before(i) || undefined;
+  });
+  return out;
 }
 
 /**
@@ -568,7 +615,7 @@ export function normaliseCastMember(raw: Record<string, unknown>): CastMember {
           ? 'young'
           : 'adult');
   const top = fromText(TOPS, raw.top, text, TOP_WORDS, 'tshirt');
-  const colours = colourWords(text);
+  const worn = clothesColours(text);
   const hair =
     pick(HAIRS, raw.hair, '' as 'short') ||
     (said('bald')
@@ -612,8 +659,11 @@ export function normaliseCastMember(raw: Record<string, unknown>): CastMember {
       said('blonde', 'blond') ? '#d4b46a' : said('ginger', 'redhead') ? '#b5562a' : '#2a1f18',
     ),
     top,
-    topColor: colour(raw.topColor, colours[0] ?? (soldier ? '#6b6b3a' : '#4a6fa5')),
-    bottomColor: colour(raw.bottomColor, colours[1] ?? (soldier ? '#5a5a34' : '#3a3f4a')),
+    topColor: colour(raw.topColor, worn.top ?? (soldier ? '#6b6b3a' : '#4a6fa5')),
+    bottomColor: colour(
+      raw.bottomColor,
+      worn.bottom ?? (top === 'uniform' && worn.top ? worn.top : soldier ? '#5a5a34' : '#3a3f4a'),
+    ),
     extra,
   };
 }
@@ -623,6 +673,18 @@ export type ShotPlan = Omit<ShotSpec, 'start' | 'end' | 'mouth' | 'seed'> & {
   /** The cast member whose mouth moves to the voice, if any. */
   speaker: string;
 };
+
+/** A crowd in the line: "people", "everyone", or a plural like "soldiers" (not "a soldier"). */
+function crowdMentioned(text: string): boolean {
+  return wordList(text).some(
+    (w) =>
+      ['people', 'crowd', 'everyone', 'townspeople', 'audience', 'army'].includes(w) ||
+      (w.endsWith('s') && !!CROWD_WORDS[w.slice(0, -1)]),
+  );
+}
+
+/** Things that fly: shots with them look up at the sky. */
+export const FLYING = new Set(['plane', 'helicopter', 'rocket', 'bird']);
 
 const PRONOUNS = new Set([
   'he',
@@ -765,6 +827,8 @@ export function normalisePlan(
   const numbered = raw.some((x) => x && typeof x === 'object' && Number.isFinite(Number(x.beat)));
   const opening = firstMention(script, SET_WORDS) ?? 'street';
   const shots: ShotPlan[] = [];
+  let prevMood: Mood = 'neutral';
+  let lastYear = 0;
   for (let i = 0; i < beats.length; i++) {
     const beat = beats[i]!;
     const found = numbered
@@ -824,10 +888,14 @@ export function normalisePlan(
       .filter((p) => !(set === 'space' && p === 'planet' && people.length))
       .slice(0, 3);
 
+    const flying = uniqueProps.some((p) => FLYING.has(p));
+    // Something in the sky with nobody to see it: the hero watches it from below.
+    if (flying && !people.length && !['space', 'sky', 'underwater'].includes(set))
+      people.push(hero);
     const subject = people[0] ?? uniqueProps[0] ?? 'none';
     const doing = str(field(s, 'doing', 'action', 'activity', 'pose'));
     const speaker = person(str(field(s, 'speaker')) || '') ?? '';
-    const action =
+    let action =
       pick(ACTIONS, doing, '' as Action) ||
       ((firstMention(doing, ACTION_WORDS) ?? firstMention(beat, ACTION_WORDS)) as
         Action | undefined) ||
@@ -838,6 +906,34 @@ export function normalisePlan(
       ((firstMention(effectText, EFFECT_WORDS) ??
         firstMention(`${doing} ${beat}`, EFFECT_WORDS)) as Effect | undefined) ||
       'none';
+    const feeling = str(field(s, 'feeling', 'mood', 'emotion'));
+    let mood: Mood =
+      pick(MOODS, feeling, '' as Mood) ||
+      ((firstMention(feeling, MOOD_WORDS) ?? firstMention(`${doing} ${beat}`, MOOD_WORDS)) as
+        Mood | undefined) ||
+      prevMood;
+    if (action === 'shock' && mood === 'neutral') mood = 'surprised';
+    const crowdRaw = Number(field(s, 'crowd', 'extras', 'background people'));
+    const crowd = Number.isFinite(crowdRaw)
+      ? Math.max(0, Math.min(6, Math.round(crowdRaw)))
+      : crowdMentioned(beat) && !uniqueProps.some((p) => FLYING.has(p))
+        ? 4
+        : 0;
+    // Years make good big words ("1944"; "a year later" counts on from the last one).
+    let year = '';
+    const said = /\b(1[0-9]{3}|20[0-9]{2})\b/.exec(beat)?.[1];
+    if (said) lastYear = Number(said);
+    else if (lastYear) {
+      const later = /\b(a|one|two|three|four|five|ten|\d+)\s+years?\s+later\b/i.exec(beat);
+      if (later) {
+        const n =
+          { a: 1, one: 1, two: 2, three: 3, four: 4, five: 5, ten: 10 }[later[1]!.toLowerCase()] ??
+          Number(later[1]);
+        lastYear += n;
+        year = String(lastYear);
+      }
+    }
+    if (said) year = said;
     const cameraText = str(field(s, 'camera', 'framing', 'shot', 'view'));
     let framing =
       pick(FRAMINGS, cameraText, '' as Framing) ||
@@ -846,6 +942,17 @@ export function normalisePlan(
 
     // Film rules.
     const personShot = people.length > 0;
+
+    // Something in the sky: the people look up at it.
+    if (flying && personShot && ['idle', 'think', 'talk', 'shock'].includes(action))
+      action = 'lookUp';
+    // A shot from the ground looking up is for strong moments only.
+    if (
+      framing === 'lowAngle' &&
+      !['proud', 'determined', 'angry'].includes(mood) &&
+      action !== 'celebrate'
+    )
+      framing = 'medium';
     if (
       !personShot &&
       subject !== 'none' &&
@@ -863,6 +970,12 @@ export function normalisePlan(
     if (
       framing === 'closeUp' &&
       (prev?.framing === 'closeUp' || prev?.framing === 'extremeCloseUp')
+    )
+      framing = 'medium';
+    // Hands at work need the hands in frame.
+    if (
+      ['work', 'eat', 'read', 'pickUp', 'salute', 'wave'].includes(action) &&
+      (framing === 'closeUp' || framing === 'extremeCloseUp')
     )
       framing = 'medium';
     if (prev && shots.length >= 2 && shots.at(-2)!.framing === framing && prev.framing === framing)
@@ -884,13 +997,16 @@ export function normalisePlan(
       framing,
       subject,
       others: people.slice(1, 4),
-      action: action as Action,
+      action,
       props: uniqueProps.filter((p) => p !== subject),
       effect: effect as Effect,
       camera: move,
-      bigText: typeof s.bigText === 'string' ? s.bigText.trim().slice(0, 24) : '',
+      bigText: (typeof s.bigText === 'string' ? s.bigText.trim().slice(0, 24) : '') || year,
       speaker: speaker && ids.has(speaker) ? speaker : '',
+      mood,
+      crowd,
     });
+    prevMood = mood === 'surprised' ? 'neutral' : mood;
   }
   const used = new Set(shots.flatMap((x) => [x.subject, ...x.others, x.speaker]));
   const usedModels = new Set(

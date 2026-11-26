@@ -2,13 +2,17 @@
 // and a camera that frames the subject and moves over the shot. `update(t)` is a pure function of
 // the time into the shot, so any frame can be drawn on its own.
 import * as THREE from 'three';
-import type { CastMember, Model, ShotSpec } from '@rec-it/lowpoly';
+import type { Action, CastMember, Model, ShotSpec } from '@rec-it/lowpoly';
 import { YOU } from '@rec-it/lowpoly';
 import { Person } from './people';
 import { anyProp, makeProp, sign, type Prop } from './props';
+import { mat } from './ps1';
 import { flat } from './ps1';
 import { buildSet } from './sets';
 import { rng, texture } from './textures';
+
+/** Props that fly across the sky. */
+const FLYERS = new Set(['plane', 'helicopter', 'rocket', 'bird']);
 
 export interface BuiltShot {
   scene: THREE.Scene;
@@ -79,17 +83,24 @@ export function buildShot(
   models: Record<string, Model> = {},
 ): BuiltShot {
   const r = rng(spec.seed + 11);
-  const set = buildSet(spec.set, spec.seed);
+  const flies = [spec.subject, ...spec.props].some((p) => FLYERS.has(p));
+  const set = buildSet(spec.set, spec.seed, { clearing: flies });
   const { scene } = set;
   const setObjects = [...scene.children];
   const camera = new THREE.PerspectiveCamera(40, 9 / 16, 0.03, 400);
   const member = (id: string) => cast.find((c) => c.id === id) ?? (id === 'you' ? YOU : undefined);
 
+  const animated: ((t: number) => void)[] = [];
+
   // People.
   const people = new Map<string, Person>();
   const mainCast = member(spec.subject);
   const pov = spec.framing === 'pov';
-  const facing = pov ? Math.PI : [0, 0, 0.45, -0.45, 1.25][Math.floor(r() * 5)]!;
+  // Looking at something in the sky: we watch over their shoulder.
+  const facing =
+    pov || (flies && spec.framing !== 'object')
+      ? Math.PI
+      : [0, 0, 0.45, -0.45, 1.25][Math.floor(r() * 5)]!;
   const subject = mainCast ? new Person(mainCast, spec.seed) : null;
   if (subject) {
     people.set(mainCast!.id, subject);
@@ -143,6 +154,7 @@ export function buildShot(
   let onSign = false;
   propIds.forEach((id, i) => {
     const p = anyProp(id, spec.bigText, models);
+    p.id = id;
     if (id === 'sign' && spec.bigText) onSign = true;
     props.push(p);
     const o = p.object;
@@ -212,11 +224,107 @@ export function buildShot(
   });
   if (spec.bigText && !onSign && spec.props.includes('sign')) onSign = true;
 
+  // A crowd in the background: villagers, soldiers, passers-by.
+  const crowdLook = ['battlefield', 'jungle', 'island'].includes(spec.set);
+  const crowd = Array.from({ length: spec.crowd }, (_, i) => {
+    const look: CastMember = {
+      id: `extra${i}`,
+      name: 'Extra',
+      gender: r() > 0.45 ? 'male' : 'female',
+      age: r() > 0.8 ? 'old' : 'adult',
+      skin: (['pale', 'light', 'tan', 'brown', 'dark'] as const)[Math.floor(r() * 5)]!,
+      hair: (['short', 'long', 'curly', 'bald'] as const)[Math.floor(r() * 4)]!,
+      hairColor: ['#2a1f18', '#4a3324', '#8a6a3a', '#1c1c1c'][Math.floor(r() * 4)]!,
+      top: crowdLook
+        ? 'uniform'
+        : (['tshirt', 'jacket', 'hoodie', 'sweater', 'suit'] as const)[Math.floor(r() * 5)]!,
+      topColor: crowdLook
+        ? '#5a6a3a'
+        : ['#4a6fa5', '#a3342a', '#3f7a3a', '#d9b53a', '#5e3c7a', '#7a7c80'][Math.floor(r() * 6)]!,
+      bottomColor: ['#3a3f4a', '#3b5a8c', '#5a4a34'][Math.floor(r() * 3)]!,
+      extra: crowdLook ? 'cap' : 'none',
+    };
+    const person = new Person(look, spec.seed + 50 + i);
+    const side = i % 2 ? -1 : 1;
+    const pos = new THREE.Vector3(side * (1.6 + (i >> 1) * 1.3 + r() * 0.6), 0, -2.5 - r() * 4);
+    const walking = r() > 0.5;
+    const facingC = walking ? (side * -Math.PI) / 2 : (r() - 0.5) * 0.8;
+    scene.add(person.root);
+    return {
+      person,
+      pos,
+      facing: facingC,
+      action: (walking ? 'walk' : spec.action === 'lookUp' ? 'lookUp' : 'idle') as Action,
+    };
+  });
+
+  // Reading or picking something up: a sheet of paper in the hand.
+  if (
+    subject &&
+    (spec.action === 'read' || spec.action === 'pickUp') &&
+    !props.some((p) => p.placement === 'hand')
+  ) {
+    const sheet = new THREE.Mesh(
+      new THREE.BoxGeometry(0.21, 0.29, 0.004),
+      mat('#ffffff', {
+        map: texture('leaflet:held', [16, 24], (g, w, h, rr) => {
+          g.fillStyle = '#efe9d6';
+          g.fillRect(0, 0, w, h);
+          g.fillStyle = '#3a3a3a';
+          for (let y = 3; y < h - 2; y += 3) g.fillRect(2, y, 4 + rr() * (w - 6), 1);
+        }),
+      }),
+    );
+    sheet.rotation.x = -1.1;
+    subject.handR.add(sheet);
+  }
+
+  // Things in the sky fly across it, high and in clear view; leaflets fall from planes.
+  const flyer = props.find((p) => FLYERS.has(p.id ?? ''));
+  const leaflets = props.find((p) => p.id === 'paper');
+  if (flyer) {
+    flyer.object.traverse((o) => {
+      const m = (o as THREE.Mesh).material as THREE.Material | undefined;
+      if (m) (m as THREE.MeshLambertMaterial).fog = false;
+    });
+    // Flying in from far away towards us: it stays in the tall frame the whole time.
+    const speed = flyer.id === 'bird' ? 5 : flyer.id === 'helicopter' ? 7 : 16;
+    const height = flyer.id === 'bird' ? 7 : 14;
+    flyer.object.scale.setScalar(flyer.id === 'plane' ? 0.6 : 1);
+    const path = (t: number) => new THREE.Vector3(-3 + t * 1.2, height - t * 0.25, -70 + t * speed);
+    animated.push((t) => {
+      flyer.object.position.copy(path(t));
+      flyer.object.rotation.set(-0.08, 0.1, Math.sin(t * 0.7) * 0.08);
+    });
+    if (leaflets) {
+      // Each sheet leaves the plane as it passes and flutters down.
+      leaflets.object.scale.setScalar(1);
+      leaflets.object.position.set(0, 0, 0);
+      const sheets = leaflets.object.children;
+      animated.push((t) =>
+        sheets.forEach((c, i) => {
+          const born = 0.2 + i * 0.12;
+          const age = t - born;
+          c.visible = age > 0;
+          if (age <= 0) return;
+          const from = path(born);
+          c.scale.setScalar(2.2);
+          c.position.set(
+            from.x + Math.sin(age * 2 + i) * 0.9 + ((i % 5) - 2) * age * 1.1,
+            Math.max(0.05, from.y - 1 - age * 2.2),
+            from.z + age * 7,
+          );
+          c.rotation.set(age * 3 + i, age * 2, Math.sin(age * 4 + i) * 0.9);
+        }),
+      );
+    }
+  }
+  const skyShot = !!flyer && !!subject && !pov && spec.framing !== 'object';
+
   // Effects.
   const effect = spec.effect;
   let tint = '#ffffff',
     tintAmount = 0;
-  const animated: ((t: number) => void)[] = [];
   const dark = effect === 'darkness' || effect === 'spotlight';
   if (dark) {
     scene.background = new THREE.Color('#000000');
@@ -403,18 +511,25 @@ export function buildShot(
         speaker === mainCast?.id ? (spec.mouth[frame] ?? 0) : 0,
         base,
         facing,
+        spec.mood,
       );
     others.forEach((c, i) => {
       const p = people.get(c.id)!;
       const spot = otherSpots[i]!;
       p.pose(
-        speaker === c.id ? 'talk' : action === 'shock' || action === 'celebrate' ? action : 'idle',
+        speaker === c.id
+          ? 'talk'
+          : ['shock', 'celebrate', 'lookUp', 'salute', 'patrol', 'nod', 'wave'].includes(action)
+            ? action
+            : 'idle',
         at + i,
         speaker === c.id ? (spec.mouth[frame] ?? 0) : 0,
         spot.pos,
         spot.facing,
+        spec.mood,
       );
     });
+    crowd.forEach((c, i) => c.person.pose(c.action, at + i * 0.7, 0, c.pos, c.facing, spec.mood));
     for (const a of animated) a(t);
 
     // Camera.
@@ -423,7 +538,7 @@ export function buildShot(
     let dist: number;
     let lift = 0;
     let fov = 40;
-    if (subject && !pov) {
+    if (subject && !pov && !skyShot) {
       const eyes = subject.point('eyes');
       switch (spec.framing) {
         case 'extremeCloseUp':
@@ -452,9 +567,10 @@ export function buildShot(
           dist = 6;
           break;
         case 'lowAngle':
-          focus = subject.point('chest');
-          dist = 2.4;
-          lift = -1.1;
+          // From about knee height, never from under the feet.
+          focus = subject.point('chest').add(new THREE.Vector3(0, 0.2, 0));
+          dist = 2.6;
+          lift = -0.55;
           break;
         case 'object':
           focus = focusProp
@@ -467,6 +583,10 @@ export function buildShot(
           dist = 5.2;
           lift = 0.9;
       }
+    } else if (skyShot) {
+      // Over the shoulder, looking up at the sky: the person low in frame, the flyer above.
+      focus = new THREE.Vector3(0, 6.5, -26);
+      dist = 0;
     } else if (pov) {
       focus = focusProp
         ? (focusProp as Prop).object.getWorldPosition(new THREE.Vector3())
@@ -498,7 +618,16 @@ export function buildShot(
     let az = (subject ? facing : 0) * (spec.framing === 'wide' ? 0.5 : 1);
     if (move === 'orbit') az += (k - 0.5) * 0.5;
     const d = dist * scale;
-    if (pov) {
+    if (skyShot) {
+      const head = subject!.point('eyes');
+      // Just behind and above the shoulder, so the head and shoulders sit at the bottom of the tall frame.
+      camera.position.set(
+        head.x + 0.28 + Math.sin(k * 1.2) * 0.06,
+        head.y + 0.1,
+        head.z + 3.6 - k * 0.3,
+      );
+      camera.lookAt(focus);
+    } else if (pov) {
       camera.position.set(0, 1.55, 1.9 - k * (move === 'pushIn' ? 0.35 : 0.1));
       camera.lookAt(focus);
       if (!camera.children.length && mainCast) camera.add(povArm(mainCast));
