@@ -113,7 +113,7 @@ export const SET_WORDS: WordTable<string> = {
 export const ACTION_WORDS: WordTable<string> = {
   stand: 'idle',
   wait: 'idle',
-  told: 'idle',
+
   talk: 'talk',
   say: 'talk',
   speak: 'talk',
@@ -171,6 +171,12 @@ export const ACTION_WORDS: WordTable<string> = {
   realise: 'think',
   realize: 'think',
   hide: 'crouch',
+  hid: 'crouch',
+  hidden: 'crouch',
+  'shaking head': 'shakeHead',
+  'shake head': 'shakeHead',
+  'shakes head': 'shakeHead',
+  sky: 'lookUp',
   'look up': 'lookUp',
   'looks up': 'lookUp',
   'stare up': 'lookUp',
@@ -271,7 +277,6 @@ export const MOOD_WORDS: WordTable<string> = {
   exhausted: 'tired',
   decade: 'tired',
   sick: 'tired',
-  old: 'tired',
   proud: 'proud',
   hero: 'proud',
   honour: 'proud',
@@ -341,6 +346,8 @@ export const PROP_WORDS: WordTable<string> = {
   car: 'car',
   truck: 'car',
   plane: 'plane',
+  flying: 'plane',
+  flight: 'plane',
   airplane: 'plane',
   aeroplane: 'plane',
   jet: 'plane',
@@ -490,6 +497,11 @@ export const EFFECT_WORDS: WordTable<string> = {
 
 export const TOP_WORDS: WordTable<string> = {
   soldier: 'uniform',
+  commander: 'uniform',
+  major: 'uniform',
+  general: 'uniform',
+  captain: 'uniform',
+  sergeant: 'uniform',
   army: 'uniform',
   military: 'uniform',
   uniform: 'uniform',
@@ -531,7 +543,6 @@ export const EXTRA_WORDS: WordTable<string> = {
   mustache: 'mustache',
   helmet: 'helmet',
   cap: 'cap',
-  soldier: 'cap',
   hat: 'hat',
 };
 
@@ -587,6 +598,80 @@ export const ROLE_WORDS: WordTable<string> = {
   astronaut: 'astronaut',
   guard: 'guard',
 };
+
+/** Hats a role implies when the description names none. */
+export const IMPLIED_EXTRA_WORDS: WordTable<string> = {
+  soldier: 'cap',
+  commander: 'cap',
+  officer: 'cap',
+  major: 'cap',
+  general: 'cap',
+  captain: 'cap',
+  army: 'cap',
+};
+
+/** Words that imply a place without naming it ("doctor", "sleep"): they never override the AI. */
+const IMPLIED_PLACES = new Set([
+  'doctor',
+  'surgeon',
+  'patient',
+  'nurse',
+  'scientist',
+  'experiment',
+  'researcher',
+  'teacher',
+  'student',
+  'robbery',
+  'robber',
+  'farmer',
+  'judge',
+  'trial',
+  'lawyer',
+  'astronaut',
+  'sleep',
+  'bed',
+  'cook',
+  'fridge',
+  'work',
+  'desk',
+  'company',
+  'sofa',
+  'couch',
+  'class',
+  'cell',
+  'planet',
+  'moon',
+  'cloud',
+  'sand',
+  'wood',
+  'ship',
+  'boat',
+  'battle',
+  'outside',
+  'home',
+  'house',
+  'flying',
+  'orbit',
+  'galaxy',
+  'nothing',
+  'darkness',
+  'void',
+  'studio',
+  'ice',
+  'winter',
+  'mountain',
+  'field',
+  'barn',
+  'park',
+  'vault',
+  'skyscraper',
+  'downtown',
+]);
+
+/** Place words that name the place itself ("jungle", "hospital"): the narration's own words win. */
+export const PLACE_WORDS: WordTable<string> = Object.fromEntries(
+  Object.entries(SET_WORDS).filter(([k]) => !IMPLIED_PLACES.has(k)),
+);
 
 /** The words of a text, lower-case, with simple plurals and -ing/-ed forms reduced. */
 export function wordList(text: string): string[] {

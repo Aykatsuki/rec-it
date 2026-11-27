@@ -218,6 +218,8 @@ export const lowPolySchema = z
     speed: z.number().min(0.7).max(1.5).default(1.1),
     /** Channel name flashed early on, like a watermark ("" for none). */
     brand: z.string().trim().max(40).default(''),
+    /** How solid the channel name is on screen. */
+    brandOpacity: z.number().min(0.1).max(1).default(0.9),
     /** How chunky the pixels are: the height the 3D is drawn at. */
     pixels: z.enum(['chunky', 'classic', 'clean']).default('classic'),
     musicAssetId: z.string().min(1).max(100).nullable().default(null),

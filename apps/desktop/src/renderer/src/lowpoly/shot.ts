@@ -137,13 +137,16 @@ export function buildShot(
     scene.add(chair);
   }
   if (subject && spec.action === 'sleep') {
-    const bed = makeProp('bed').object;
-    bed.rotation.y = facing;
-    bed.position.copy(
-      new THREE.Vector3(0, 0, -0.85).applyAxisAngle(new THREE.Vector3(0, 1, 0), facing),
-    );
-    scene.add(bed);
-    base = new THREE.Vector3(0, 0.55, 0);
+    if (set.indoor || spec.props.includes('bed')) {
+      // The bed runs from the feet (here) to past the head; the headboard stays clear of it.
+      const bed = makeProp('bed').object;
+      bed.rotation.y = facing;
+      bed.position.copy(
+        new THREE.Vector3(0, 0, -0.98).applyAxisAngle(new THREE.Vector3(0, 1, 0), facing),
+      );
+      scene.add(bed);
+      base = new THREE.Vector3(0, 0.55, 0);
+    } else base = new THREE.Vector3(0, 0.12, 0);
   }
 
   // Props.
@@ -152,7 +155,25 @@ export function buildShot(
   const propIds = [...new Set([...(propSubject ? [propSubject] : []), ...spec.props])];
   let focusProp = null as Prop | null;
   let onSign = false;
+  // Things near the person stand where the camera sees them: in front and to the side.
+  const near = (side: number, ahead: number) =>
+    new THREE.Vector3(side, 0, ahead).applyAxisAngle(new THREE.Vector3(0, 1, 0), facing);
+  let held = 0;
+  let holdingPaper = false;
+  let nearIndex = 0;
   propIds.forEach((id, i) => {
+    if (id === 'bed' && spec.action === 'sleep') return;
+    // A leaflet on the ground story-wise is one sheet in the hand, not a falling cloud.
+    if (id === 'paper' && subject && !flies && held < 2) {
+      const hand =
+        held === 0 && !['salute', 'wave', 'point', 'think'].includes(spec.action)
+          ? subject.handR
+          : subject.handL;
+      hand.add(heldSheet());
+      held++;
+      holdingPaper = true;
+      return;
+    }
     const p = anyProp(id, spec.bigText, models);
     p.id = id;
     if (id === 'sign' && spec.bigText) onSign = true;
@@ -167,8 +188,13 @@ export function buildShot(
           const table = makeProp('table').object;
           scene.add(table);
           o.position.set(0, set.tableTop + 0.02, 0);
-        } else o.position.set(0, 1.0, 0);
-        o.scale.setScalar(1.6);
+          o.scale.setScalar(1.6);
+        } else {
+          // Nothing floats: without a table it lies on the ground.
+          o.position.set(0, 0.04, 0);
+          o.rotation.z = Math.PI / 2;
+          o.scale.setScalar(1.6);
+        }
       } else o.position.set(0, 0, 0);
       if (
         [
@@ -197,8 +223,18 @@ export function buildShot(
       }
       o.scale.setScalar(1.4);
       focusProp = p;
+    } else if (p.placement === 'hand' && subject && held < 2) {
+      // The right hand, unless the action needs it (a salute, a wave): then the left.
+      const rightBusy = ['salute', 'wave', 'point', 'think'].includes(spec.action);
+      const hand = (held === 0) !== rightBusy ? subject.handR : subject.handL;
+      held++;
+      hand.add(o);
     } else if (p.placement === 'hand' && subject) {
-      subject.handR.add(o);
+      // A second small thing (coconuts with a banana in hand): at the person's feet, in view.
+      const k = nearIndex++;
+      o.position.copy(near((k % 2 ? -1 : 1) * 0.32, 0.45 + k * 0.1));
+      o.position.y = 0.05;
+      o.scale.setScalar(1.6);
     } else if (p.placement === 'float') {
       // Beside the subject's head, on the side away from the camera's line.
       const side = new THREE.Vector3(
@@ -216,6 +252,10 @@ export function buildShot(
         -4 - p.size * 0.4,
       );
       o.rotation.y = id === 'plane' ? Math.PI / 2 : r() * 0.6 - 0.3;
+    } else if (subject) {
+      const k = nearIndex++;
+      o.position.copy(near((k % 2 ? -1 : 1) * 0.55, 0.5 + k * 0.1));
+      o.rotation.y = facing + (r() - 0.5) * 1.2;
     } else {
       o.position.set((i % 2 ? -1 : 1) * 1.0, 0, 0.3);
       o.rotation.y = (r() - 0.5) * 1.2;
@@ -246,7 +286,7 @@ export function buildShot(
     };
     const person = new Person(look, spec.seed + 50 + i);
     const side = i % 2 ? -1 : 1;
-    const pos = new THREE.Vector3(side * (1.6 + (i >> 1) * 1.3 + r() * 0.6), 0, -2.5 - r() * 4);
+    const pos = new THREE.Vector3(side * (2.2 + (i >> 1) * 1.4 + r() * 0.8), 0, -5 - r() * 4);
     const walking = r() > 0.5;
     const facingC = walking ? (side * -Math.PI) / 2 : (r() - 0.5) * 0.8;
     scene.add(person.root);
@@ -262,22 +302,10 @@ export function buildShot(
   if (
     subject &&
     (spec.action === 'read' || spec.action === 'pickUp') &&
-    !props.some((p) => p.placement === 'hand')
-  ) {
-    const sheet = new THREE.Mesh(
-      new THREE.BoxGeometry(0.21, 0.29, 0.004),
-      mat('#ffffff', {
-        map: texture('leaflet:held', [16, 24], (g, w, h, rr) => {
-          g.fillStyle = '#efe9d6';
-          g.fillRect(0, 0, w, h);
-          g.fillStyle = '#3a3a3a';
-          for (let y = 3; y < h - 2; y += 3) g.fillRect(2, y, 4 + rr() * (w - 6), 1);
-        }),
-      }),
-    );
-    sheet.rotation.x = -1.1;
-    subject.handR.add(sheet);
-  }
+    !holdingPaper &&
+    held === 0
+  )
+    subject.handR.add(heldSheet());
 
   // Things in the sky fly across it, high and in clear view; leaflets fall from planes.
   const flyer = props.find((p) => FLYERS.has(p.id ?? ''));
@@ -554,6 +582,12 @@ export function buildShot(
           focus = subject.point('chest').add(new THREE.Vector3(0, 0.15, 0));
           dist = 2.3;
           lift = 0.1;
+          // Things at their feet (coconuts by the banana-eater) must be in frame too.
+          if (nearIndex > 0) {
+            focus = subject.point('body').add(new THREE.Vector3(0, -0.1, 0));
+            dist = 3.4;
+            lift = 0.5;
+          }
           // Two people: frame them both.
           const other = others[0] && people.get(others[0].id);
           if (other) {
@@ -671,4 +705,21 @@ export function disposeShot(shot: BuiltShot): void {
     const m = mesh.material;
     if (m) for (const x of Array.isArray(m) ? m : [m]) x.dispose();
   });
+}
+
+/** One sheet of paper with lines of print, for holding. */
+function heldSheet(): THREE.Mesh {
+  const sheet = new THREE.Mesh(
+    new THREE.BoxGeometry(0.21, 0.29, 0.004),
+    mat('#ffffff', {
+      map: texture('leaflet:held', [16, 24], (g, w, h, rr) => {
+        g.fillStyle = '#efe9d6';
+        g.fillRect(0, 0, w, h);
+        g.fillStyle = '#3a3a3a';
+        for (let y = 3; y < h - 2; y += 3) g.fillRect(2, y, 4 + rr() * (w - 6), 1);
+      }),
+    }),
+  );
+  sheet.rotation.x = -1.1;
+  return sheet;
 }

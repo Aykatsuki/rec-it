@@ -258,6 +258,88 @@ def _segment(
     return audio, align(words, spoken_spans(timings), counts), sounds
 
 
+def pauses(audio: Any, sr: int = SAMPLE_RATE, min_len: float = 0.12) -> list[tuple[float, float]]:
+    """Quiet stretches of at least `min_len` seconds (start, end), from 10 ms loudness."""
+    import numpy as np
+
+    a = np.asarray(audio, dtype=np.float32)
+    hop = int(sr * 0.01)
+    n = len(a) // hop
+    if n == 0:
+        return []
+    frames = a[: n * hop].reshape(n, hop)
+    db = 20 * np.log10(np.sqrt((frames**2).mean(axis=1)) + 1e-6)
+    quiet = db < max(db.max() - 38, -60)
+    out: list[tuple[float, float]] = []
+    start = None
+    for i, q in enumerate(quiet):
+        if q and start is None:
+            start = i
+        if (not q or i == n - 1) and start is not None:
+            end = i if not q else i + 1
+            if (end - start) / 100 >= min_len:
+                out.append((start / 100, end / 100))
+            start = None
+    return out
+
+
+def snap_to_pauses(words: list[dict], sounds: list[dict], audio: Any) -> tuple[list[dict], list[dict]]:
+    """Re-times words and sounds so every sentence and clause end meets its pause in the audio.
+
+    Kokoro's predicted timings drift (up to a second over a long script) from the audio it makes,
+    which put captions and shot cuts out of step with the voice. Each word ending in punctuation is
+    matched, in order, to the nearest pause after the previous match; times between matches are
+    stretched linearly, so the whole timeline follows the real audio.
+    """
+    try:
+        gaps = pauses(audio)
+    except ImportError:
+        return words, sounds
+    total = len(audio) / SAMPLE_RATE
+    # Anchors: (old time, new time) pairs, always increasing.
+    anchors: list[tuple[float, float]] = [(0.0, 0.0)]
+    used = -1
+    for i, w in enumerate(words[:-1]):
+        if not re.search(r"[.,:;!?…]['\")\]]*$", w["text"]):
+            continue
+        best = None
+        for k in range(used + 1, len(gaps)):
+            g0, g1 = gaps[k]
+            if g0 < anchors[-1][1]:
+                continue
+            d = abs(g0 - w["end"])
+            if d <= 1.6 and (best is None or d < best[0]):
+                best = (d, k)
+            if g0 > w["end"] + 1.6:
+                break
+        if best is None:
+            continue
+        k = best[1]
+        g0, g1 = gaps[k]
+        nxt = words[i + 1]["start"]
+        if w["end"] <= anchors[-1][0] or nxt <= w["end"]:
+            continue
+        anchors.append((w["end"], g0))
+        anchors.append((nxt, g1))
+        used = k
+    last_old = max(words[-1]["end"], anchors[-1][0] + 1e-3)
+    tail = gaps[-1][0] if gaps and gaps[-1][1] >= total - 0.02 else total
+    anchors.append((last_old, max(anchors[-1][1] + 1e-3, tail)))
+
+    def remap(t: float) -> float:
+        for (a0, b0), (a1, b1) in zip(anchors, anchors[1:]):
+            if t <= a1:
+                if a1 - a0 < 1e-6:
+                    return b1
+                return round(b0 + (t - a0) * (b1 - b0) / (a1 - a0), 3)
+        a0, b0 = anchors[-1]
+        return round(b0 + (t - a0), 3)
+
+    new_words = [{**w, "start": remap(w["start"]), "end": remap(w["end"])} for w in words]
+    new_sounds = [{**x, "start": remap(x["start"]), "end": remap(x["end"])} for x in sounds]
+    return new_words, new_sounds
+
+
 def run(
     params: dict[str, Any], progress: Callable[..., None], cancelled: threading.Event
 ) -> dict[str, Any]:
@@ -283,6 +365,8 @@ def run(
             sounds = fake_sounds(words)
         else:
             audio, words, sounds = _segment(engine, text, voice, speed)
+            if words:
+                words, sounds = snap_to_pauses(words, sounds, audio)
         dur = len(audio) / SAMPLE_RATE
         result.append(
             {

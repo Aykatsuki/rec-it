@@ -11,6 +11,8 @@ import {
   MOOD_WORDS,
   CROWD_WORDS,
   PROP_WORDS,
+  IMPLIED_EXTRA_WORDS,
+  PLACE_WORDS,
   ROLE_WORDS,
   SET_WORDS,
   TOP_WORDS,
@@ -291,6 +293,8 @@ export const renderSpecSchema = z.object({
   shots: z.array(shotSpecSchema).min(1).max(120),
   /** Channel name flashed on screen early on, like a watermark ("" for none). */
   brand: z.string().max(40).default(''),
+  /** How solid the channel name is (0.1 faint … 1 solid). */
+  brandOpacity: z.number().min(0.1).max(1).default(0.9),
   /** Models the AI designed for things the kit has no prop for, by id ("m:<id>" in shots). */
   models: z.record(z.string().regex(/^[a-z0-9_]{1,24}$/), modelSchema).default({}),
 });
@@ -629,8 +633,22 @@ export function normaliseCastMember(raw: Record<string, unknown>): CastMember {
             : gender === 'female' || said('long')
               ? 'long'
               : 'short');
-  const extra = fromText(EXTRAS, raw.extra, text, EXTRA_WORDS, 'none');
-  const soldier = top === 'uniform' && said('soldier', 'army', 'military');
+  const explicit = fromText(EXTRAS, raw.extra, text, EXTRA_WORDS, 'none');
+  const extra =
+    explicit !== 'none' ? explicit : fromText(EXTRAS, undefined, text, IMPLIED_EXTRA_WORDS, 'none');
+  const soldier =
+    top === 'uniform' &&
+    said(
+      'soldier',
+      'army',
+      'military',
+      'commander',
+      'officer',
+      'major',
+      'general',
+      'captain',
+      'sergeant',
+    );
   return {
     id,
     name: name.slice(0, 60),
@@ -764,73 +782,123 @@ export function normalisePlan(
   const script = o.script ?? beats.join(' ');
   const you = secondPerson(script);
   const cast: CastMember[] = [...(o.keep ?? (you ? [YOU] : []))];
-  const rawCast = Array.isArray(plan.cast) ? (plan.cast as Record<string, unknown>[]) : [];
+  /** Role words of each character ("officer", "soldier"), and the words of their description. */
   const roles = new Map<string, string[]>();
-  for (const raw of rawCast.slice(0, 6)) {
-    if (!raw || typeof raw !== 'object') continue;
+  const looks = new Map<string, string[]>();
+  const addCast = (raw: Record<string, unknown>): string | null => {
     const c = normaliseCastMember(raw);
-    roles.set(
-      c.id,
-      mentions(
-        Object.values(raw)
-          .filter((v) => typeof v === 'string')
-          .join(' '),
-        ROLE_WORDS,
-      ),
+    const text = Object.values(raw)
+      .filter((v) => typeof v === 'string')
+      .join(' ');
+    const existing = cast.find(
+      (k) => k.id === c.id || k.name.toLowerCase() === c.name.toLowerCase(),
     );
-    if (cast.some((k) => k.id === c.id || k.name.toLowerCase() === c.name.toLowerCase())) continue;
-    if (c.id === 'you' && !you) continue;
-    if (cast.length < 8) cast.push(c);
-  }
-  // The hero: "you" in a what-if, else the AI's first character, else one read from the script.
+    if (existing) return existing.id;
+    if (c.id === 'you' && !you) return null;
+    if (cast.length >= 8) return null;
+    cast.push(c);
+    roles.set(c.id, mentions(text, ROLE_WORDS));
+    looks.set(
+      c.id,
+      wordList(text).filter((w) => w.length > 3),
+    );
+    return c.id;
+  };
+  const rawCast = Array.isArray(plan.cast) ? (plan.cast as Record<string, unknown>[]) : [];
+  for (const raw of rawCast.slice(0, 6)) if (raw && typeof raw === 'object') addCast(raw);
+  const raw = Array.isArray(plan.shots) ? (plan.shots as Record<string, unknown>[]) : [];
+
+  // The hero: "you" in a what-if; else the AI's first character; else the person the AI kept
+  // describing in its shots ("Japanese soldier"), named from the script when it names them.
   let hero = you ? 'you' : (cast.find((c) => c.id !== 'you')?.id ?? '');
   if (you && !cast.some((c) => c.id === 'you')) cast.unshift(YOU);
   if (!hero) {
+    const counts = new Map<string, number>();
+    for (const s of raw)
+      for (const w of texts(
+        s && typeof s === 'object' ? field(s, 'who', 'characters', 'people', 'subject') : undefined,
+      )) {
+        const t = w.toLowerCase();
+        if (NOBODY.has(t) || isGroup(t) || firstMention(t, PROP_WORDS)) continue;
+        if (wordList(t).every((x) => PRONOUNS.has(x))) continue;
+        counts.set(t, (counts.get(t) ?? 0) + 1);
+      }
+    const described = [...counts].sort((x, y) => y[1] - x[1])[0]?.[0] ?? '';
     const ws = wordList(script);
     const she =
       ws.filter((w) => w === 'she' || w === 'her').length >
       ws.filter((w) => w === 'he' || w === 'his' || w === 'him').length;
-    const h = normaliseCastMember({
-      id: 'hero',
-      name: she ? 'Her' : 'Him',
-      description: script.slice(0, 400),
-      gender: she ? 'female' : 'male',
-    });
-    cast.push(h);
-    hero = h.id;
+    const first =
+      beats.find((b) => described && wordList(b).some((w) => wordList(described).includes(w))) ??
+      beats[0] ??
+      '';
+    const name = properNames(script)[0] ?? (she ? 'Her' : 'Him');
+    hero =
+      addCast({
+        name,
+        description: `${described} ${first}`.trim(),
+        gender: she ? 'female' : 'male',
+      }) ?? 'hero';
   }
-  const ids = new Set(cast.map((c) => c.id));
+  const heroRoles = new Set([
+    ...(roles.get(hero) ?? []),
+    ...mentions(script.split(/[.!?]/)[0] ?? '', ROLE_WORDS),
+  ]);
+  const heroItems = [...heroRoles].some((r) =>
+    ['soldier', 'officer', 'police', 'guard'].includes(r),
+  )
+    ? ['rifle']
+    : [];
+
+  /** Whom a "who" entry means: a cast id, "crowd", "prop:<id>", or null. */
   const person = (v: string): string | null => {
     const t = v.trim().toLowerCase();
     if (NOBODY.has(t)) return null;
     const s = slug(t);
-    if (ids.has(s)) return s;
+    if (cast.some((c) => c.id === s)) return s;
     const words = wordList(t);
     if (words.some((w) => w === 'you' || w === 'your' || w === 'viewer')) return you ? 'you' : hero;
     if (words.length && words.every((w) => PRONOUNS.has(w))) return hero;
-    const named = cast.find((c) => {
-      const nameWords = wordList(c.name);
-      return words.some((w) => w.length > 2 && nameWords.includes(w));
-    });
+    const named = cast.find((c) => words.some((w) => w.length > 2 && wordList(c.name).includes(w)));
     if (named) return named.id;
     const role = firstMention(t, ROLE_WORDS);
-    return (role && cast.find((c) => roles.get(c.id)?.includes(role))?.id) || null;
+    const byRole = role && cast.find((c) => roles.get(c.id)?.includes(role));
+    if (byRole) return byRole.id;
+    if (isGroup(t)) return 'crowd';
+    const p = firstMention(t, PROP_WORDS);
+    if (p) return `prop:${p}`;
+    // The hero's own description ("Japanese soldier") or a plain person word.
+    const heroLook = looks.get(hero) ?? [];
+    if (words.some((w) => w.length > 3 && heroLook.includes(w)) && (!role || heroRoles.has(role)))
+      return hero;
+    if (words.some((w) => PERSON_WORDS.has(w)) && (!role || heroRoles.has(role))) return hero;
+    // Someone new the story needs ("old commander").
+    if (role || words.some((w) => PERSON_WORDS.has(w) || w === 'old' || w === 'young'))
+      return addCast({
+        name: v
+          .trim()
+          .replace(/\b\w/g, (c) => c.toUpperCase())
+          .slice(0, 40),
+        description: v,
+      });
+    return null;
   };
-  const prop = (v: string): string | null => {
-    const exact = pick(PROPS, v, '' as PropId);
-    if (exact) return exact;
-    const said = firstMention(v, PROP_WORDS);
-    return said ?? null;
-  };
+  const prop = (v: string): string | null =>
+    pick(PROPS, v, '' as PropId) || (firstMention(v, PROP_WORDS) ?? null);
+
   const models = new Map<string, string>();
-  const raw = Array.isArray(plan.shots) ? (plan.shots as Record<string, unknown>[]) : [];
   const numbered = raw.some((x) => x && typeof x === 'object' && Number.isFinite(Number(x.beat)));
   const opening = firstMention(script, SET_WORDS) ?? 'street';
   const shots: ShotPlan[] = [];
+  /** Who each line is about (before staging), for lines that carry on a sentence. */
+  const present: string[][] = [];
   let prevMood: Mood = 'neutral';
-  let lastYear = 0;
   for (let i = 0; i < beats.length; i++) {
     const beat = beats[i]!;
+    const soFar = beats.slice(0, i + 1).join(' ');
+    // Things named in this line or the two before it are still in the scene.
+    const seen = new Set(mentions(beats.slice(Math.max(0, i - 2), i + 1).join(' '), PROP_WORDS));
+    const soFarWords = new Set(wordList(soFar).flatMap((w) => [w, w.replace(/s$/, '')]));
     const found = numbered
       ? raw.find((x) => x && typeof x === 'object' && Number(x.beat) === i + 1)
       : raw[i] && typeof raw[i] === 'object'
@@ -838,43 +906,67 @@ export function normalisePlan(
         : undefined;
     const s: Record<string, unknown> = found ?? {};
     const prev = shots.at(-1);
+
+    // Where: the narration's own words win, then the AI's, then where we were.
     const place = str(field(s, 'place', 'set', 'location', 'scene', 'setting'));
-    const set =
+    let set = ((firstMention(beat, PLACE_WORDS) as SetId | undefined) ||
       pick(SETS, place, '' as SetId) ||
-      ((firstMention(place, SET_WORDS) ?? firstMention(beat, SET_WORDS)) as SetId | undefined) ||
+      (firstMention(place, SET_WORDS) as SetId | undefined) ||
+      (firstMention(beat, SET_WORDS) as SetId | undefined) ||
       prev?.set ||
-      (opening as SetId);
+      (opening as SetId)) as SetId;
 
-    // People.
+    // Who: the AI's people, groups become a crowd, things it listed as "who" become objects.
     const whoRaw = texts(field(s, 'who', 'characters', 'people', 'subject', 'character'));
-    const people = [...new Set(whoRaw.map(person).filter((p): p is string => !!p))];
-    if (!people.length && !whoRaw.some((w) => NOBODY.has(w.toLowerCase()))) {
-      const ws = wordList(beat);
-      const named = cast.find((c) => wordList(c.name).some((w) => w.length > 2 && ws.includes(w)));
-      const beatRoles = mentions(beat, ROLE_WORDS);
-      const byRole = cast.find(
-        (c) => c.id !== hero && roles.get(c.id)?.some((r) => beatRoles.includes(r)),
-      );
-      if (named) people.push(named.id);
-      else if (byRole) people.push(byRole.id);
-      else if (
-        ws.some((w) => (you ? ['you', 'your'] : ['he', 'she', 'his', 'her', 'him']).includes(w))
-      )
-        people.push(hero);
+    const people: string[] = [];
+    const whoObjects: string[] = [];
+    let crowd = 0;
+    for (const w of whoRaw) {
+      const r = person(w);
+      if (!r) continue;
+      if (r === 'crowd') crowd = 3;
+      else if (r.startsWith('prop:')) whoObjects.push(r.slice(5));
+      else if (!people.includes(r)) people.push(r);
     }
+    const saidNobody = whoRaw.some((w) => NOBODY.has(w.toLowerCase()));
+    const ws = wordList(beat);
+    // The narration names people too: "his old commander", "he", "Onoda".
+    for (const c of cast) {
+      if (people.includes(c.id) || c.id === 'you') continue;
+      const byName = wordList(c.name).some((w) => w.length > 2 && ws.includes(w));
+      const byRole =
+        c.id !== hero && roles.get(c.id)?.some((r) => mentions(beat, ROLE_WORDS).includes(r));
+      if (byName || byRole) people.push(c.id);
+    }
+    if (
+      !people.includes(hero) &&
+      (ws.some((w) => (you ? ['you', 'your'] : ['he', 'she', 'his', 'her', 'him']).includes(w)) ||
+        (!people.length && !saidNobody))
+    )
+      people.push(hero);
+    // A line that carries on the previous sentence keeps its people.
+    if (prev && !/[.!?…]["')\]]*$/.test(beats[i - 1]!.trim()))
+      for (const p of present.at(-1) ?? []) if (!people.includes(p)) people.push(p);
 
-    // Objects: the AI's, then whatever the narration names.
-    const objectsRaw = texts(field(s, 'objects', 'props', 'things', 'items'));
-    const subjectRaw = str(field(s, 'subject'));
-    const props: string[] = [];
-    for (const name of [...(people.length ? [] : [subjectRaw]), ...objectsRaw]) {
-      if (!name || person(name)) continue;
+    // What is in the picture: what the line names first, then the AI's objects, but only things
+    // the story has already mentioned (no leaflets before the leaflets), plus the hero's kit.
+    const objectsRaw = [...texts(field(s, 'objects', 'props', 'things', 'items')), ...whoObjects];
+    const props: string[] = [...mentions(beat, PROP_WORDS)];
+    for (const name of objectsRaw) {
+      const t = name.toLowerCase().trim();
+      if (!t || NOT_OBJECTS.test(t) || person(name) === hero) continue;
       const p = prop(name);
-      if (p) props.push(p);
-      else if (
-        wordList(name).length &&
-        wordList(name).length <= 4 &&
-        !firstMention(name, SET_WORDS)
+      if (p) {
+        if (seen.has(p) || (heroItems.includes(p) && people.includes(hero))) props.push(p);
+        continue;
+      }
+      // Something the kit lacks: only when the story has named it.
+      const noun = wordList(t).at(-1) ?? '';
+      if (
+        noun &&
+        soFarWords.has(noun.replace(/s$/, '')) &&
+        wordList(t).length <= 4 &&
+        !firstMention(t, SET_WORDS)
       ) {
         const id = modelId(name);
         if (id && id !== 'person') {
@@ -883,70 +975,95 @@ export function normalisePlan(
         }
       }
     }
-    for (const p of mentions(beat, PROP_WORDS)) props.push(p);
-    const uniqueProps = [...new Set(props)]
-      .filter((p) => !(set === 'space' && p === 'planet' && people.length))
-      .slice(0, 3);
+    // The hero carries their kit once the story has made them who they are.
+    if (people.includes(hero))
+      for (const item of heroItems) if (!props.includes(item)) props.push(item);
+    const scenery = new Set(
+      set === 'forest' || set === 'jungle' || set === 'island' ? ['tree'] : [],
+    );
+    const uniqueProps = [...new Set(props)].filter((p) => !scenery.has(p)).slice(0, 4);
 
     const flying = uniqueProps.some((p) => FLYING.has(p));
-    // Something in the sky with nobody to see it: the hero watches it from below.
-    if (flying && !people.length && !['space', 'sky', 'underwater'].includes(set))
-      people.push(hero);
+    // A crowd only when the line is about people here (not people in a plane).
+    if (crowdMentioned(beat) && !flying) crowd = Math.max(crowd, 3);
+    if (flying) crowd = 0;
+    // A plane seen by someone on the ground: stay on the ground and look up.
+    if (set === 'sky' && flying && prev && prev.set !== 'sky') set = prev.set;
+    present.push([...people]);
+    // Something in the sky is seen from the ground, by the hero (whoever is flying is up there).
+    if (flying && !['space', 'sky', 'underwater'].includes(set))
+      people.splice(0, people.length, hero);
     const subject = people[0] ?? uniqueProps[0] ?? 'none';
+
+    // What they do: the AI's action unless it is a big one the line does not support
+    // (nobody sleeps, falls or floats unless the narration says so).
     const doing = str(field(s, 'doing', 'action', 'activity', 'pose'));
     const speaker = person(str(field(s, 'speaker')) || '') ?? '';
-    let action =
+    const aiAction =
       pick(ACTIONS, doing, '' as Action) ||
-      ((firstMention(doing, ACTION_WORDS) ?? firstMention(beat, ACTION_WORDS)) as
-        Action | undefined) ||
-      (speaker ? 'talk' : 'idle');
+      (firstMention(doing, ACTION_WORDS) as Action | undefined);
+    const lineAction = firstMention(beat, ACTION_WORDS) as Action | undefined;
+    const feeling = str(field(s, 'feeling', 'mood', 'emotion'));
+    // The line's own feeling words win ("Nobody told him" is lonely), then the AI's.
+    let mood: Mood =
+      (firstMention(beat, MOOD_WORDS) as Mood | undefined) ||
+      pick(MOODS, feeling, '' as Mood) ||
+      (firstMention(`${feeling} ${doing}`, MOOD_WORDS) as Mood | undefined) ||
+      prevMood;
+    const outdoors = ![
+      'livingRoom',
+      'kitchen',
+      'bedroom',
+      'office',
+      'hospital',
+      'lab',
+      'classroom',
+      'prison',
+      'bank',
+      'courtroom',
+    ].includes(set);
+    const calm: Action =
+      mood === 'scared'
+        ? 'crouch'
+        : outdoors && ['lonely', 'determined'].includes(mood)
+          ? 'patrol'
+          : 'idle';
+    let action: Action =
+      (aiAction && (!BIG_ACTIONS.has(aiAction) || aiAction === lineAction)
+        ? aiAction
+        : undefined) ??
+      lineAction ??
+      (speaker ? 'talk' : calm);
+    // Looking up needs something up there (or a line about the sky).
+    if (
+      action === 'lookUp' &&
+      !uniqueProps.some((p) => FLYING.has(p)) &&
+      !ws.some((w) => ['sky', 'up', 'stars', 'heaven', 'moon'].includes(w))
+    )
+      action = lineAction && lineAction !== 'lookUp' ? lineAction : calm;
+    // Being searched for: the hero hides while the searchers pass.
+    if (crowd && subject === hero && !ws.some((w) => w === 'he' || w === 'she')) action = 'crouch';
+    if (action === 'shock' && mood === 'neutral') mood = 'surprised';
     const effectText = str(field(s, 'effect', 'effects'));
     const effect =
       pick(EFFECTS, effectText, '' as Effect) ||
       ((firstMention(effectText, EFFECT_WORDS) ??
         firstMention(`${doing} ${beat}`, EFFECT_WORDS)) as Effect | undefined) ||
       'none';
-    const feeling = str(field(s, 'feeling', 'mood', 'emotion'));
-    let mood: Mood =
-      pick(MOODS, feeling, '' as Mood) ||
-      ((firstMention(feeling, MOOD_WORDS) ?? firstMention(`${doing} ${beat}`, MOOD_WORDS)) as
-        Mood | undefined) ||
-      prevMood;
-    if (action === 'shock' && mood === 'neutral') mood = 'surprised';
-    const crowdRaw = Number(field(s, 'crowd', 'extras', 'background people'));
-    const crowd = Number.isFinite(crowdRaw)
-      ? Math.max(0, Math.min(6, Math.round(crowdRaw)))
-      : crowdMentioned(beat) && !uniqueProps.some((p) => FLYING.has(p))
-        ? 4
-        : 0;
-    // Years make good big words ("1944"; "a year later" counts on from the last one).
-    let year = '';
-    const said = /\b(1[0-9]{3}|20[0-9]{2})\b/.exec(beat)?.[1];
-    if (said) lastYear = Number(said);
-    else if (lastYear) {
-      const later = /\b(a|one|two|three|four|five|ten|\d+)\s+years?\s+later\b/i.exec(beat);
-      if (later) {
-        const n =
-          { a: 1, one: 1, two: 2, three: 3, four: 4, five: 5, ten: 10 }[later[1]!.toLowerCase()] ??
-          Number(later[1]);
-        lastYear += n;
-        year = String(lastYear);
-      }
-    }
-    if (said) year = said;
     const cameraText = str(field(s, 'camera', 'framing', 'shot', 'view'));
     let framing =
       pick(FRAMINGS, cameraText, '' as Framing) ||
       ((firstMention(cameraText, FRAMING_WORDS) as Framing | undefined) ?? 'medium');
-    let move = pick(CAMERAS, field(s, 'move', 'motion', 'camera'), '' as CameraMove);
+    let move = pick(CAMERAS, field(s, 'move', 'motion'), '' as CameraMove);
 
     // Film rules.
     const personShot = people.length > 0;
-
-    // Something in the sky: the people look up at it.
-    if (flying && personShot && ['idle', 'think', 'talk', 'shock'].includes(action))
+    if (
+      flying &&
+      personShot &&
+      ['idle', 'think', 'talk', 'shock', 'patrol', 'crouch', 'walk'].includes(action)
+    )
       action = 'lookUp';
-    // A shot from the ground looking up is for strong moments only.
     if (
       framing === 'lowAngle' &&
       !['proud', 'determined', 'angry'].includes(mood) &&
@@ -959,6 +1076,7 @@ export function normalisePlan(
       ['extremeCloseUp', 'closeUp', 'medium', 'lowAngle'].includes(framing)
     )
       framing = 'object';
+    if (personShot && framing === 'object') framing = 'medium';
     if (subject === 'none') framing = 'wide';
     if (framing === 'pov' && !personShot) framing = 'object';
     if (prev && set !== prev.set && personShot && !['pov', 'object', 'overhead'].includes(framing))
@@ -972,9 +1090,10 @@ export function normalisePlan(
       (prev?.framing === 'closeUp' || prev?.framing === 'extremeCloseUp')
     )
       framing = 'medium';
-    // Hands at work need the hands in frame.
+    // Hands at work, and the things the line names, must be in frame.
     if (
-      ['work', 'eat', 'read', 'pickUp', 'salute', 'wave'].includes(action) &&
+      (['work', 'eat', 'read', 'pickUp', 'salute', 'wave'].includes(action) ||
+        uniqueProps.some((p) => !heroItems.includes(p))) &&
       (framing === 'closeUp' || framing === 'extremeCloseUp')
     )
       framing = 'medium';
@@ -992,6 +1111,10 @@ export function normalisePlan(
               ? 'static'
               : 'pushIn';
 
+    // Big words only when the AI gave a short, whole phrase (never cut off mid-word).
+    const big = typeof s.bigText === 'string' ? s.bigText.trim() : '';
+    const bigText = big && big.length <= 18 && big.split(/\s+/).length <= 3 ? big : '';
+
     shots.push({
       set,
       framing,
@@ -1001,8 +1124,8 @@ export function normalisePlan(
       props: uniqueProps.filter((p) => p !== subject),
       effect: effect as Effect,
       camera: move,
-      bigText: (typeof s.bigText === 'string' ? s.bigText.trim().slice(0, 24) : '') || year,
-      speaker: speaker && ids.has(speaker) ? speaker : '',
+      bigText,
+      speaker: speaker && cast.some((c) => c.id === speaker) ? speaker : '',
       mood,
       crowd,
     });
@@ -1023,6 +1146,74 @@ export function normalisePlan(
       .slice(0, 8)
       .map(([id, name]) => ({ id, name })),
   };
+}
+
+/** Words that never mean an object in the picture (clothes are worn, places are sets). */
+const NOT_OBJECTS =
+  /^(?:(?:his|her|their|a|an|the)\s+)?(?:own\s+)?(?:uniform|clothes|clothing|outfit|shirt|trousers|cap|hat|sky|ground|air|water|sea|ocean|beach|jungle|island|forest|nothing|none|cloth|bushes|bush|grass|sand|sun light|sunlight|light|darkness|silence)s?$/;
+
+/** Plain words for a person. */
+const PERSON_WORDS = new Set([
+  'man',
+  'woman',
+  'boy',
+  'girl',
+  'guy',
+  'person',
+  'hero',
+  'protagonist',
+  'character',
+  'soldier',
+  'kid',
+  'lady',
+  'gentleman',
+]);
+
+/** Actions a shot only gets when its line says so. */
+const BIG_ACTIONS = new Set<Action>([
+  'sleep',
+  'fall',
+  'float',
+  'celebrate',
+  'run',
+  'sit',
+  'shock',
+  'shiver',
+]);
+
+/** A group of people ("search party", "villagers", "soldiers"). */
+function isGroup(text: string): boolean {
+  const ws = wordList(text);
+  return ws.some((w) =>
+    [
+      'party',
+      'parties',
+      'team',
+      'group',
+      'crowd',
+      'people',
+      'everyone',
+      'villagers',
+      'soldiers',
+      'troops',
+      'men',
+      'women',
+      'children',
+      'army',
+      'police',
+      'searchers',
+      'locals',
+      'family',
+    ].includes(w),
+  );
+}
+
+/** Names in a script: two or more capitalised words not at the start of a sentence. */
+export function properNames(script: string): string[] {
+  const out: string[] = [];
+  const re = /(?<![.!?]\s)(?<!^)\b([A-Z][a-z]+(?:\s[A-Z][a-z]+)+)\b/g;
+  for (const m of script.matchAll(re)) if (!out.includes(m[1]!)) out.push(m[1]!);
+  return out;
 }
 
 const SHAPES: Record<string, Model['parts'][number]['shape']> = {

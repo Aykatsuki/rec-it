@@ -417,7 +417,7 @@ describe.skipIf(!bins || !hasUv)('story template (backend, real sidecar, fake vo
     app.ai.lowPolyScript = async () => ({
       title: 'Why Stopping Time Is A Bad Idea',
       script:
-        'If you could stop time with the snap of your fingers, you would instantly go blind. The air would turn solid. So you instant-',
+        'If you could stop time with the snap of your fingers, you would instantly go blind. Your time crystal would glow. So you instant-',
     });
     let beatsSeen: string[] = [];
     app.ai.lowPolyBoard = async (_title, beats) => {
@@ -427,15 +427,15 @@ describe.skipIf(!bins || !hasUv)('story template (backend, real sidecar, fake vo
         cast: [{ name: 'Doc', look: 'old scientist in a white lab coat' }],
         shots: [
           { beat: 1, place: 'street', who: 'you', doing: 'shocked', camera: 'extreme close-up' },
+          { beat: 2, place: 'nothing', who: 'you', effect: 'frozen' },
           {
-            beat: 2,
+            beat: 3,
             place: 'laboratory',
             who: ['Doc'],
             doing: 'talking',
             objects: ['time crystal'],
             speaker: 'Doc',
           },
-          { beat: 3, place: 'nothing', who: 'you', effect: 'frozen' },
         ],
       };
     };
@@ -494,21 +494,21 @@ describe.skipIf(!bins || !hasUv)('story template (backend, real sidecar, fake vo
     expect(beatsSeen).toEqual([
       'If you could stop time with the snap of your fingers,',
       'you would instantly go blind.',
-      'The air would turn solid.',
+      'Your time crystal would glow.',
       'So you instant-',
     ]);
     const s = spec as unknown as RenderSpec;
     expect(s.brand).toBe('Test');
     expect(s.shots.map((x) => [x.set, x.subject, x.framing])).toEqual([
       ['street', 'you', 'extremeCloseUp'],
-      ['lab', 'doc', 'wide'],
       ['void', 'you', 'wide'],
+      ['lab', 'doc', 'wide'],
       // A beat the AI skipped is read from its narration ("you") in the last place.
-      ['void', 'you', 'medium'],
+      ['lab', 'you', 'medium'],
     ]);
     // The object the kit lacks was designed once and kept for the next Short.
     expect(modelsAsked).toEqual(['time crystal']);
-    expect(s.shots[1]!.props).toEqual(['m:time_crystal']);
+    expect(s.shots[2]!.props).toEqual(['m:time_crystal']);
     expect(s.models.time_crystal!.parts[0]!.shape).toBe('cone');
     const media = join(dir, 'projects', 'Story test media');
     expect(existsSync(join(media, 'lowpoly-models.json'))).toBe(true);
@@ -516,7 +516,7 @@ describe.skipIf(!bins || !hasUv)('story template (backend, real sidecar, fake vo
     // Shots run edge to edge from 0, and the speaker's mouth moves.
     expect(s.shots[0]!.start).toBe(0);
     for (let i = 1; i < s.shots.length; i++) expect(s.shots[i]!.start).toBe(s.shots[i - 1]!.end);
-    expect(s.shots[1]!.mouth.length).toBeGreaterThan(0);
+    expect(s.shots[2]!.mouth.length).toBeGreaterThan(0);
     expect(s.cast.find((c) => c.id === 'doc')).toMatchObject({ top: 'labcoat', age: 'old' });
     // The filmed video is the background, under the voice and retro captions.
     const { doc } = app.projects.document().state();

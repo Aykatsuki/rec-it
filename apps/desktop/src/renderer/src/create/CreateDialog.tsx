@@ -1011,6 +1011,7 @@ function LowPolyForm({ onDone }: { onDone: () => void }) {
     useApp.getState().voiceHq?.available ? 'hq:k-am_michael' : 'am_michael',
   );
   const [brand, setBrand] = useState('');
+  const [brandOpacity, setBrandOpacity] = useState(0.9);
   const [pixels, setPixels] = useState<'chunky' | 'classic' | 'clean'>('classic');
   const [music, setMusic] = useState('');
   const [ideas, setIdeas] = useState<{ title: string; premise: string }[]>([]);
@@ -1066,6 +1067,7 @@ function LowPolyForm({ onDone }: { onDone: () => void }) {
         narrator,
         speed,
         brand,
+        brandOpacity,
         pixels,
         musicAssetId: music || null,
       });
@@ -1177,6 +1179,19 @@ function LowPolyForm({ onDone }: { onDone: () => void }) {
               placeholder="e.g. Low Poly Facts"
               onChange={(e) => setBrand(e.target.value)}
               data-testid="lowpoly-brand"
+            />
+          </label>
+          <label className="create__grow">
+            Name opacity: {Math.round(brandOpacity * 100)}%
+            <input
+              type="range"
+              min={0.1}
+              max={1}
+              step={0.05}
+              value={brandOpacity}
+              disabled={!brand.trim()}
+              onChange={(e) => setBrandOpacity(Number(e.target.value))}
+              data-testid="lowpoly-brand-opacity"
             />
           </label>
           <label className="create__grow">

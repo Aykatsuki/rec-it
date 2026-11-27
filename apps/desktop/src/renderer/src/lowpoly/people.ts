@@ -240,6 +240,7 @@ export class Person {
   readonly kneeR = new THREE.Group();
   /** Where things are held. */
   readonly handR = new THREE.Group();
+  readonly handL = new THREE.Group();
   readonly skeleton = new THREE.Group();
   readonly height: number;
   private readonly face: THREE.MeshLambertMaterial;
@@ -311,6 +312,8 @@ export class Person {
     }
     this.handR.position.set(0, -0.38, 0.06);
     this.elbowR.add(this.handR);
+    this.handL.position.set(0, -0.38, 0.06);
+    this.elbowL.add(this.handL);
     // Neck and head.
     this.torso.add(box(0.13, 0.1, 0.13, skinMat, 0.66));
     this.head.position.y = 0.7;
@@ -318,15 +321,17 @@ export class Person {
     const faceTex = this.faceTex('open', 0);
     this.face = mat('#ffffff', { map: faceTex, flat: false });
     const side = mat('#ffffff', {
-      map: texture(`side2:${skin}:${hairCol}:${c.hair}`, [16, 16], (g, w, h, r) => {
-        noise(g, w, h, r, shade(skin, -0.06), 0.05);
+      map: texture(`side3:${skin}:${hairCol}:${c.hair}`, [16, 16], (g, w, h, r) => {
+        // The side of the head: darker skin, hair over the top half and the back, a small ear.
+        // (A plain skin side read as a second face when the head turned.)
+        noise(g, w, h, r, shade(skin, -0.14), 0.05);
         if (c.hair !== 'bald') {
-          // Hair over the top and both edges, so a turned head never reads as a second face.
-          noise(g, w, 6, r, hairCol, 0.2);
-          px(g, hairCol, 0, 0, 4, c.hair === 'short' || c.hair === 'spiky' ? 9 : h);
-          px(g, hairCol, w - 4, 0, 4, c.hair === 'short' || c.hair === 'spiky' ? 9 : h);
+          const long = !(c.hair === 'short' || c.hair === 'spiky');
+          noise(g, w, 8, r, hairCol, 0.2);
+          px(g, hairCol, 0, 0, 6, long ? h : 12);
+          px(g, hairCol, w - 6, 0, 6, long ? h : 12);
         }
-        px(g, shade(skin, -0.14), 7, 7, 2, 4);
+        px(g, shade(skin, -0.3), 7, 8, 2, 4);
       }),
     });
     const back = c.hair === 'bald' ? skinMat : hairMat;
@@ -685,7 +690,7 @@ export class Person {
         this.shoulderL.rotation.x = this.shoulderR.rotation.x = -0.55;
         this.elbowL.rotation.x = this.elbowR.rotation.x = -0.9;
         this.torso.rotation.x = 0.12;
-        this.head.rotation.y = s(t * 1.2) * 0.6;
+        this.head.rotation.y = s(t * 1.2) * 0.35;
         this.hips.position.y = 0.9 + Math.abs(s(ph)) * 0.02;
         this.root.position.addScaledVector(forward, t * 0.55);
         break;
@@ -721,8 +726,8 @@ export class Person {
         this.elbowL.rotation.x = this.elbowR.rotation.x = -1.1;
         this.shoulderL.rotation.z = 0.2;
         this.shoulderR.rotation.z = -0.2;
-        this.head.rotation.x = 0.45;
-        this.torso.rotation.x = 0.12;
+        this.head.rotation.x = 0.28;
+        this.torso.rotation.x = 0.1;
         break;
       }
     }

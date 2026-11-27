@@ -42,14 +42,21 @@ function bigText(g: CanvasRenderingContext2D, text: string, t: number, w: number
 }
 
 /** The channel name, flashed early on like a watermark: yellow bubble letters with depth. */
-function brand(g: CanvasRenderingContext2D, text: string, t: number, w: number, h: number) {
-  const from = 1.6,
-    to = 5.2;
+function brand(
+  g: CanvasRenderingContext2D,
+  text: string,
+  t: number,
+  w: number,
+  h: number,
+  opacity = 0.9,
+) {
+  const from = 0.25,
+    to = 5.5;
   if (!text || t < from || t > to) return;
   const k = ease((t - from) / 0.25) * (1 - ease((t - (to - 0.25)) / 0.25));
   const size = Math.round(h * 0.06 * (0.7 + 0.3 * k));
   g.save();
-  g.globalAlpha = Math.min(1, k * 1.5);
+  g.globalAlpha = Math.min(1, k * 1.5) * opacity;
   g.translate(w / 2, h * 0.2);
   g.font = `900 ${size}px "Arial Black", Impact, sans-serif`;
   g.textAlign = 'center';
@@ -126,7 +133,7 @@ export async function film(spec: RenderSpec, o: FilmOptions): Promise<void> {
           post.render(renderer, built.scene, built.camera);
           g.drawImage(canvas, 0, 0);
           bigText(g, built.overlay, t, w, h);
-          brand(g, spec.brand, f / fps, w, h);
+          brand(g, spec.brand, f / fps, w, h, spec.brandOpacity);
           const blob = await new Promise<Blob>((res, rej) =>
             out.toBlob(
               (b) => (b ? res(b) : rej(new Error('Could not encode a frame.'))),

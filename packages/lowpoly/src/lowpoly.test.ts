@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import {
   beatTimes,
@@ -102,7 +103,8 @@ describe('plans', () => {
     expect(p.shots[1]).toMatchObject({
       set: 'space',
       subject: 'dr_bob',
-      props: ['brain'],
+      // The AI's brain is not in the script, so it is left out.
+      props: [],
       framing: 'wide',
     });
     // A beat the AI skipped is read from its narration: you, reaching, a cup.
@@ -176,32 +178,30 @@ describe('plans', () => {
     expect(leaflets).toMatchObject({
       set: 'jungle',
       subject: 'hiroo_onoda',
-      props: ['paper', 'plane'],
+      props: ['paper', 'plane', 'rifle'],
       action: 'lookUp',
     });
-    // Feelings from the lines; years as big words; no crowd for "a soldier".
-    expect(p.shots[0]).toMatchObject({ bigText: '1944', crowd: 0 });
+    // Feelings from the lines; no crowd for "a soldier"; no years written on screen.
+    expect(p.shots[0]).toMatchObject({ bigText: '', crowd: 0 });
     expect(p.shots.find((s, i) => beats[i] === 'A year later, the war ended.')).toMatchObject({
-      bigText: '1945',
+      bigText: '',
       mood: 'sad',
     });
     expect(p.shots.find((s, i) => beats[i] === 'Nobody told him.')).toMatchObject({
       subject: 'hiroo_onoda',
       mood: 'lonely',
     });
-    expect(p.shots.at(-1)!.bigText).toBe('1974');
     const food = p.shots.find((s) => s.action === 'eat')!;
-    expect(food.props).toEqual(['banana', 'coconut', 'm:bamboo_hut']);
-    expect(p.models).toEqual([{ id: 'bamboo_hut', name: 'bamboo hut' }]);
+    // A "bamboo hut" the script never mentions is not built; what it names is shown.
+    expect(food.props).toEqual(expect.arrayContaining(['banana', 'coconut']));
+    expect(p.models).toEqual([]);
     // The rifle and uniform beat shows the rifle even though the AI skipped that beat.
     expect(p.shots.some((s) => s.props.includes('rifle'))).toBe(true);
     // "His old commander flying to the island": read from the narration alone, found by his role.
-    expect(p.shots[9]).toMatchObject({
-      set: 'island',
-      subject: 'major_taniguchi',
-      framing: 'wide',
-    });
-    expect(p.shots[9]!.action).not.toBe('float');
+    // He flies in: Onoda, on the ground, watches the plane; the next line has the major in it.
+    expect(p.shots[9]).toMatchObject({ set: 'island', subject: 'hiroo_onoda', action: 'lookUp' });
+    expect(p.shots[9]!.props).toContain('plane');
+    expect(p.shots[10]!.others).toContain('major_taniguchi');
     // Close-ups never pile up.
     for (let i = 1; i < p.shots.length; i++)
       expect(
@@ -259,5 +259,75 @@ describe('plans', () => {
     });
     expect(spec.brand).toBe('');
     expect(spec.shots[0]!.mouth).toEqual([]);
+  });
+});
+
+describe('a real local-model storyboard (qwen3:8b, the Onoda script)', () => {
+  // The AI's answer as it came back on the reference PC: no cast, "Japanese soldier" as who,
+  // objects the script has not mentioned yet, a sleeping shot for "Nobody told him".
+  const d = JSON.parse(
+    readFileSync(new URL('./fixtures/onoda-qwen.json', import.meta.url), 'utf8'),
+  ) as {
+    board: { cast?: unknown; shots?: unknown };
+    beats: string[];
+  };
+  const p = normalisePlan(d.board, d.beats, { script: d.beats.join(' ') });
+  const at = (start: string) => p.shots[d.beats.findIndex((b) => b.startsWith(start))]!;
+
+  it("keeps the story's hero, named from the script, in uniform", () => {
+    expect(p.cast[0]).toMatchObject({
+      id: 'hiroo_onoda',
+      name: 'Hiroo Onoda',
+      top: 'uniform',
+      topColor: '#6b6b3a',
+      extra: 'cap',
+    });
+    expect(
+      p.shots.every(
+        (s) =>
+          s.subject === 'hiroo_onoda' ||
+          s.others.includes('hiroo_onoda') ||
+          s.subject === 'old_commander',
+      ),
+    ).toBe(true);
+    expect(p.models).toEqual([]);
+  });
+
+  it('shows only what the story has mentioned, when it is mentioned', () => {
+    const before = p.shots.slice(
+      0,
+      d.beats.findIndex((b) => b.startsWith('People dropped')),
+    );
+    expect(before.some((s) => s.props.includes('paper') || s.props.includes('plane'))).toBe(false);
+    expect(at('People dropped')).toMatchObject({ subject: 'hiroo_onoda', action: 'lookUp' });
+    expect(at('People dropped').props).toEqual(expect.arrayContaining(['paper', 'plane']));
+    expect(at('He lived on').props).toEqual(expect.arrayContaining(['banana', 'coconut']));
+    expect(at('He lived on').action).toBe('eat');
+    expect(at('and kept his rifle').action).toBe('work');
+    expect(p.shots.at(-1)!.props).not.toContain('paper');
+  });
+
+  it('uses common sense for what people do and feel', () => {
+    expect(p.shots.some((s) => s.action === 'sleep')).toBe(false);
+    expect(at('Nobody told him')).toMatchObject({ mood: 'lonely', action: 'patrol' });
+    expect(at('So he hid')).toMatchObject({ set: 'jungle', action: 'crouch' });
+    expect(at('He decided they were fake').action).toBe('shakeHead');
+    expect(at('Search parties')).toMatchObject({ crowd: 3, action: 'crouch' });
+    // The commander flies in: the hero watches the plane, then the commander gives the order.
+    expect(at('It took his old commander')).toMatchObject({
+      subject: 'hiroo_onoda',
+      action: 'lookUp',
+    });
+    expect(at('It took his old commander').props).toContain('plane');
+    expect(at('in 1974').others).toContain('old_commander');
+    expect(p.cast.find((c) => c.id === 'old_commander')).toMatchObject({
+      age: 'old',
+      top: 'uniform',
+    });
+  });
+
+  it('never writes cut-off or year text on screen', () => {
+    for (const s of p.shots) expect(s.bigText === '' || s.bigText.length <= 18).toBe(true);
+    expect(p.shots.some((s) => /messag$/.test(s.bigText))).toBe(false);
   });
 });

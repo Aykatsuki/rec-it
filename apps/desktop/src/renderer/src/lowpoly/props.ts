@@ -684,7 +684,8 @@ export function makeProp(id: PropId, text = ''): Prop {
         m(C(0.012, 0.012, 0.6, 6), metal, 0, 0.02, 0.2).rotateX(Math.PI / 2),
         m(B(0.04, 0.06, 0.25), metal, 0, 0.01, 0.0),
       );
-      g.rotation.x = -0.15;
+      // Held upright along the arm, like a soldier at rest.
+      g.rotation.x = -Math.PI / 2 + 0.15;
       return { object: g, placement: 'hand', size: 1 };
     }
     case 'sword': {

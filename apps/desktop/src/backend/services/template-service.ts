@@ -609,6 +609,7 @@ export class TemplateService {
         pixelHeight: { chunky: 320, classic: 480, clean: 720 }[input.pixels],
         cast: plan.cast,
         brand: input.brand,
+        brandOpacity: input.brandOpacity,
         models: Object.fromEntries(
           Object.entries(models).filter(([m]) =>
             plan.shots.some((sh) => sh.subject === `m:${m}` || sh.props.includes(`m:${m}`)),
