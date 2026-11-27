@@ -314,6 +314,21 @@ const LOWPOLY_SCRIPT_RULES = [
   'Plain spoken English for a text-to-speech narrator: no emojis, hashtags, lists or stage directions.',
 ];
 
+/**
+ * Blocky-avatar game stories (ADR-055), from the big channels of the genre: an "In this town…"
+ * rule that bends one ordinary life, or a big question answered with a story about two people.
+ */
+const BLOCKY_SCRIPT_RULES = [
+  'The title is the premise in 4 to 9 words, like "In this town, your screen time controls the weather", "In this town, the rich live in giant bunkers" or "Why the worst people get the best lives".',
+  'Hook in the first sentence, no intro or greeting. Either open with the rule of a strange town ("In this town, whenever the sky turns red, everyone has to hide.") or with a big question the story will answer ("Why does the worst person you know get the best life?").',
+  'Then follow ONE main character (named, or "a boy", "a girl", "a man") through a story: what the rule means for ordinary people, a concrete scene, a problem, an escalation, a turn with "But" or "Until one day".',
+  'Show places that change: home, bedroom, street, school, shop, gym, stage, office, lab, park, night and day. Name objects people hold and use.',
+  'Short clauses of 4 to 10 words; every clause must be something that can be shown as one picture. Use the past tense for the story, present tense for the rule.',
+  'End with a twist, a cliffhanger ("…and that was only the beginning."), or a short warm moral or lesson.',
+  'Family friendly: no gore, nothing hateful, no real private people, no brands or game names.',
+  'Plain spoken English for a text-to-speech narrator: no emojis, hashtags, lists or stage directions.',
+];
+
 export const lowPolyScriptSchema = z.object({
   title: z.string().min(2).max(100),
   script: z.string().min(20).max(3000),
@@ -321,8 +336,24 @@ export const lowPolyScriptSchema = z.object({
 export type LowPolyScript = z.output<typeof lowPolyScriptSchema>;
 
 /** A narrated script for a low-poly 3D Short about a topic. */
-export function lowPolyScriptPrompt(o: { topic: string; seconds: number }): ChatMessage[] {
+export function lowPolyScriptPrompt(o: {
+  topic: string;
+  seconds: number;
+  style?: 'ps1' | 'blocky';
+}): ChatMessage[] {
   const words = Math.round(o.seconds * FAST_WORDS_PER_SECOND);
+  if (o.style === 'blocky')
+    return [
+      {
+        role: 'system',
+        content:
+          'You write viral narrated story Shorts animated with blocky 3D avatar characters (bright game-world stories like "In this town…" and story answers to big questions). ' +
+          `Write one script of about ${words} words (about ${o.seconds} seconds read briskly). Rules: ` +
+          BLOCKY_SCRIPT_RULES.join(' ') +
+          ' Reply with JSON only: {"title": "...", "script": "..."}.',
+      },
+      { role: 'user', content: o.topic.trim() || 'Invent a strange town rule and a story in it.' },
+    ];
   return [
     {
       role: 'system',
@@ -348,7 +379,20 @@ export const lowPolyIdeasSchema = z.object({
 });
 
 /** Ten ideas for low-poly Shorts, optionally around a theme. */
-export function lowPolyIdeasPrompt(theme: string): ChatMessage[] {
+export function lowPolyIdeasPrompt(theme: string, style: 'ps1' | 'blocky' = 'ps1'): ChatMessage[] {
+  if (style === 'blocky')
+    return [
+      {
+        role: 'system',
+        content:
+          'You plan viral narrated story Shorts animated with blocky 3D avatar characters. The formats that get millions of views are: ' +
+          '(1) "In this town, …" a strange rule that bends everyday life (your screen time controls the weather; the more you doomscroll, the longer your legs get; whenever the sky turns red everyone hides; the rich live in giant bunkers; everyone gets a superpower on their 13th birthday; we live on the back of a giant animal), with a story of one person inside it; ' +
+          '(2) a big life question answered with a story about two people (why the worst people get the best lives; what happens after we die; why we rinse our mouth after milk; who found out how eyes see). ' +
+          'Give 10 different ideas, each a short punchy title in that style and a one-sentence premise. Family friendly. ' +
+          'Reply with JSON only: {"ideas": [{"title": "...", "premise": "..."}]}.',
+      },
+      { role: 'user', content: theme.trim() || 'Any topics.' },
+    ];
   return [
     {
       role: 'system',
@@ -388,7 +432,7 @@ export function lowPolyBoardPrompt(o: {
     {
       role: 'system',
       content:
-        'You storyboard a vertical low-poly 3D Short (PlayStation 1 look). Each numbered line of narration gets exactly ONE shot that shows literally what that line says. Reply with one shot per line, in order, with "beat" set to the line number. ' +
+        'You storyboard a vertical 3D Short made of simple blocky shapes. Each numbered line of narration gets exactly ONE shot that shows literally what that line says. Reply with one shot per line, in order, with "beat" set to the line number. ' +
         'For each shot give, in a few plain words: "place" (where it happens: jungle, island, street, kitchen, hospital, lab, space, battlefield, ocean, snow, office, prison, bank, farm, desert, beach, classroom, courtroom, city…), ' +
         '"who" (the names of the people in the picture, or "nobody"), "doing" (one physical action that acts out the line: walking, patrolling, hiding, looking up at the sky, picking something up, reading, shaking his head, nodding, eating, cleaning or fixing something, saluting, running, falling, waving, sleeping, celebrating, shocked…), ' +
         '"feeling" (how they feel right now: happy, sad, scared, angry, determined, confused, tired, proud, lonely, surprised or neutral), "crowd" (how many extra background people, 0 to 6), ' +
@@ -417,7 +461,7 @@ export function lowPolyModelsPrompt(names: readonly string[]): ChatMessage[] {
     {
       role: 'system',
       content:
-        'You design very simple low-poly 3D models for a PlayStation 1 style video, built only from primitive shapes. ' +
+        'You design very simple low-poly 3D models for a blocky 3D video, built only from primitive shapes. ' +
         'For each requested object use 3 to 10 parts. Each part has "shape" (box, cylinder, sphere or cone), "size" [width, height, depth] in metres, "at" [x, y, z] its centre in metres (y is up, the ground is y = 0, the front faces +z), optional "turn" [x, y, z] in radians, and "color" as #rrggbb. ' +
         'Use real-world sizes (a hut is about 3 m tall, a leaflet 0.2 m, a banana 0.2 m) and colours that make the object recognisable. ' +
         'Reply with JSON only: {"models": [{"name": "bamboo hut", "parts": [{"shape": "box", "size": [3, 2, 3], "at": [0, 1, 0], "color": "#b8925a"}, {"shape": "cone", "size": [4.2, 1.5, 4.2], "at": [0, 2.75, 0], "color": "#8a7a3a"}]}]}.',

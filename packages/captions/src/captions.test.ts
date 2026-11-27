@@ -78,7 +78,7 @@ describe('ASS output', () => {
 
   it('matches the snapshot for every style', () => {
     const words = say('Rec-It makes Shorts. Captions follow the words!');
-    for (const style of ['highlight', 'pop', 'karaoke', 'caps', 'clean', 'bebas', 'retro'] as const)
+    for (const style of ['highlight', 'pop', 'karaoke', 'caps', 'clean', 'bebas', 'retro', 'game'] as const)
       expect(
         compileAss(words, { ...DEFAULT_CAPTIONS, style }, { width: 1080, height: 1920 }),
       ).toMatchSnapshot(style);

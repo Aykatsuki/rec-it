@@ -430,7 +430,7 @@ export interface Sequence {
 }
 
 /** Built-in caption looks (packages/captions defines them). */
-export const CAPTION_STYLES = ['highlight', 'pop', 'karaoke', 'caps', 'clean', 'bebas', 'retro'] as const;
+export const CAPTION_STYLES = ['highlight', 'pop', 'karaoke', 'caps', 'clean', 'bebas', 'retro', 'game'] as const;
 export type CaptionStyleId = (typeof CAPTION_STYLES)[number];
 
 export interface CaptionSettings {

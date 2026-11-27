@@ -104,8 +104,12 @@ export class AiService {
   }
 
   /** A low-poly 3D Short's script in the genre's style (ADR-054). */
-  lowPolyScript(topic: string, seconds: number): Promise<LowPolyScript> {
-    return this.client().json(lowPolyScriptSchema, lowPolyScriptPrompt({ topic, seconds }), {
+  lowPolyScript(
+    topic: string,
+    seconds: number,
+    style: 'ps1' | 'blocky' = 'ps1',
+  ): Promise<LowPolyScript> {
+    return this.client().json(lowPolyScriptSchema, lowPolyScriptPrompt({ topic, seconds, style }), {
       temperature: 0.8,
     });
   }
@@ -126,8 +130,11 @@ export class AiService {
   }
 
   /** Ten ideas for low-poly Shorts in the formats that work (ADR-054). */
-  async lowPolyIdeas(theme: string): Promise<{ title: string; premise: string }[]> {
-    const r = await this.client().json(lowPolyIdeasSchema, lowPolyIdeasPrompt(theme), {
+  async lowPolyIdeas(
+    theme: string,
+    style: 'ps1' | 'blocky' = 'ps1',
+  ): Promise<{ title: string; premise: string }[]> {
+    const r = await this.client().json(lowPolyIdeasSchema, lowPolyIdeasPrompt(theme, style), {
       temperature: 0.9,
     });
     return r.ideas;

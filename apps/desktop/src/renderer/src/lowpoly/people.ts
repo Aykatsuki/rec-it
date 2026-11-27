@@ -3,7 +3,9 @@
 // actions a shot can ask for. Every pose is a pure function of time.
 import * as THREE from 'three';
 import type { Action, CastMember, Mood } from '@rec-it/lowpoly';
+import { RoundedBoxGeometry } from 'three/examples/jsm/geometries/RoundedBoxGeometry.js';
 import { mat } from './ps1';
+import { blocky, classicSkin } from './style';
 import { noise, rng, shade, texture } from './textures';
 
 const SKIN: Record<CastMember['skin'], string> = {
@@ -15,6 +17,151 @@ const SKIN: Record<CastMember['skin'], string> = {
 };
 
 type Eyes = 'open' | 'closed' | 'wide' | 'tired';
+
+/** The classic yellow of blocky avatars (ADR-055). */
+const CLASSIC_YELLOW = '#f3c93a';
+
+const skinOf = (c: CastMember): string => (classicSkin() ? CLASSIC_YELLOW : SKIN[c.skin]);
+
+/**
+ * The blocky look's face (ADR-055): a simple cartoon face on a clear background, laid over the
+ * rounded head. Big black eyes, a smile or the mood, four mouth shapes for speech, blinking.
+ */
+function blockyFaceTexture(c: CastMember, eyes: Eyes, mouth: number, mood: Mood): THREE.Texture {
+  const key = `bface:${c.id}:${c.extra}:${c.hairColor}:${c.age}:${eyes}:${mouth}:${mood}`;
+  return texture(key, [128, 128], (g) => {
+    g.clearRect(0, 0, 128, 128);
+    const ink = '#1b1b1d';
+    g.fillStyle = ink;
+    g.strokeStyle = ink;
+    g.lineCap = 'round';
+    g.lineJoin = 'round';
+    const ey = 50;
+    for (const ex of [42, 86]) {
+      if (eyes === 'closed') {
+        g.lineWidth = 5;
+        g.beginPath();
+        g.arc(ex, ey - 2, 8, 0.15 * Math.PI, 0.85 * Math.PI);
+        g.stroke();
+        continue;
+      }
+      const ry = eyes === 'wide' ? 13 : eyes === 'tired' ? 6 : 10;
+      const rx = eyes === 'wide' ? 9 : 6.5;
+      g.beginPath();
+      g.ellipse(ex, ey + (eyes === 'tired' ? 4 : 0), rx, ry, 0, 0, Math.PI * 2);
+      g.fill();
+      g.fillStyle = '#ffffff';
+      g.beginPath();
+      g.arc(ex - rx * 0.3, ey - ry * 0.4, eyes === 'wide' ? 3.2 : 2.4, 0, Math.PI * 2);
+      g.fill();
+      g.fillStyle = ink;
+      if (eyes === 'tired') {
+        g.fillRect(ex - 10, ey - 8, 20, 6);
+      }
+    }
+    // Brows only when they say something.
+    const slant = ['sad', 'lonely', 'tired', 'scared'].includes(mood)
+      ? -1
+      : ['angry', 'determined'].includes(mood)
+        ? 1
+        : 0;
+    const lift = mood === 'surprised' || mood === 'scared' || eyes === 'wide' ? -6 : 0;
+    if (slant || lift || c.age === 'old') {
+      g.lineWidth = 5;
+      for (const [ex, side] of [
+        [42, 1],
+        [86, -1],
+      ] as const) {
+        g.beginPath();
+        g.moveTo(ex - 10 * side, ey - 20 + lift - slant * 5);
+        g.lineTo(ex + 10 * side, ey - 20 + lift + slant * 5);
+        g.stroke();
+      }
+    }
+    if (c.extra === 'beard' || c.extra === 'mustache') {
+      g.fillStyle = c.age === 'old' ? '#d9d6cf' : shade(c.hairColor, 0.08);
+      if (c.extra === 'beard') {
+        // A short chin beard under the mouth, with sideburns along the jaw.
+        g.beginPath();
+        g.moveTo(22, 96);
+        g.quadraticCurveTo(64, 140, 106, 96);
+        g.lineTo(106, 112);
+        g.quadraticCurveTo(64, 132, 22, 112);
+        g.fill();
+        g.beginPath();
+        g.moveTo(42, 104);
+        g.quadraticCurveTo(64, 128, 86, 104);
+        g.lineTo(86, 118);
+        g.quadraticCurveTo(64, 132, 42, 118);
+        g.fill();
+      }
+      g.beginPath();
+      g.ellipse(64, 79, 18, 5, 0, 0, Math.PI * 2);
+      g.fill();
+      g.fillStyle = ink;
+    }
+    // Mouth: 0 shut (the mood), 1 parted, 2 open, 3 round.
+    const my = 90;
+    g.lineWidth = 5;
+    if (mouth === 0) {
+      g.beginPath();
+      if (mood === 'sad' || mood === 'lonely' || mood === 'tired' || mood === 'scared')
+        g.arc(64, my + 16, 16, 1.2 * Math.PI, 1.8 * Math.PI);
+      else if (mood === 'angry' || mood === 'determined') {
+        g.moveTo(50, my);
+        g.lineTo(78, my);
+      } else if (mood === 'surprised') {
+        g.ellipse(64, my, 7, 9, 0, 0, Math.PI * 2);
+        g.fill();
+      } else if (mood === 'confused') {
+        g.moveTo(48, my + 2);
+        g.quadraticCurveTo(58, my - 6, 66, my);
+        g.quadraticCurveTo(72, my + 5, 80, my - 3);
+      } else if (mood === 'happy' || mood === 'proud') {
+        g.moveTo(44, my - 6);
+        g.quadraticCurveTo(64, my + 18, 84, my - 6);
+        g.closePath();
+        g.fill();
+        g.fillStyle = '#ffffff';
+        g.fillRect(52, my - 5, 24, 4);
+        g.fillStyle = ink;
+      } else g.arc(64, my - 12, 18, 0.25 * Math.PI, 0.75 * Math.PI);
+      g.stroke();
+    } else if (mouth === 1) {
+      g.beginPath();
+      g.ellipse(64, my, 12, 4, 0, 0, Math.PI * 2);
+      g.fill();
+    } else if (mouth === 2) {
+      g.beginPath();
+      g.moveTo(46, my - 6);
+      g.quadraticCurveTo(64, my + 22, 82, my - 6);
+      g.closePath();
+      g.fill();
+      g.fillStyle = '#d9575b';
+      g.beginPath();
+      g.ellipse(64, my + 5, 8, 3.5, 0, 0, Math.PI * 2);
+      g.fill();
+      g.fillStyle = ink;
+    } else {
+      g.beginPath();
+      g.ellipse(64, my + 2, 8, 10, 0, 0, Math.PI * 2);
+      g.fill();
+    }
+    if (c.extra === 'glasses' || c.extra === 'sunglasses') {
+      g.lineWidth = 4;
+      for (const ex of [42, 86]) {
+        g.beginPath();
+        g.roundRect(ex - 15, ey - 13, 30, 26, 7);
+        if (c.extra === 'sunglasses') g.fill();
+        g.stroke();
+      }
+      g.beginPath();
+      g.moveTo(57, ey - 4);
+      g.lineTo(71, ey - 4);
+      g.stroke();
+    }
+  });
+}
 
 function px(g: CanvasRenderingContext2D, c: string, x: number, y: number, w: number, h: number) {
   g.fillStyle = c;
@@ -244,6 +391,8 @@ export class Person {
   readonly skeleton = new THREE.Group();
   readonly height: number;
   private readonly face: THREE.MeshLambertMaterial;
+  /** Height of the hip joints standing (poses scale from it). */
+  private readonly hipY: number;
   private readonly faces = new Map<string, THREE.Texture>();
   private readonly blinkSeed: number;
 
@@ -253,6 +402,18 @@ export class Person {
   ) {
     this.blinkSeed = seed;
     const k = c.age === 'child' ? 0.66 : 1;
+    if (blocky()) {
+      this.hipY = 0.68;
+      this.face = this.blockyBody(c);
+      this.root.scale.setScalar(c.age === 'child' ? 0.72 : 1);
+      if (c.age === 'child') this.head.scale.setScalar(1.2);
+      this.height = 1.78 * (c.age === 'child' ? 0.72 : 1);
+      this.root.traverse((o) => {
+        if ((o as THREE.Mesh).isMesh) o.userData.person = c.id;
+      });
+      return;
+    }
+    this.hipY = 0.92;
     const skin = SKIN[c.skin];
     const skinMat = mat(skin, { flat: false });
     const topCol = c.top === 'labcoat' ? '#ecebe6' : c.top === 'prison' ? '#e07a2c' : c.topColor;
@@ -268,7 +429,7 @@ export class Person {
 
     this.root.rotation.order = 'YXZ';
     this.root.add(this.hips);
-    this.hips.position.y = 0.92;
+    this.hips.position.y = this.hipY;
     // Legs.
     for (const [hip, knee, x] of [
       [this.hipL, this.kneeL, -0.11],
@@ -429,11 +590,154 @@ export class Person {
     });
   }
 
+  /**
+   * The blocky-avatar body (ADR-055): legs, torso and arms as chunky boxes (two blocks per limb
+   * so knees and elbows still bend), a rounded head with a cartoon face laid over it, blocky hair
+   * and hats. Same joints and the same height as the low-poly person, so every pose and every
+   * camera works unchanged. Returns the face material.
+   */
+  private blockyBody(c: CastMember): THREE.MeshLambertMaterial {
+    const skinCol = skinOf(c);
+    const skinMat = mat(skinCol);
+    const topCol = c.top === 'labcoat' ? '#f2f1ec' : c.top === 'prison' ? '#e8822f' : c.topColor;
+    const sleeve = mat(topCol);
+    const legCol = c.top === 'prison' ? '#e8822f' : c.bottomColor;
+    const legs = mat(legCol);
+    const shoe = mat(shade(legCol, -0.45));
+    const hairCol = c.age === 'old' ? '#d2cec6' : c.hairColor;
+    const hairMat = mat(hairCol);
+    const rbox = (w: number, h: number, d: number, m: THREE.Material | THREE.Material[], y = 0) => {
+      const geo = new RoundedBoxGeometry(w, h, d, 2, Math.min(w, h, d) * 0.12);
+      geo.translate(0, y, 0);
+      return new THREE.Mesh(geo, m);
+    };
+    this.root.rotation.order = 'YXZ';
+    this.root.add(this.hips);
+    this.hips.position.y = 0.68;
+    for (const [hip, knee, x] of [
+      [this.hipL, this.kneeL, -0.165],
+      [this.hipR, this.kneeR, 0.165],
+    ] as const) {
+      hip.position.set(x, 0, 0);
+      this.hips.add(hip);
+      const thigh = c.top === 'dress' ? sleeve : legs;
+      hip.add(rbox(0.32, 0.37, 0.33, thigh, -0.17));
+      knee.position.y = -0.34;
+      hip.add(knee);
+      knee.add(rbox(0.31, 0.3, 0.32, c.top === 'dress' ? skinMat : legs, -0.13));
+      knee.add(rbox(0.32, 0.07, 0.34, shoe, -0.305));
+    }
+    this.hips.add(this.torso);
+    const front = mat('#ffffff', { map: topTexture(c) });
+    this.torso.add(rbox(0.66, 0.68, 0.33, [sleeve, sleeve, sleeve, sleeve, front, sleeve], 0.34));
+    if (c.top === 'dress')
+      this.torso.add(
+        new THREE.Mesh(new THREE.CylinderGeometry(0.34, 0.46, 0.42, 16), sleeve).translateY(-0.12),
+      );
+    for (const [shoulder, elbow, x] of [
+      [this.shoulderL, this.elbowL, -0.495],
+      [this.shoulderR, this.elbowR, 0.495],
+    ] as const) {
+      shoulder.position.set(x, 0.6, 0);
+      this.torso.add(shoulder);
+      shoulder.add(rbox(0.31, 0.39, 0.31, sleeve, -0.11));
+      elbow.position.y = -0.3;
+      shoulder.add(elbow);
+      elbow.add(
+        rbox(0.3, 0.32, 0.3, c.top === 'tshirt' || c.top === 'dress' ? skinMat : sleeve, -0.14),
+      );
+      elbow.add(rbox(0.29, 0.07, 0.29, skinMat, -0.31));
+    }
+    this.handR.position.set(0, -0.36, 0.08);
+    this.elbowR.add(this.handR);
+    this.handL.position.set(0, -0.36, 0.08);
+    this.elbowL.add(this.handL);
+    // Head: a rounded block a little wider than deep, the face laid just in front.
+    this.head.position.y = 0.68;
+    this.torso.add(this.head);
+    this.head.add(rbox(0.2, 0.06, 0.2, skinMat, 0.02));
+    this.head.add(rbox(0.42, 0.4, 0.4, skinMat, 0.24));
+    const face = mat('#ffffff', { map: this.faceTex('open', 0), transparent: true });
+    face.depthWrite = false;
+    face.polygonOffset = true;
+    face.polygonOffsetFactor = -2;
+    this.head.add(
+      new THREE.Mesh(new THREE.PlaneGeometry(0.4, 0.38), face).translateY(0.24).translateZ(0.203),
+    );
+    // Hair: a cap of blocks over the top and the back.
+    if (c.hair !== 'bald' && c.extra !== 'hat' && c.extra !== 'helmet') {
+      this.head.add(rbox(0.46, 0.13, 0.45, hairMat, 0.47));
+      this.head.add(
+        rbox(
+          0.46,
+          c.hair === 'long' ? 0.62 : 0.3,
+          0.1,
+          hairMat,
+          c.hair === 'long' ? 0.2 : 0.33,
+        ).translateZ(-0.19),
+      );
+      this.head.add(rbox(0.07, 0.2, 0.42, hairMat, 0.36).translateX(-0.215));
+      this.head.add(rbox(0.07, 0.2, 0.42, hairMat, 0.36).translateX(0.215));
+      if (c.hair === 'long') {
+        this.head.add(rbox(0.08, 0.5, 0.3, hairMat, 0.16).translateX(-0.23).translateZ(-0.04));
+        this.head.add(rbox(0.08, 0.5, 0.3, hairMat, 0.16).translateX(0.23).translateZ(-0.04));
+      }
+      if (c.hair === 'ponytail')
+        this.head.add(rbox(0.14, 0.34, 0.14, hairMat, 0.24).translateZ(-0.3));
+      if (c.hair === 'curly')
+        for (const [x, z] of [
+          [-0.14, 0.06],
+          [0.14, 0.06],
+          [0, -0.1],
+          [-0.12, -0.14],
+          [0.12, -0.14],
+        ] as const)
+          this.head.add(
+            new THREE.Mesh(new THREE.SphereGeometry(0.14, 12, 8), hairMat)
+              .translateY(0.5)
+              .translateX(x)
+              .translateZ(z),
+          );
+      if (c.hair === 'spiky')
+        for (let i = 0; i < 5; i++) {
+          const cone = new THREE.Mesh(new THREE.ConeGeometry(0.08, 0.2, 6), hairMat);
+          cone.position.set(-0.16 + i * 0.08, 0.6, -0.02 + (i % 2) * 0.08);
+          this.head.add(cone);
+        }
+      // A fringe over the forehead.
+      this.head.add(rbox(0.44, 0.08, 0.06, hairMat, 0.43).translateZ(0.2));
+    }
+    if (c.extra === 'hat') {
+      const dark = mat('#2b2724');
+      this.head.add(
+        new THREE.Mesh(new THREE.CylinderGeometry(0.22, 0.23, 0.2, 20), dark).translateY(0.54),
+      );
+      this.head.add(
+        new THREE.Mesh(new THREE.CylinderGeometry(0.38, 0.38, 0.03, 24), dark).translateY(0.45),
+      );
+    }
+    if (c.extra === 'cap') {
+      const cap = mat(c.topColor);
+      this.head.add(rbox(0.46, 0.13, 0.45, cap, 0.48));
+      this.head.add(rbox(0.38, 0.03, 0.2, cap, 0.44).translateZ(0.28));
+    }
+    if (c.extra === 'helmet')
+      this.head.add(
+        new THREE.Mesh(
+          new THREE.SphereGeometry(0.3, 20, 10, 0, Math.PI * 2, 0, Math.PI / 2),
+          mat('#55663f'),
+        ).translateY(0.4),
+      );
+    return face;
+  }
+
   private faceTex(eyes: Eyes, mouth: number, mood: Mood = 'neutral'): THREE.Texture {
     const key = `${eyes}${mouth}${mood}`;
     let t = this.faces.get(key);
     if (!t) {
-      t = faceTexture(this.c, eyes, mouth, mood);
+      t = blocky()
+        ? blockyFaceTexture(this.c, eyes, mouth, mood)
+        : faceTexture(this.c, eyes, mouth, mood);
       this.faces.set(key, t);
     }
     return t;
@@ -443,8 +747,11 @@ export class Person {
   point(where: 'eyes' | 'chest' | 'body' | 'hand'): THREE.Vector3 {
     this.root.updateMatrixWorld(true);
     if (where === 'hand') return this.handR.getWorldPosition(new THREE.Vector3());
-    if (where === 'eyes') return this.head.localToWorld(new THREE.Vector3(0, 0.22, 0.17));
-    if (where === 'chest') return this.torso.localToWorld(new THREE.Vector3(0, 0.4, 0.13));
+    const b = blocky();
+    if (where === 'eyes')
+      return this.head.localToWorld(new THREE.Vector3(0, b ? 0.27 : 0.22, b ? 0.2 : 0.17));
+    if (where === 'chest')
+      return this.torso.localToWorld(new THREE.Vector3(0, b ? 0.46 : 0.4, b ? 0.17 : 0.13));
     return this.hips.localToWorld(new THREE.Vector3(0, 0.1, 0));
   }
 
@@ -493,7 +800,7 @@ export class Person {
       this.kneeR,
     ];
     for (const j of reset) j.rotation.set(0, 0, 0);
-    this.hips.position.set(0, 0.92, 0);
+    this.hips.position.set(0, this.hipY, 0);
     this.root.rotation.set(0, facing, 0);
     this.root.position.copy(start);
     let eyes: Eyes =
@@ -537,7 +844,7 @@ export class Person {
         this.elbowL.rotation.x = this.elbowR.rotation.x = run ? -1.3 : -0.25;
         arms(0.06, 0.06);
         this.torso.rotation.x = run ? 0.25 : 0.04;
-        this.hips.position.y = 0.92 + Math.abs(s(ph)) * (run ? 0.06 : 0.025);
+        this.hips.position.y = this.hipY + Math.abs(s(ph)) * (run ? 0.06 : 0.025);
         this.root.position.addScaledVector(forward, t * (run ? 4 : 1.25));
         break;
       }
@@ -575,7 +882,7 @@ export class Person {
         break;
       }
       case 'sit': {
-        this.hips.position.y = 0.5;
+        this.hips.position.y = this.hipY * 0.54;
         this.hipL.rotation.x = this.hipR.rotation.x = -1.5;
         this.kneeL.rotation.x = this.kneeR.rotation.x = 1.5;
         this.shoulderL.rotation.x = this.shoulderR.rotation.x = -0.4;
@@ -626,7 +933,7 @@ export class Person {
         break;
       }
       case 'crouch': {
-        this.hips.position.y = 0.55;
+        this.hips.position.y = this.hipY * 0.6;
         this.hipL.rotation.x = -1.3;
         this.hipR.rotation.x = -0.5;
         this.kneeL.rotation.x = 1.9;
@@ -691,14 +998,14 @@ export class Person {
         this.elbowL.rotation.x = this.elbowR.rotation.x = -0.9;
         this.torso.rotation.x = 0.12;
         this.head.rotation.y = s(t * 1.2) * 0.35;
-        this.hips.position.y = 0.9 + Math.abs(s(ph)) * 0.02;
+        this.hips.position.y = this.hipY - 0.02 + Math.abs(s(ph)) * 0.02;
         this.root.position.addScaledVector(forward, t * 0.55);
         break;
       }
       case 'pickUp': {
         const down = Math.min(1, t / 0.6) * (1 - Math.min(1, Math.max(0, (t - 1.0) / 0.6)));
         this.torso.rotation.x = 0.95 * down;
-        this.hips.position.y = 0.92 - 0.28 * down;
+        this.hips.position.y = this.hipY * (1 - 0.3 * down);
         this.hipL.rotation.x = this.hipR.rotation.x = -0.9 * down;
         this.kneeL.rotation.x = this.kneeR.rotation.x = 1.3 * down;
         const up = Math.min(1, Math.max(0, (t - 1.0) / 0.6));

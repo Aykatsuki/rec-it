@@ -116,7 +116,7 @@ export const storyShortSchema = z
     card: z.boolean().default(true),
     theme: z.enum(['light', 'dark']).default('light'),
     captionStyle: z
-      .enum(['highlight', 'pop', 'karaoke', 'caps', 'clean', 'bebas', 'retro'])
+      .enum(['highlight', 'pop', 'karaoke', 'caps', 'clean', 'bebas', 'retro', 'game'])
       .default('pop'),
     upvotes: z.number().int().min(0).max(10_000_000).default(0),
     comments: z.number().int().min(0).max(10_000_000).default(0),
@@ -188,7 +188,7 @@ export const episodeSchema = z
     musicAssetId: z.string().min(1).max(100).nullable().default(null),
     musicVolume: z.number().min(0).max(1).default(0.15),
     captionStyle: z
-      .enum(['highlight', 'pop', 'karaoke', 'caps', 'clean', 'bebas', 'retro'])
+      .enum(['highlight', 'pop', 'karaoke', 'caps', 'clean', 'bebas', 'retro', 'game'])
       .default('pop'),
   })
   .strict()
@@ -220,12 +220,19 @@ export const lowPolySchema = z
     brand: z.string().trim().max(40).default(''),
     /** How solid the channel name is on screen. */
     brandOpacity: z.number().min(0.1).max(1).default(0.9),
-    /** How chunky the pixels are: the height the 3D is drawn at. */
+    /**
+     * How many lines the 3D is drawn at: PS1 320/480/720 (chunky/classic/clean); blocky
+     * 720/1280/1920 (draft/fast/full HD).
+     */
     pixels: z.enum(['chunky', 'classic', 'clean']).default('classic'),
+    /** The look (ADR-055): low-poly PS1, or bright blocky-avatar game story. */
+    style: z.enum(['ps1', 'blocky']).default('ps1'),
+    /** Blocky look: the classic yellow skin for everyone. */
+    classicSkin: z.boolean().default(true),
     musicAssetId: z.string().min(1).max(100).nullable().default(null),
     musicVolume: z.number().min(0).max(1).default(0.12),
     captionStyle: z
-      .enum(['highlight', 'pop', 'karaoke', 'caps', 'clean', 'bebas', 'retro'])
+      .enum(['highlight', 'pop', 'karaoke', 'caps', 'clean', 'bebas', 'retro', 'game'])
       .default('retro'),
   })
   .strict()

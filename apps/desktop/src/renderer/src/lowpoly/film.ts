@@ -3,8 +3,10 @@
 // handed over as a JPEG. The backend encodes the frames with FFmpeg.
 import * as THREE from 'three';
 import { shotFrames, totalFrames, type RenderSpec } from '@rec-it/lowpoly';
+import { BlockyPost } from './blocky-post';
 import { Ps1Post, setGrid } from './ps1';
 import { buildShot, disposeShot } from './shot';
+import { setLook } from './style';
 import { clearTextures } from './textures';
 
 export interface FilmOptions {
@@ -90,8 +92,14 @@ export async function film(spec: RenderSpec, o: FilmOptions): Promise<void> {
   const lowH = spec.pixelHeight;
   const lowW = Math.max(16, Math.round((lowH * w) / h));
   const canvas = document.createElement('canvas');
-  canvas.width = w;
-  canvas.height = h;
+  // The blocky look renders at its own resolution (pixelHeight lines: full, fast or draft) and is
+  // scaled smoothly to the frame; the PS1 look draws the full frame from its low pass.
+  const isBlocky = spec.style === 'blocky';
+  const rw = isBlocky ? Math.min(w, lowW) : w;
+  const rh = isBlocky ? Math.min(h, lowH) : h;
+  canvas.width = rw;
+  canvas.height = rh;
+  setLook(spec.style, spec.classicSkin);
   const renderer = new THREE.WebGLRenderer({
     canvas,
     antialias: false,
@@ -99,10 +107,11 @@ export async function film(spec: RenderSpec, o: FilmOptions): Promise<void> {
     powerPreference: 'high-performance',
   });
   renderer.setPixelRatio(1);
-  renderer.setSize(w, h, false);
+  renderer.setSize(rw, rh, false);
   renderer.outputColorSpace = THREE.SRGBColorSpace;
   setGrid(lowW, lowH);
-  const post = new Ps1Post(lowW, lowH);
+  const post = isBlocky ? null : new Ps1Post(lowW, lowH);
+  const blockyPost = isBlocky ? new BlockyPost(renderer, rw, rh) : null;
   const out = document.createElement('canvas');
   out.width = w;
   out.height = h;
@@ -121,17 +130,21 @@ export async function film(spec: RenderSpec, o: FilmOptions): Promise<void> {
       if (f1 <= f0) continue;
       const built = buildShot(shot, spec.cast, (f1 - f0) / fps, spec.models);
       built.camera.aspect = w / h;
+      blockyPost?.prepare(built.scene);
       try {
         for (let f = f0; f < f1; f++) {
           const t = (f - f0) / fps;
           built.update(t, f - f0);
           const look = built.look(t);
-          post.uniforms.uTint.value.set(look.tint);
-          post.uniforms.uTintAmount.value = look.tintAmount;
-          post.uniforms.uFlash.value = look.flash;
-          post.uniforms.uGrain.value = (f % 7) + 1;
-          post.render(renderer, built.scene, built.camera);
-          g.drawImage(canvas, 0, 0);
+          if (post) {
+            post.uniforms.uTint.value.set(look.tint);
+            post.uniforms.uTintAmount.value = look.tintAmount;
+            post.uniforms.uFlash.value = look.flash;
+            post.uniforms.uGrain.value = (f % 7) + 1;
+            post.render(renderer, built.scene, built.camera);
+          } else blockyPost!.draw(built.scene, built.camera, built.focusDistance(), look);
+          g.imageSmoothingQuality = 'high';
+          g.drawImage(canvas, 0, 0, w, h);
           bigText(g, built.overlay, t, w, h);
           brand(g, spec.brand, f / fps, w, h, spec.brandOpacity);
           const blob = await new Promise<Blob>((res, rej) =>
@@ -155,8 +168,10 @@ export async function film(spec: RenderSpec, o: FilmOptions): Promise<void> {
     await flush();
     o.onProgress?.(done, total);
   } finally {
-    post.dispose();
+    post?.dispose();
+    blockyPost?.dispose();
     renderer.dispose();
+    setLook('ps1');
     renderer.forceContextLoss();
     clearTextures();
   }

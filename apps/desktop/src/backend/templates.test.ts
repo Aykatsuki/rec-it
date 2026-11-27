@@ -530,6 +530,80 @@ describe.skipIf(!bins || !hasUv)('story template (backend, real sidecar, fake vo
     );
   }, 300_000);
 
+  it('makes a blocky 3D Short with the same pipeline: blocky look, classic skin, game captions', async () => {
+    let styleAsked: string | undefined;
+    app.ai.lowPolyScript = async (_topic, _seconds, style) => {
+      styleAsked = style;
+      return {
+        title: 'In This Town, Screen Time Controls The Weather',
+        script:
+          'In this town, your screen time controls the weather. One boy never put his phone down.',
+      };
+    };
+    app.ai.lowPolyBoard = async () => ({
+      cast: [{ name: 'Leo', look: 'boy in a red hoodie' }],
+      shots: [
+        { beat: 1, place: 'street', who: 'nobody', camera: 'wide' },
+        { beat: 2, place: 'bedroom', who: ['Leo'], doing: 'sitting', objects: ['phone'] },
+      ],
+    });
+    const jpeg = join(dir, 'frame.jpg');
+    if (!existsSync(jpeg))
+      execFileSync(bins!.ffmpeg, [
+        '-v',
+        'error',
+        '-y',
+        '-f',
+        'lavfi',
+        '-i',
+        'color=c=0x336699:s=108x192',
+        '-frames:v',
+        '1',
+        jpeg,
+      ]);
+    const frame = new Uint8Array(readFileSync(jpeg));
+    let spec: RenderSpec | null = null;
+    (app.lowPoly as unknown as { d: { emit: (r: string, s: RenderSpec) => void } }).d.emit = (
+      request,
+      s,
+    ) => {
+      spec = s;
+      void (async () => {
+        const total = totalFrames(s);
+        for (let i = 0; i < total; i += 16)
+          await app.lowPoly.frames(
+            request,
+            Array.from({ length: Math.min(16, total - i) }, () => frame),
+          );
+        app.lowPoly.finished(request);
+      })();
+    };
+    const jobId = app.templates.lowPolyShort({
+      topic: 'screen time weather',
+      narrator: 'am_michael',
+      style: 'blocky',
+      captionStyle: 'game',
+    });
+    const job = await waitFor(() => {
+      const j = app.templates.list().find((x) => x.id === jobId);
+      return j && j.state !== 'running' && j;
+    }, 240_000);
+    expect(job.error).toBeUndefined();
+    expect(styleAsked).toBe('blocky');
+    const s = spec as unknown as RenderSpec;
+    expect(s.style).toBe('blocky');
+    expect(s.classicSkin).toBe(true);
+    expect(s.shots.map((x) => [x.set, x.subject])).toEqual([
+      // "your screen time": the viewer is shown.
+      ['street', 'you'],
+      ['bedroom', 'leo'],
+    ]);
+    expect(s.shots[1]!.props).toContain('phone');
+    const { doc } = app.projects.document().state();
+    const seq = doc.sequences.find((x) => x.id === job.sequenceId)!;
+    expect(seq.captions?.style).toBe('game');
+  }, 300_000);
+
   it('previews a voice as WAV', async () => {
     const wav = Buffer.from(await app.voice.preview('af_heart', 1, 'Hello there'), 'base64');
     expect(wav.subarray(0, 4).toString()).toBe('RIFF');

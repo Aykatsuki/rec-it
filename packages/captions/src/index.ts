@@ -155,6 +155,19 @@ export const CAPTION_STYLE_DEFS: Record<CaptionStyleId, CaptionStyle> = {
     animation: 'none',
     spacing: 2,
   },
+  game: {
+    // One word at a time, big yellow with a thick black edge, as on blocky game-story channels.
+    id: 'game',
+    name: 'Game yellow',
+    font: 'Montserrat Black',
+    bold: false,
+    size: 96,
+    fill: '#FFE21F',
+    outline: '#111111',
+    outlineWidth: 9,
+    shadow: 3,
+    animation: 'pop',
+  },
 };
 
 /** Font family → bundled file (resources/fonts). Both renderers get exactly these files. */

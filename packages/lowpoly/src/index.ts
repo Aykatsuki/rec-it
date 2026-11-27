@@ -295,6 +295,14 @@ export const renderSpecSchema = z.object({
   brand: z.string().max(40).default(''),
   /** How solid the channel name is (0.1 faint … 1 solid). */
   brandOpacity: z.number().min(0.1).max(1).default(0.9),
+  /**
+   * The look (ADR-055): "ps1" is the low-poly PlayStation look; "blocky" is the bright,
+   * smooth-plastic look of blocky-avatar game stories (full resolution, soft shadows, depth of
+   * field, a livelier camera).
+   */
+  style: z.enum(['ps1', 'blocky']).default('ps1'),
+  /** Blocky look: everyone gets the classic yellow skin. */
+  classicSkin: z.boolean().default(false),
   /** Models the AI designed for things the kit has no prop for, by id ("m:<id>" in shots). */
   models: z.record(z.string().regex(/^[a-z0-9_]{1,24}$/), modelSchema).default({}),
 });

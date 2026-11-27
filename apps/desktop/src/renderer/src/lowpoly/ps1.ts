@@ -3,6 +3,7 @@
 // the scene is drawn small and enlarged with hard pixels, and colours are cut to 15-bit with an
 // ordered dither.
 import * as THREE from 'three';
+import { blocky } from './style';
 
 const shared = {
   uSnap: { value: new THREE.Vector2(160, 284) },
@@ -60,8 +61,25 @@ export interface MatOptions {
   fog?: boolean;
 }
 
-/** A PS1 material: a colour, a texture, or both. */
+/**
+ * A PS1 material: a colour, a texture, or both. In the blocky look (ADR-055) it is smooth
+ * plastic instead (a standard material with the same colour, texture and glow); it shares every
+ * property the kit touches, so callers treat both alike.
+ */
 export function mat(colour: string, o: MatOptions = {}): THREE.MeshLambertMaterial {
+  if (blocky())
+    return new THREE.MeshStandardMaterial({
+      color: colour,
+      roughness: 0.62,
+      metalness: 0,
+      flatShading: false,
+      ...(o.map ? { map: o.map } : {}),
+      ...(o.emissive ? { emissive: o.emissive, emissiveIntensity: o.emissiveIntensity ?? 1 } : {}),
+      transparent: o.transparent ?? false,
+      opacity: o.opacity ?? 1,
+      side: o.side ?? THREE.FrontSide,
+      fog: o.fog ?? true,
+    }) as unknown as THREE.MeshLambertMaterial;
   return ps1(
     new THREE.MeshLambertMaterial({
       color: colour,

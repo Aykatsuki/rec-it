@@ -38,7 +38,8 @@ import { useApp } from '../store';
 const useCreateDialog = create<{ open: boolean }>(() => ({ open: false }));
 export const openCreateDialog = () => useCreateDialog.setState({ open: true });
 
-type TemplateId = 'episode' | 'lowpoly' | 'story' | 'characters' | 'texts' | 'split' | 'clips';
+type TemplateId =
+  'episode' | 'lowpoly' | 'blocky' | 'story' | 'characters' | 'texts' | 'split' | 'clips';
 const TEMPLATES: {
   id: TemplateId;
   title: string;
@@ -57,6 +58,13 @@ const TEMPLATES: {
     id: 'lowpoly',
     title: 'Low-poly 3D story',
     text: 'Strange true stories and what-ifs in retro PS1-style 3D: the AI writes, storyboards and films it on this PC.',
+    icon: <Box size={18} />,
+    ready: true,
+  },
+  {
+    id: 'blocky',
+    title: 'Blocky 3D story',
+    text: 'Game-style stories with blocky avatar characters ("In this town…"): bright sets, a moving camera, one-word captions. Filmed on this PC.',
     icon: <Box size={18} />,
     ready: true,
   },
@@ -140,6 +148,7 @@ function CreateBody({ onDone }: { onDone: () => void }) {
           <>
             {template === 'episode' && <EpisodeForm onDone={onDone} />}
             {template === 'lowpoly' && <LowPolyForm onDone={onDone} />}
+            {template === 'blocky' && <LowPolyForm onDone={onDone} style="blocky" />}
             {template === 'story' && <StoryForm onDone={onDone} />}
             {template === 'characters' && <CharactersForm onDone={onDone} />}
           </>
@@ -998,21 +1007,32 @@ function VoicePicker(p: { value: string; onChange: (voice: string) => void; test
  * The AI writes in the genre's style, storyboards one shot per clause from the 3D kit, and the
  * renderer films it; captions, voice and music are ordinary clips afterwards.
  */
-function LowPolyForm({ onDone }: { onDone: () => void }) {
+function LowPolyForm({
+  onDone,
+  style = 'ps1',
+}: {
+  onDone: () => void;
+  /** The look (ADR-055): the same pipeline films the blocky game style. */
+  style?: 'ps1' | 'blocky';
+}) {
+  const isBlocky = style === 'blocky';
   const assets = useApp((s) => s.assets);
   const voiceStatus = useApp((s) => s.voice);
   const voiceHq = useApp((s) => s.voiceHq);
   const jobs = useApp((s) => s.templateJobs);
   const [topic, setTopic] = useState('');
   const [script, setScript] = useState('');
-  const [seconds, setSeconds] = useState(40);
-  const [speed, setSpeed] = useState(1.1);
+  const [seconds, setSeconds] = useState(isBlocky ? 60 : 40);
+  const [speed, setSpeed] = useState(isBlocky ? 1.05 : 1.1);
+  const [classicSkin, setClassicSkin] = useState(true);
   const [narrator, setNarrator] = useState<string>(() =>
     useApp.getState().voiceHq?.available ? 'hq:k-am_michael' : 'am_michael',
   );
   const [brand, setBrand] = useState('');
   const [brandOpacity, setBrandOpacity] = useState(0.9);
-  const [pixels, setPixels] = useState<'chunky' | 'classic' | 'clean'>('classic');
+  const [pixels, setPixels] = useState<'chunky' | 'classic' | 'clean'>(
+    isBlocky ? 'clean' : 'classic',
+  );
   const [music, setMusic] = useState('');
   const [ideas, setIdeas] = useState<{ title: string; premise: string }[]>([]);
   const [thinking, setThinking] = useState(false);
@@ -1049,7 +1069,7 @@ function LowPolyForm({ onDone }: { onDone: () => void }) {
     setError(null);
     setThinking(true);
     try {
-      setIdeas(await backend.invoke('lowpoly.ideas', { theme: topic.slice(0, 300) }));
+      setIdeas(await backend.invoke('lowpoly.ideas', { theme: topic.slice(0, 300), style }));
     } catch (e) {
       setError(message(e));
     } finally {
@@ -1069,6 +1089,9 @@ function LowPolyForm({ onDone }: { onDone: () => void }) {
         brand,
         brandOpacity,
         pixels,
+        style,
+        classicSkin,
+        ...(isBlocky ? { captionStyle: 'game' as const } : {}),
         musicAssetId: music || null,
       });
       setJobId(r.jobId);
@@ -1087,17 +1110,30 @@ function LowPolyForm({ onDone }: { onDone: () => void }) {
     >
       <section className="create__section">
         <h3>Topic</h3>
-        <p className="create__hint">
-          A strange true story, a body or science fact, or a what-if. The AI writes it the way the
-          big low-poly channels do: no intro, the premise in the first words, short clauses, a
-          twist, and a joke or a loop at the end. Each clause becomes one 3D shot.
-        </p>
+        {isBlocky ? (
+          <p className="create__hint">
+            A strange town rule (&quot;In this town, your screen time controls the weather&quot;) or
+            a big question answered with a story. The AI writes it the way the big blocky-story
+            channels do: the hook first, one character, a turn, and a twist or a lesson at the end.
+            Each clause becomes one 3D shot with a moving camera.
+          </p>
+        ) : (
+          <p className="create__hint">
+            A strange true story, a body or science fact, or a what-if. The AI writes it the way the
+            big low-poly channels do: no intro, the premise in the first words, short clauses, a
+            twist, and a joke or a loop at the end. Each clause becomes one 3D shot.
+          </p>
+        )}
         <label>
           <textarea
             className="ui-input create__text"
             value={topic}
             rows={3}
-            placeholder="e.g. Why stopping time is a bad idea"
+            placeholder={
+              isBlocky
+                ? 'e.g. In this town, the more you doomscroll, the longer your legs get'
+                : 'e.g. Why stopping time is a bad idea'
+            }
             onChange={(e) => setTopic(e.target.value)}
             data-testid="lowpoly-topic"
           />
@@ -1136,7 +1172,11 @@ function LowPolyForm({ onDone }: { onDone: () => void }) {
             className="ui-input create__text"
             value={script}
             rows={5}
-            placeholder="If you could stop time with the snap of your fingers, you would instantly go blind…"
+            placeholder={
+              isBlocky
+                ? 'In this town, whenever the sky turns red, everyone has to hide…'
+                : 'If you could stop time with the snap of your fingers, you would instantly go blind…'
+            }
             onChange={(e) => setScript(e.target.value)}
             data-testid="lowpoly-script"
           />
@@ -1147,7 +1187,7 @@ function LowPolyForm({ onDone }: { onDone: () => void }) {
             <input
               type="range"
               min={20}
-              max={75}
+              max={isBlocky ? 90 : 75}
               step={5}
               value={seconds}
               onChange={(e) => setSeconds(Number(e.target.value))}
@@ -1176,7 +1216,7 @@ function LowPolyForm({ onDone }: { onDone: () => void }) {
               className="ui-input"
               value={brand}
               maxLength={40}
-              placeholder="e.g. Low Poly Facts"
+              placeholder={isBlocky ? 'e.g. Block Town Stories' : 'e.g. Low Poly Facts'}
               onChange={(e) => setBrand(e.target.value)}
               data-testid="lowpoly-brand"
             />
@@ -1194,21 +1234,48 @@ function LowPolyForm({ onDone }: { onDone: () => void }) {
               data-testid="lowpoly-brand-opacity"
             />
           </label>
-          <label className="create__grow">
-            Pixels
-            <select
-              className="ui-input"
-              value={pixels}
-              onChange={(e) => setPixels(e.target.value as typeof pixels)}
-            >
-              <option value="chunky">Chunky (PS1, 320 lines)</option>
-              <option value="classic">Classic (480 lines)</option>
-              <option value="clean">Clean (720 lines)</option>
-            </select>
-          </label>
+          {isBlocky && (
+            <label className="create__grow">
+              Quality
+              <select
+                className="ui-input"
+                value={pixels}
+                onChange={(e) => setPixels(e.target.value as typeof pixels)}
+                data-testid="blocky-quality"
+              >
+                <option value="clean">Full HD (1920 lines)</option>
+                <option value="classic">Fast (1280 lines)</option>
+                <option value="chunky">Draft (720 lines)</option>
+              </select>
+            </label>
+          )}
+          {isBlocky ? (
+            <label className="create__check">
+              <input
+                type="checkbox"
+                checked={classicSkin}
+                onChange={(e) => setClassicSkin(e.target.checked)}
+                data-testid="blocky-classic-skin"
+              />
+              Classic yellow skin
+            </label>
+          ) : (
+            <label className="create__grow">
+              Pixels
+              <select
+                className="ui-input"
+                value={pixels}
+                onChange={(e) => setPixels(e.target.value as typeof pixels)}
+              >
+                <option value="chunky">Chunky (PS1, 320 lines)</option>
+                <option value="classic">Classic (480 lines)</option>
+                <option value="clean">Clean (720 lines)</option>
+              </select>
+            </label>
+          )}
         </div>
         <label>
-          Music (optional; chiptune suits the style)
+          Music (optional; {isBlocky ? 'upbeat game music' : 'chiptune'} suits the style)
           <select className="ui-input" value={music} onChange={(e) => setMusic(e.target.value)}>
             <option value="">None</option>
             {sounds.map((v) => (

@@ -230,7 +230,12 @@ export const backendContract = defineContract({
     'templates.lowPoly': { input: lowPolySchema, output: z.object({ jobId: z.string() }) },
     /** Ten ideas for low-poly Shorts in the genre's winning formats. */
     'lowpoly.ideas': {
-      input: z.object({ theme: z.string().trim().max(300) }).strict(),
+      input: z
+        .object({
+          theme: z.string().trim().max(300),
+          style: z.enum(['ps1', 'blocky']).default('ps1'),
+        })
+        .strict(),
       output: z.array(lowPolyIdeaSchema),
     },
     /** Frames the renderer filmed for a lowpoly.render request (JPEG each, in order). */

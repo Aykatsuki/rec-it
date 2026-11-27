@@ -9,6 +9,7 @@ import { anyProp, makeProp, sign, type Prop } from './props';
 import { mat } from './ps1';
 import { flat } from './ps1';
 import { buildSet } from './sets';
+import { blocky } from './style';
 import { rng, texture } from './textures';
 
 /** Props that fly across the sky. */
@@ -22,7 +23,18 @@ export interface BuiltShot {
   look: (t: number) => { tint: string; tintAmount: number; flash: number };
   /** Big words drawn over the picture (unless they are on a sign in the scene). */
   overlay: string;
+  /** How far the camera's focus is (for depth of field), as of the last update. */
+  focusDistance: () => number;
 }
+
+/** The closer angle a long shot cuts to halfway (blocky look). */
+const RECUT: Partial<Record<ShotSpec['framing'], ShotSpec['framing']>> = {
+  wide: 'medium',
+  medium: 'closeUp',
+  lowAngle: 'medium',
+  closeUp: 'medium',
+  overhead: 'medium',
+};
 
 const smooth = (x: number) => {
   const k = Math.min(1, Math.max(0, x));
@@ -528,6 +540,7 @@ export function buildShot(
   const speaker = spec.speaker;
   const shake = spec.camera === 'shake' || effect === 'explosion';
 
+  let focusDist = 5;
   const update = (t: number, frame: number) => {
     const at = frozen ? 0.4 : t;
     set.update?.(at);
@@ -560,15 +573,30 @@ export function buildShot(
     crowd.forEach((c, i) => c.person.pose(c.action, at + i * 0.7, 0, c.pos, c.facing, spec.mood));
     for (const a of animated) a(t);
 
-    // Camera.
-    const k = smooth(t / Math.max(0.1, duration));
+    // Camera. The blocky look (ADR-055) is livelier: long shots cut to a closer angle halfway,
+    // every shot drifts, and moves cover more ground.
+    const lively = blocky();
+    const recut =
+      lively &&
+      duration > 3.4 &&
+      t > duration / 2 &&
+      !pov &&
+      !skyShot &&
+      !!subject &&
+      // Never cut away from what the shot is about: a second person, things at the feet.
+      !(spec.framing === 'medium' && (others.length > 0 || nearIndex > 0));
+    const framing: ShotSpec['framing'] = recut
+      ? (RECUT[spec.framing] ?? spec.framing)
+      : spec.framing;
+    const span = lively && duration > 3.4 ? duration / 2 : duration;
+    const k = smooth((recut ? t - duration / 2 : t) / Math.max(0.1, span));
     let focus: THREE.Vector3;
     let dist: number;
     let lift = 0;
     let fov = 40;
     if (subject && !pov && !skyShot) {
       const eyes = subject.point('eyes');
-      switch (spec.framing) {
+      switch (framing) {
         case 'extremeCloseUp':
           focus = eyes.clone().add(new THREE.Vector3(0, -0.04, 0));
           dist = 0.62;
@@ -617,6 +645,18 @@ export function buildShot(
           dist = 5.2;
           lift = 0.9;
       }
+      // Blocky heads are bigger: close framings step back to fit them.
+      // Close-ups keep the shoulders in (head and shoulders, as the genre frames faces).
+      if (lively && (framing === 'closeUp' || framing === 'extremeCloseUp')) {
+        dist *= framing === 'closeUp' ? 1.75 : 1.5;
+        focus.y -= 0.12;
+      } else if (lively && framing === 'medium') dist *= 1.2;
+      // Someone lying down is seen from above and beside, never from the feet (that looked
+      // into the bed frame or a wall).
+      if (action === 'sleep' && framing !== 'object') {
+        lift = dist * 0.85;
+        dist *= 0.7;
+      }
     } else if (skyShot) {
       // Over the shoulder, looking up at the sky: the person low in frame, the flyer above.
       focus = new THREE.Vector3(0, 6.5, -26);
@@ -632,25 +672,27 @@ export function buildShot(
       if (fp.placement === 'big') focus.y += fp.size * 0.25;
       dist = Math.max(
         0.7,
-        fp.size * (spec.framing === 'wide' ? 2.4 : spec.framing === 'extremeCloseUp' ? 1.4 : 2.2),
+        fp.size * (framing === 'wide' ? 2.4 : framing === 'extremeCloseUp' ? 1.4 : 2.2),
       );
       lift = fp.size * 0.15;
     } else {
       focus = new THREE.Vector3(0, 1.4, -2);
-      dist = spec.framing === 'wide' || spec.framing === 'overhead' ? 9 : 5;
+      dist = framing === 'wide' || framing === 'overhead' ? 9 : 5;
       lift = 1;
     }
     const move = spec.camera;
     // Gentle moves: a push-in covers a tenth of the distance (a twentieth on faces).
-    const amount = spec.framing === 'extremeCloseUp' || spec.framing === 'closeUp' ? 0.05 : 0.1;
+    const amount =
+      (framing === 'extremeCloseUp' || framing === 'closeUp' ? 0.05 : 0.1) * (lively ? 2.4 : 1);
     const scale =
       move === 'pushIn'
         ? 1 + amount / 2 - amount * k
         : move === 'pullOut'
           ? 1 - amount / 2 + amount * k
-          : 1 - 0.02 * k;
-    let az = (subject ? facing : 0) * (spec.framing === 'wide' ? 0.5 : 1);
-    if (move === 'orbit') az += (k - 0.5) * 0.5;
+          : 1 - (lively ? 0.08 : 0.02) * k;
+    let az = (subject ? facing : 0) * (framing === 'wide' ? 0.5 : 1);
+    if (move === 'orbit') az += (k - 0.5) * (lively ? 1.1 : 0.5);
+    else if (lively) az += (k - 0.5) * (recut ? -0.3 : 0.35);
     const d = dist * scale;
     if (skyShot) {
       const head = subject!.point('eyes');
@@ -666,7 +708,7 @@ export function buildShot(
       camera.lookAt(focus);
       if (!camera.children.length && mainCast) camera.add(povArm(mainCast));
       if (!camera.parent) scene.add(camera);
-    } else if (spec.framing === 'overhead') {
+    } else if (framing === 'overhead') {
       camera.position.set(focus.x + Math.sin(az) * 0.6, focus.y + d, focus.z + Math.cos(az) * 0.6);
       camera.lookAt(focus);
     } else {
@@ -684,6 +726,14 @@ export function buildShot(
       camera.position.y += Math.sin(t * 59 + 1) * s;
     }
     if (effect === 'sick') camera.rotateZ(Math.sin(t * 2.2) * 0.06);
+    if (lively && !pov) {
+      // A hand-held float, slow enough never to blur a face.
+      const f = 0.012 * Math.max(0.6, camera.position.distanceTo(focus) * 0.25);
+      camera.position.x += Math.sin(t * 0.9 + spec.seed) * f;
+      camera.position.y += Math.sin(t * 1.3 + spec.seed * 2) * f * 0.6;
+      camera.lookAt(focus);
+    }
+    focusDist = camera.position.distanceTo(focus);
     camera.fov = fov;
     camera.updateProjectionMatrix();
   };
@@ -694,6 +744,7 @@ export function buildShot(
     update,
     look: (t) => ({ tint, tintAmount, flash: flash(t) }),
     overlay: onSign ? '' : spec.bigText,
+    focusDistance: () => focusDist,
   };
 }
 

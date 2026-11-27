@@ -190,3 +190,17 @@ describe('episode plan schema', () => {
     expect(plan.shots[3]!.motion).toBeUndefined();
   });
 });
+
+describe('blocky 3D story prompts (ADR-055)', () => {
+  it('writes in the blocky-story formats and keeps the low-poly ones apart', async () => {
+    const { lowPolyScriptPrompt, lowPolyIdeasPrompt } = await import('./prompts');
+    const blocky = lowPolyScriptPrompt({ topic: 'doomscrolling', seconds: 60, style: 'blocky' });
+    expect(blocky[0]!.content).toMatch(/In this town/);
+    expect(blocky[0]!.content).toMatch(/ONE main character/);
+    expect(blocky[1]!.content).toBe('doomscrolling');
+    const ps1 = lowPolyScriptPrompt({ topic: 'x', seconds: 40 });
+    expect(ps1[0]!.content).not.toMatch(/In this town/);
+    expect(lowPolyIdeasPrompt('', 'blocky')[0]!.content).toMatch(/In this town, …/);
+    expect(lowPolyIdeasPrompt('')[0]!.content).toMatch(/low-poly/);
+  });
+});

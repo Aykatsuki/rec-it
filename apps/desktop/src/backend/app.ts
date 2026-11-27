@@ -207,7 +207,7 @@ export class BackendApp {
       releaseGpu: () => this.ai.releaseGpu(),
       planEpisode: (brief, seconds, extra) => this.ai.planEpisode(brief, seconds, extra),
       lowPoly: this.lowPoly,
-      lowPolyScript: (topic, seconds) => this.ai.lowPolyScript(topic, seconds),
+      lowPolyScript: (topic, seconds, style) => this.ai.lowPolyScript(topic, seconds, style),
       lowPolyBoard: (title, beats, cast) => this.ai.lowPolyBoard(title, beats, cast),
       lowPolyModels: (names) => this.ai.lowPolyModels(names),
       onTranscript: () => this.transcripts.changed(),
@@ -391,7 +391,7 @@ export class BackendApp {
     'templates.talkTest': (input) => ({ jobId: this.templates.talkTest(input) }),
     'templates.episode': (input) => ({ jobId: this.templates.episode(input) }),
     'templates.lowPoly': (input) => ({ jobId: this.templates.lowPolyShort(input) }),
-    'lowpoly.ideas': ({ theme }) => this.ai.lowPolyIdeas(theme),
+    'lowpoly.ideas': ({ theme, style }) => this.ai.lowPolyIdeas(theme, style),
     'lowpoly.frames': async ({ request, frames }) => ({
       ok: await this.lowPoly.frames(request, frames),
     }),

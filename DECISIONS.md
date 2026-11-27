@@ -1007,3 +1007,41 @@ Each record states the decision, why it was made and what else was considered. R
   - **Sync.** Kokoro's predicted word times drifted up to about a second from its own audio (spoken numbers worst: "1944," ended at 0.61 s, said until 1.47 s). `tts.snap_to_pauses` matches every sentence and clause end to its pause in the audio and re-times the words and sounds between, so captions, cuts and mouths follow the voice.
 
 **Not yet:** a remembered "you" and cast across Shorts (as ADR-053 does for episodes), sound effects, and imported CC-BY PS1 models.
+
+## ADR-055 · Blocky 3D stories: a second look for the 3D Short pipeline
+
+**Status:** Accepted (27 Nov 2026).
+
+**Context.** You want story Shorts in the style of blocky-avatar game animation: characters made of blocks with simple cartoon faces, a camera that never stops moving, and backgrounds that follow the story. You pointed at halaloogway (4 Shorts, story answers to big questions) and zaylento.yt on TikTok (592 K followers, 25.5 M likes; "In this town…" Shorts at 0.1–8.8 M views each). The look must be our own: no game logos, names, official avatars or anyone's characters.
+
+**What the genre does (studied frame by frame):**
+- Premise first: "In this town, hussing is strictly forbidden" or a question ("Why does the worst person get the best life?"). Then one character's story, a turn, and a twist, cliffhanger or lesson. 60–170 s.
+- Blocky figures: block legs, torso and arms, a rounded block head with a flat cartoon face (dot eyes, a smile, simple mood faces). Often classic yellow skin, sometimes natural skin tones.
+- Bright, smooth plastic sets with soft shadows (homes, bedrooms, streets, gyms, stages, labs) and warm lights. Close shots have a blurred background.
+- A new angle every 1–3 s, and the camera drifts, pushes or orbits in every shot.
+- Captions are one word at a time, big and yellow with a thick black edge, in the middle of the lower half.
+
+**Decision.** Blocky is a second look (`style: 'blocky'`) for the ADR-054 pipeline rather than a separate one. Script, beats, storyboard, planner and voice timing are shared, so every low-poly fix carries over: grounded props, the hero kept in the scene, places from the words, the channel name and its opacity, and pause-snapped timing.
+- **Writing.** `lowPolyScriptPrompt`/`lowPolyIdeasPrompt` take a style. The blocky rules ask for the "In this town…" or big-question hook, one main character, changing places, family-friendly content and no brand or game names.
+- **Look switch.** Renderer `lowpoly/style.ts` sets the look once per film:
+  - `mat()` makes smooth standard (plastic) materials.
+  - Textures are filtered, with only a trace of grain.
+  - `Person` builds a blocky body. It keeps the same joints and height, so every action and camera framing still works; poses scale from the hip height.
+- **Faces.** The rounded head carries a cartoon face drawn over it (128 px): blinking, four speech mouths, and mood faces and brows. Beards and glasses are drawn too. An option gives everyone the classic yellow skin; it is on by default.
+- **Camera** (blocky only):
+  - Shots over 3.4 s cut to a closer angle halfway, except when that would lose a second person or things at the feet.
+  - Every shot drifts and floats gently, and moves are about 2.4× larger.
+  - Close-ups step back to frame head and shoulders.
+  - Sleeping people are seen from above and beside, in both looks; the old camera looked into the bed frame.
+- **Picture** (`blocky-post.ts`):
+  - Drawn at the chosen quality (Full HD 1920 lines by default, Fast 1280 or Draft 720, scaled smoothly to the frame) with 4× multisampling.
+  - Soft PCF shadows from the set's sun, plus a soft fill light.
+  - ACES tone curve.
+  - Depth of field focused on the shot's subject, with blur growing as the camera gets closer.
+  - A light grade: saturation, vignette, and the shot's tint and flashes.
+- **Captions.** New style `game` ("Game yellow"): Montserrat Black in yellow with a thick black edge, one word at a time with a pop, at 62 % height.
+- **Make a Short.** A "Blocky 3D story" card reuses the low-poly form with the blocky hint, ideas, length (up to 90 s), a quality choice, a classic-skin tick box and game captions.
+
+**Tests.** pytest is unchanged. Vitest covers the blocky prompts and an integration run: blocky look, classic skin, the style reaching the script writer, the planner's shots and game captions. End to end makes a blocky Short in the real renderer and saves a contact sheet. Stills from the harness were checked against the reference Shorts.
+
+**Not yet:** signs and banners written from the story ("NO HUSSING!"), confetti and sparkle effects tied to the words, character accessories beyond hats, caps and helmets (headscarves, kufis), and fully lip-synced dialogue scenes.

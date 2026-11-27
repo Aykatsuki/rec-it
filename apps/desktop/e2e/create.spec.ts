@@ -88,6 +88,10 @@ const EPISODE = {
   ],
 };
 
+const BLOCKY_SCRIPT = {
+  title: 'In This Town, Screen Time Controls The Weather',
+  script: 'In this town, screen time makes it snow. One boy never put his phone down.',
+};
 const LOWPOLY_SCRIPT = {
   title: 'Why Stopping Time Is A Bad Idea',
   script:
@@ -200,17 +204,19 @@ test.describe('create a Short', () => {
         const ask = JSON.stringify(JSON.parse(body).messages);
         const content = ask.includes('low-poly 3D story channels')
           ? JSON.stringify(LOWPOLY_SCRIPT)
-          : ask.includes('storyboard a vertical low-poly')
-            ? JSON.stringify(LOWPOLY_BOARD)
-            : ask.includes('Rec-It is connected')
-              ? 'Rec-It is connected.'
-              : ask.includes('director and storyboard artist')
-                ? JSON.stringify(EPISODE)
-                : ask.includes('storyboard')
-                  ? JSON.stringify(PLAN)
-                  : ask.includes('faceless YouTube Shorts')
-                    ? JSON.stringify(FACTS)
-                    : JSON.stringify(STORY);
+          : ask.includes('blocky 3D avatar characters')
+            ? JSON.stringify(BLOCKY_SCRIPT)
+            : ask.includes('storyboard a vertical 3D Short')
+              ? JSON.stringify(LOWPOLY_BOARD)
+              : ask.includes('Rec-It is connected')
+                ? 'Rec-It is connected.'
+                : ask.includes('director and storyboard artist')
+                  ? JSON.stringify(EPISODE)
+                  : ask.includes('storyboard')
+                    ? JSON.stringify(PLAN)
+                    : ask.includes('faceless YouTube Shorts')
+                      ? JSON.stringify(FACTS)
+                      : JSON.stringify(STORY);
         res.end(JSON.stringify({ choices: [{ message: { content } }] }));
       });
     });
@@ -452,6 +458,60 @@ test.describe('create a Short', () => {
         '-frames:v',
         '1',
         test.info().outputPath('lowpoly-sheet.jpg'),
+      ]);
+    } finally {
+      await app.close();
+      rmSync(projects, { recursive: true, force: true, maxRetries: 5, retryDelay: 500 });
+    }
+  });
+  test('make a blocky 3D Short from a topic', async () => {
+    test.setTimeout(900_000);
+    const projects = mkdtempSync(join(tmpdir(), 'recit-blocky-'));
+    const { app, page } = await launch(tempUserData(), {
+      ...(bins!.source === 'path' ? {} : { RECIT_FFMPEG_PATH: bins!.ffmpeg }),
+      RECIT_DISABLE_SIDECAR: '0',
+      RECIT_FAKE_TTS: '1',
+      RECIT_PROJECTS_DIR: projects,
+    });
+    try {
+      await createProject(page, 'Blocky');
+      await page.getByRole('button', { name: 'Settings' }).click();
+      await page.getByRole('tab', { name: 'AI' }).click();
+      const ai = page.getByTestId('ai-settings');
+      await ai.getByLabel('AI provider').selectOption('custom');
+      await ai.getByLabel('Server address').fill(aiUrl);
+      await ai.getByLabel('Server address').blur();
+      await page.keyboard.press('Escape');
+
+      await page.getByTestId('create-button').click();
+      const dialog = page.getByTestId('create-dialog');
+      await dialog.getByRole('button', { name: /Blocky 3D story/ }).click();
+      await dialog
+        .getByTestId('lowpoly-topic')
+        .fill('In this town, screen time controls the weather');
+      await dialog.getByTestId('lowpoly-narrator').selectOption('am_michael');
+      await expect(dialog.getByTestId('blocky-classic-skin')).toBeChecked();
+      // Software WebGL in CI: the draft quality keeps the test quick.
+      await dialog.getByTestId('blocky-quality').selectOption('chunky');
+      await page.screenshot({ path: test.info().outputPath('blocky-form.png') });
+      await expect(dialog.getByTestId('lowpoly-create')).toBeEnabled({ timeout: 90_000 });
+      await dialog.getByTestId('lowpoly-create').click();
+      await expect(dialog).toBeHidden({ timeout: 840_000 });
+      await expect(page.locator('[data-testid=asset-card]')).toHaveCount(2);
+      const media = join(projects, 'Blocky media');
+      const video = readdirSync(media).find((f) => /^3d .*\.mp4$/.test(f));
+      expect(video).toBeTruthy();
+      execFileSync(bins!.ffmpeg, [
+        '-v',
+        'error',
+        '-y',
+        '-i',
+        join(media, video!),
+        '-vf',
+        'fps=2,scale=270:-1,tile=6x3',
+        '-frames:v',
+        '1',
+        test.info().outputPath('blocky-sheet.jpg'),
       ]);
     } finally {
       await app.close();

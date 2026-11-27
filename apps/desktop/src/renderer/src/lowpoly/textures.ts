@@ -2,6 +2,7 @@
 // small canvases with a seeded random generator and sampled with hard pixels, like a PlayStation
 // game: no image files, so there is nothing to license and nothing to download.
 import * as THREE from 'three';
+import { blocky } from './style';
 
 /** Seeded random numbers in [0, 1). */
 export function rng(seed: number): () => number {
@@ -39,9 +40,17 @@ export function texture(
   paint(g, c.width, c.height, rng(seed));
   const t = new THREE.CanvasTexture(c);
   t.colorSpace = THREE.SRGBColorSpace;
-  t.magFilter = THREE.NearestFilter;
-  t.minFilter = THREE.NearestFilter;
-  t.generateMipmaps = false;
+  if (blocky()) {
+    // Smooth plastic: filtered, not hard pixels.
+    t.magFilter = THREE.LinearFilter;
+    t.minFilter = THREE.LinearMipmapLinearFilter;
+    t.generateMipmaps = true;
+    t.anisotropy = 4;
+  } else {
+    t.magFilter = THREE.NearestFilter;
+    t.minFilter = THREE.NearestFilter;
+    t.generateMipmaps = false;
+  }
   t.wrapS = t.wrapT = THREE.RepeatWrapping;
   t.repeat.set(repeat[0], repeat[1]);
   cache.set(id, t);
@@ -73,6 +82,8 @@ export function noise(
   cell = 1,
 ): void {
   const c = new THREE.Color(base);
+  // Game plastic is clean: a trace of grain only.
+  if (blocky()) amount *= 0.3;
   for (let y = 0; y < h; y += cell)
     for (let x = 0; x < w; x += cell) {
       const k = 1 + (r() - 0.5) * 2 * amount;

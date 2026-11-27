@@ -83,7 +83,11 @@ export interface TemplateDeps {
   ) => Promise<EpisodePlan>;
   /** Low-poly 3D Shorts (ADR-054): the renderer-backed filmer and the AI's script and storyboard. */
   lowPoly?: LowPolyService;
-  lowPolyScript?: (topic: string, seconds: number) => Promise<LowPolyScript>;
+  lowPolyScript?: (
+    topic: string,
+    seconds: number,
+    style?: 'ps1' | 'blocky',
+  ) => Promise<LowPolyScript>;
   lowPolyBoard?: (title: string, beats: string[], cast: CastMember[]) => Promise<LowPolyBoard>;
   lowPolyModels?: (names: string[]) => Promise<Record<string, unknown>[]>;
   /** Frees the graphics card (unloads Ollama's models) before the picture engine runs. */
@@ -556,7 +560,7 @@ export class TemplateService {
       let script = input.script;
       if (!script) {
         this.update(id, { stage: 'Writing the script…', progress: 0.02 });
-        const written = await this.d.lowPolyScript!(input.topic, input.seconds);
+        const written = await this.d.lowPolyScript!(input.topic, input.seconds, input.style);
         title = written.title.trim() || title;
         script = written.script;
       }
@@ -606,10 +610,16 @@ export class TemplateService {
         width: 1080,
         height: 1920,
         fps,
-        pixelHeight: { chunky: 320, classic: 480, clean: 720 }[input.pixels],
+        // PS1: the low pass's height. Blocky: the render height (draft, fast, full HD).
+        pixelHeight:
+          input.style === 'blocky'
+            ? { chunky: 720, classic: 1280, clean: 1920 }[input.pixels]
+            : { chunky: 320, classic: 480, clean: 720 }[input.pixels],
         cast: plan.cast,
         brand: input.brand,
         brandOpacity: input.brandOpacity,
+        style: input.style,
+        classicSkin: input.style === 'blocky' && input.classicSkin,
         models: Object.fromEntries(
           Object.entries(models).filter(([m]) =>
             plan.shots.some((sh) => sh.subject === `m:${m}` || sh.props.includes(`m:${m}`)),
@@ -663,7 +673,7 @@ export class TemplateService {
       const result = fresh.length
         ? await media().import(fresh, {
             source: 'made-in-rec-it',
-            notes: `3D Short made by Rec-It: voice (${voiceEngine(input.narrator)}), low-poly 3D filmed by Rec-It.`,
+            notes: `3D Short made by Rec-It: voice (${voiceEngine(input.narrator)}), ${input.style === 'blocky' ? 'blocky' : 'low-poly'} 3D filmed by Rec-It.`,
             userAttested: true,
           })
         : { imported: [], skipped: [] };
@@ -713,6 +723,7 @@ export class TemplateService {
         captions: {
           style: input.captionStyle,
           ...(input.captionStyle === 'retro' ? { position: 0.68, uppercase: false } : {}),
+          ...(input.captionStyle === 'game' ? { position: 0.62, uppercase: false } : {}),
         },
         ids: {
           voice: createId('item'),
