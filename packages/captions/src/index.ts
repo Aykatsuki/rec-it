@@ -141,6 +141,33 @@ export const CAPTION_STYLE_DEFS: Record<CaptionStyleId, CaptionStyle> = {
     spacing: 3,
     uppercase: true,
   },
+  retro: {
+    // Small yellow lower-case words with a hard dark edge, as on low-poly 3D story channels.
+    id: 'retro',
+    name: 'Retro yellow',
+    font: 'Poppins',
+    bold: true,
+    size: 60,
+    fill: '#F2E23C',
+    outline: '#141414',
+    outlineWidth: 4,
+    shadow: 2,
+    animation: 'none',
+    spacing: 2,
+  },
+  game: {
+    // One word at a time, big yellow with a thick black edge, as on blocky game-story channels.
+    id: 'game',
+    name: 'Game yellow',
+    font: 'Montserrat Black',
+    bold: false,
+    size: 96,
+    fill: '#FFE21F',
+    outline: '#111111',
+    outlineWidth: 9,
+    shadow: 3,
+    animation: 'pop',
+  },
 };
 
 /** Font family → bundled file (resources/fonts). Both renderers get exactly these files. */

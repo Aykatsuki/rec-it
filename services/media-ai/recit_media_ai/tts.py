@@ -228,19 +228,182 @@ def _fake_segment(text: str, speed: float) -> tuple[list[float], list[dict]]:
     return audio, out
 
 
+def fake_sounds(words: list[dict]) -> list[dict]:
+    """Per-sound timings for the fake voice: each word's letters spread evenly over it."""
+    out: list[dict] = []
+    for w in words:
+        letters = [c for c in str(w["text"]).lower() if c.isalpha()] or ["a"]
+        step = (w["end"] - w["start"]) / len(letters)
+        for i, c in enumerate(letters):
+            out.append({"p": c, "start": w["start"] + i * step, "end": w["start"] + (i + 1) * step})
+        out.append({"p": " ", "start": w["end"], "end": w["end"]})
+    return out
+
+
 def lang_of(voice: str) -> str:
     """British voices (bf_, bm_) read with British pronunciation; the rest as American English."""
     return "en-gb" if voice.startswith("b") else "en-us"
 
 
-def _segment(engine: Any, text: str, voice: str, speed: float) -> tuple[Any, list[dict]]:
+def _segment(
+    engine: Any, text: str, voice: str, speed: float
+) -> tuple[Any, list[dict], list[dict]]:
     words = split_words(text)
     lang = lang_of(voice)
     audio, sr, timings = engine.create_timed(" ".join(words), voice=voice, speed=speed, lang=lang)
     assert sr == SAMPLE_RATE
     # How many spoken words each written word becomes, from phonemising it alone.
     counts = [spoken_count(engine.tokenizer.phonemize(w, lang)) for w in words]
-    return audio, align(words, spoken_spans(timings), counts)
+    sounds = [{"p": t.phoneme, "start": t.start, "end": t.end} for t in timings]
+    return audio, align(words, spoken_spans(timings), counts), sounds
+
+
+def pauses(audio: Any, sr: int = SAMPLE_RATE, min_len: float = 0.12) -> list[tuple[float, float]]:
+    """Quiet stretches of at least `min_len` seconds (start, end), from 10 ms loudness."""
+    import numpy as np
+
+    a = np.asarray(audio, dtype=np.float32)
+    hop = int(sr * 0.01)
+    n = len(a) // hop
+    if n == 0:
+        return []
+    frames = a[: n * hop].reshape(n, hop)
+    db = 20 * np.log10(np.sqrt((frames**2).mean(axis=1)) + 1e-6)
+    quiet = db < max(db.max() - 38, -60)
+    out: list[tuple[float, float]] = []
+    start = None
+    for i, q in enumerate(quiet):
+        if q and start is None:
+            start = i
+        if (not q or i == n - 1) and start is not None:
+            end = i if not q else i + 1
+            if (end - start) / 100 >= min_len:
+                out.append((start / 100, end / 100))
+            start = None
+    return out
+
+
+_SENTENCE_END = re.compile(r"[.!?…:;]['\")\]]*$")
+_CLAUSE_END = re.compile(r"[,]['\")\]]*$")
+
+
+def match_pauses(
+    words: list[dict], gaps: list[tuple[float, float]], total: float
+) -> list[tuple[int, int]]:
+    """Which pause (index into `gaps`) each punctuated word ends on, as (word, pause) pairs.
+
+    A best-path search over the whole script rather than a nearest-pause guess: matching one
+    sentence to the wrong pause pulls every later one with it. The cost of each step is how far
+    the spoken time between two matched pauses is from the time the words were expected to take,
+    plus a penalty for each punctuated word left without a pause (more for a sentence end); long
+    pauses are favoured for sentence ends. Pauses inside a clause may stay unused for free.
+    """
+    marks = []
+    for i, w in enumerate(words[:-1]):
+        if _SENTENCE_END.search(w["text"]):
+            marks.append((i, 0.8, 0.5))
+        elif _CLAUSE_END.search(w["text"]):
+            marks.append((i, 0.4, 0.25))
+    inner = [g for g in gaps if g[1] < total - 0.02]
+    if not marks or not inner:
+        return []
+    n, m = len(marks), len(inner)
+    INF = float("inf")
+    # best[j][k]: cheapest path whose last match is mark j on pause k. Start: the first word.
+    origin = (words[0]["start"], words[0]["start"])
+    best = [[INF] * m for _ in range(n)]
+    back: list[list[tuple[int, int] | None]] = [[None] * m for _ in range(n)]
+
+    def step(prev_old: float, prev_new: float, j: int, k: int) -> float:
+        i, _skip, bonus = marks[j]
+        g0, g1 = inner[k]
+        if g0 <= prev_new:
+            return INF
+        expected = words[i]["end"] - prev_old
+        actual = g0 - prev_new
+        return abs(actual - expected) - bonus * min(g1 - g0, 0.6)
+
+    skips = [0.0]
+    for _i, skip, _b in marks:
+        skips.append(skips[-1] + skip)
+
+    def skipped(a: int, b: int) -> float:  # marks strictly between a and b
+        return skips[b] - skips[a + 1] if b > a + 1 else 0.0
+
+    for j in range(n):
+        for k in range(m):
+            c = step(origin[0], origin[1], j, k) + skips[j]
+            if c < best[j][k]:
+                best[j][k], back[j][k] = c, None
+            for pj in range(j):
+                pi = marks[pj][0]
+                prev_old = words[pi + 1]["start"]
+                for pk in range(k):
+                    if best[pj][pk] == INF:
+                        continue
+                    c = best[pj][pk] + skipped(pj, j) + step(prev_old, inner[pk][1], j, k)
+                    if c < best[j][k]:
+                        best[j][k], back[j][k] = c, (pj, pk)
+    # Close the path: the last word should end where the speech ends.
+    speech_end = gaps[-1][0] if gaps and gaps[-1][1] >= total - 0.02 else total
+    end_old = words[-1]["end"]
+    finish, at = skips[n], None  # no matches at all
+    finish += abs((speech_end - origin[1]) - (end_old - origin[0]))
+    for j in range(n):
+        prev_old = words[marks[j][0] + 1]["start"]
+        for k in range(m):
+            if best[j][k] == INF:
+                continue
+            c = best[j][k] + skipped(j, n) + abs((speech_end - inner[k][1]) - (end_old - prev_old))
+            if c < finish:
+                finish, at = c, (j, k)
+    path: list[tuple[int, int]] = []
+    while at is not None:
+        j, k = at
+        path.append((marks[j][0], k))
+        at = back[j][k]
+    return path[::-1]
+
+
+def snap_to_pauses(words: list[dict], sounds: list[dict], audio: Any) -> tuple[list[dict], list[dict]]:
+    """Re-times words and sounds so every sentence and clause end meets its pause in the audio.
+
+    Kokoro's predicted timings drift (up to a second over a long script) from the audio it makes,
+    and the human-like voice without Whisper only has times spread by word length; either way
+    captions and shot cuts fall out of step with the voice. Words ending in punctuation are matched
+    to pauses by `match_pauses`; times between matches are stretched linearly, so the whole
+    timeline follows the real audio.
+    """
+    try:
+        gaps = pauses(audio)
+    except ImportError:
+        return words, sounds
+    total = len(audio) / SAMPLE_RATE
+    # Anchors: (old time, new time) pairs, always increasing.
+    anchors: list[tuple[float, float]] = [(0.0, 0.0)]
+    for i, k in match_pauses(words, gaps, total):
+        g0, g1 = gaps[k]
+        w, nxt = words[i], words[i + 1]["start"]
+        if w["end"] <= anchors[-1][0] or nxt <= w["end"] or g0 < anchors[-1][1]:
+            continue
+        anchors.append((w["end"], g0))
+        anchors.append((nxt, g1))
+    last_old = max(words[-1]["end"], anchors[-1][0] + 1e-3)
+    tail = gaps[-1][0] if gaps and gaps[-1][1] >= total - 0.02 else total
+    anchors.append((last_old, max(anchors[-1][1] + 1e-3, tail)))
+
+    def remap(t: float) -> float:
+        for (a0, b0), (a1, b1) in zip(anchors, anchors[1:]):
+            if t <= a1:
+                if a1 - a0 < 1e-6:
+                    return b1
+                return round(b0 + (t - a0) * (b1 - b0) / (a1 - a0), 3)
+        a0, b0 = anchors[-1]
+        return round(b0 + (t - a0), 3)
+
+    new_words = [{**w, "start": remap(w["start"]), "end": remap(w["end"])} for w in words]
+    new_sounds = [{**x, "start": remap(x["start"]), "end": remap(x["end"])} for x in sounds]
+    return new_words, new_sounds
 
 
 def run(
@@ -265,8 +428,11 @@ def run(
         text = str(seg["text"]).strip()
         if fake:
             audio, words = _fake_segment(text, speed)
+            sounds = fake_sounds(words)
         else:
-            audio, words = _segment(engine, text, voice, speed)
+            audio, words, sounds = _segment(engine, text, voice, speed)
+            if words:
+                words, sounds = snap_to_pauses(words, sounds, audio)
         dur = len(audio) / SAMPLE_RATE
         result.append(
             {
@@ -281,6 +447,15 @@ def run(
                     }
                     for w in words
                 ],
+                # Per-sound timings (IPA symbols) for mouth shapes (ADR-049).
+                "sounds": [
+                    {
+                        "p": snd["p"],
+                        "start": round(t + snd["start"], 3),
+                        "end": round(t + snd["end"], 3),
+                    }
+                    for snd in sounds
+                ],
             }
         )
         pieces.append(audio)
@@ -291,3 +466,54 @@ def run(
         progress(0.65 + 0.35 * done_chars / total_chars, "Speaking…")
     duration = _write_wav(str(params["out"]), pieces)
     return {"out": params["out"], "duration": round(duration, 3), "segments": result}
+
+
+def assemble(params: dict[str, Any]) -> dict[str, Any]:
+    """Joins pieces of voice recordings into one track (ADR-052): each piece is (wav, start, end)
+    in seconds, placed one after another with `gap` seconds between them. Writes the track and
+    each piece on its own (for the lip sync of dialogue shots); returns where each piece landed."""
+    import wave as _wave
+
+    gap = float(params.get("gap", 0.25))
+    out = Path(str(params["out"]))
+    slices = Path(str(params["slicesDir"]))
+    slices.mkdir(parents=True, exist_ok=True)
+    cache: dict[str, tuple[int, bytes]] = {}
+    track = bytearray()
+    rate = None
+    placed = []
+    for i, piece in enumerate(params["pieces"]):
+        src = str(piece["wav"])
+        if src not in cache:
+            with _wave.open(src, "rb") as w:
+                if w.getnchannels() != 1 or w.getsampwidth() != 2:
+                    raise ValueError("expected mono 16-bit voice audio")
+                cache[src] = (w.getframerate(), w.readframes(w.getnframes()))
+        r, data = cache[src]
+        if rate is None:
+            rate = r
+        if r != rate:
+            raise ValueError("voice pieces have different sample rates")
+        a = max(0, int(float(piece["start"]) * r)) * 2
+        b = min(len(data), int(float(piece["end"]) * r) * 2)
+        chunk = data[a:b]
+        start = len(track) / 2 / r
+        track += chunk
+        sl = slices / f"piece-{i}.wav"
+        with _wave.open(str(sl), "wb") as w:
+            w.setnchannels(1)
+            w.setsampwidth(2)
+            w.setframerate(r)
+            w.writeframes(chunk)
+        placed.append(
+            {"start": round(start, 4), "end": round(len(track) / 2 / r, 4), "wav": str(sl)}
+        )
+        track += b"\x00\x00" * int(gap * r)
+    rate = rate or SAMPLE_RATE
+    out.parent.mkdir(parents=True, exist_ok=True)
+    with _wave.open(str(out), "wb") as w:
+        w.setnchannels(1)
+        w.setsampwidth(2)
+        w.setframerate(rate)
+        w.writeframes(bytes(track))
+    return {"out": str(out), "duration": round(len(track) / 2 / rate, 4), "pieces": placed}

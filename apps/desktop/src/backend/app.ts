@@ -41,8 +41,10 @@ import { TranscriptService } from './services/transcript-service';
 import { FaceService } from './services/face-service';
 import { AiService } from './services/ai-service';
 import { VoiceService } from './services/voice-service';
+import { LowPolyService } from './services/lowpoly-service';
 import { TemplateService } from './services/template-service';
 import { ImageService } from './services/image-service';
+import { AnimationService } from './services/animation-service';
 import { importLut, writeLutFiles } from './services/lut-service';
 import { ProjectService } from './services/project-service';
 import type { Command, ProjectDocument, Sequence } from '@rec-it/core';
@@ -77,7 +79,9 @@ export class BackendApp {
   readonly ai: AiService;
   readonly voice: VoiceService;
   readonly templates: TemplateService;
+  readonly lowPoly: LowPolyService;
   readonly images: ImageService;
+  readonly animation: AnimationService;
   readonly claude: ClaudeService;
   private lastProjectId: string | undefined;
   private secrets: Partial<Record<SecretName, string>> = {};
@@ -169,6 +173,10 @@ export class BackendApp {
       modelsDir: join(config.userDataDir, 'models'),
       fontsDir: config.fontsDir,
       onChange: (status) => this.emit('voice.changed', status),
+      voicesDir: join(config.userDataDir, 'voices'),
+      ffmpeg: async () => (await this.toolchain()).bins.ffmpeg,
+      onHumanChange: (status) => this.emit('voicehq.changed', status),
+      onSamplesChange: (samples) => this.emit('voices.changed', samples),
       busyElsewhere: () => this.transcripts.busy() || this.faces.busy(),
       onEngineChanged: () => {
         void this.transcripts.refresh();
@@ -180,12 +188,28 @@ export class BackendApp {
       modelsDir: join(config.userDataDir, 'models'),
       onChange: (status) => this.emit('images.changed', status),
     });
+    this.animation = new AnimationService({
+      sidecar: this.sidecar,
+      modelsDir: join(config.userDataDir, 'models'),
+      ffmpeg: async () => (await this.toolchain()).bins.ffmpeg,
+      onChange: (status) => this.emit('animation.changed', status),
+    });
+    this.lowPoly = new LowPolyService({
+      ffmpeg: async () => (await this.toolchain()).bins.ffmpeg,
+      emit: (request, spec) => this.emit('lowpoly.render', { request, spec }),
+    });
     this.templates = new TemplateService({
       projects: this.projects,
       voice: this.voice,
       images: this.images,
+      animation: this.animation,
       planScenes: (title, sentences, count) => this.ai.planScenes(title, sentences, count),
       releaseGpu: () => this.ai.releaseGpu(),
+      planEpisode: (brief, seconds, extra) => this.ai.planEpisode(brief, seconds, extra),
+      lowPoly: this.lowPoly,
+      lowPolyScript: (topic, seconds, style) => this.ai.lowPolyScript(topic, seconds, style),
+      lowPolyBoard: (title, beats, cast) => this.ai.lowPolyBoard(title, beats, cast),
+      lowPolyModels: (names) => this.ai.lowPolyModels(names),
       onTranscript: () => this.transcripts.changed(),
       onChange: (jobs) => this.emit('templates.changed', jobs),
     });
@@ -338,8 +362,48 @@ export class BackendApp {
       this.images.cancelInstall();
       return { ok: true as const };
     },
+    'voicehq.status': () => this.voice.human.status(),
+    'voicehq.install': () => {
+      this.voice.human.start();
+      return { ok: true as const };
+    },
+    'voicehq.cancelInstall': () => {
+      this.voice.human.cancel();
+      return { ok: true as const };
+    },
+    'voices.list': () => this.voice.samples(),
+    'voices.add': ({ path, name }) => this.voice.addSample(path, name),
+    'voices.remove': async ({ id }) => {
+      await this.voice.removeSample(id);
+      return { ok: true as const };
+    },
+    'animation.status': () => this.animation.status(),
+    'animation.install': () => {
+      this.animation.startInstall();
+      return { ok: true as const };
+    },
+    'animation.cancelInstall': () => {
+      this.animation.cancelInstall();
+      return { ok: true as const };
+    },
     'templates.jobs': () => this.templates.list(),
     'templates.story': (input) => ({ jobId: this.templates.story(input) }),
+    'templates.talkTest': (input) => ({ jobId: this.templates.talkTest(input) }),
+    'templates.episode': (input) => ({ jobId: this.templates.episode(input) }),
+    'templates.lowPoly': (input) => ({ jobId: this.templates.lowPolyShort(input) }),
+    'lowpoly.ideas': ({ theme, style }) => this.ai.lowPolyIdeas(theme, style),
+    'lowpoly.frames': async ({ request, frames }) => ({
+      ok: await this.lowPoly.frames(request, frames),
+    }),
+    'lowpoly.finished': ({ request, error }) => {
+      this.lowPoly.finished(request, error);
+      return { ok: true as const };
+    },
+    'characters.list': () => this.templates.cast(),
+    'characters.remove': async ({ id }) => {
+      await this.templates.forget(id);
+      return { ok: true as const };
+    },
     'templates.cancel': ({ jobId }) => {
       this.templates.cancel(jobId);
       return { ok: true as const };
@@ -610,6 +674,7 @@ export class BackendApp {
           this.faces.refresh(),
           this.voice.refresh(),
           this.images.refresh(),
+          this.animation.refresh(),
         ]);
       });
       await Promise.all([ffmpegCheck, sidecarCheck]);

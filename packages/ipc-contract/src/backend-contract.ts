@@ -24,12 +24,20 @@ import { claudeStateSchema } from './schemas/claude';
 import {
   aiStatusSchema,
   imageStatusSchema,
+  talkTestSchema,
+  episodeSchema,
+  storedCharacterSchema,
+  lowPolySchema,
+  lowPolyIdeaSchema,
+  voiceIdSchema,
+  voiceSampleSchema,
   storyGenreSchema,
   storyShortSchema,
   storyTextSchema,
   templateJobSchema,
   voiceStatusSchema,
 } from './schemas/create';
+import { renderSpecSchema } from '@rec-it/lowpoly';
 
 const empty = z.object({}).strict();
 const ok = z.object({ ok: z.literal(true) });
@@ -184,7 +192,7 @@ export const backendContract = defineContract({
     'voice.preview': {
       input: z
         .object({
-          voice: z.string().regex(/^[a-z]{2}_[a-z]+$/),
+          voice: voiceIdSchema,
           speed: z.number().min(0.7).max(1.5).default(1),
           text: z.string().max(300).optional(),
         })
@@ -195,10 +203,67 @@ export const backendContract = defineContract({
     /** Downloads the AI picture engine and model (about 7 GB), once. */
     'images.install': { input: empty, output: ok },
     'images.cancelInstall': { input: empty, output: ok },
+    /** The human-like voice (Chatterbox Turbo; ADR-051): status and one-time install (~5 GB). */
+    'voicehq.status': { input: empty, output: imageStatusSchema },
+    'voicehq.install': { input: empty, output: ok },
+    'voicehq.cancelInstall': { input: empty, output: ok },
+    /** Voice samples for cloning (recordings you have the rights to, 5–15 s used). */
+    'voices.list': { input: empty, output: z.array(voiceSampleSchema) },
+    'voices.add': {
+      input: z
+        .object({ path: z.string().min(1).max(4096), name: z.string().trim().min(1).max(60) })
+        .strict(),
+      output: voiceSampleSchema,
+    },
+    'voices.remove': { input: z.object({ id: z.string() }).strict(), output: ok },
+    'animation.status': { input: empty, output: imageStatusSchema },
+    /** Downloads the mouth-shape engine for talking characters (about 5.5 GB), once. */
+    'animation.install': { input: empty, output: ok },
+    'animation.cancelInstall': { input: empty, output: ok },
     'templates.jobs': { input: empty, output: z.array(templateJobSchema) },
     /** Starts building a story Short; follow it with templates.changed. */
     'templates.story': { input: storyShortSchema, output: z.object({ jobId: z.string() }) },
     'templates.cancel': { input: z.object({ jobId: z.string() }).strict(), output: ok },
+    /** Starts an episode from a brief; follow it with templates.changed. */
+    'templates.episode': { input: episodeSchema, output: z.object({ jobId: z.string() }) },
+    /** Starts a low-poly 3D Short (ADR-054); follow it with templates.changed. */
+    'templates.lowPoly': { input: lowPolySchema, output: z.object({ jobId: z.string() }) },
+    /** Ten ideas for low-poly Shorts in the genre's winning formats. */
+    'lowpoly.ideas': {
+      input: z
+        .object({
+          theme: z.string().trim().max(300),
+          style: z.enum(['ps1', 'blocky']).default('ps1'),
+        })
+        .strict(),
+      output: z.array(lowPolyIdeaSchema),
+    },
+    /** Frames the renderer filmed for a lowpoly.render request (JPEG each, in order). */
+    'lowpoly.frames': {
+      input: z
+        .object({
+          request: z.string().min(1).max(100),
+          frames: z.array(z.instanceof(Uint8Array)).min(1).max(64),
+        })
+        .strict(),
+      output: z.object({ ok: z.boolean() }),
+    },
+    /** The renderer finished (or failed) a lowpoly.render request. */
+    'lowpoly.finished': {
+      input: z
+        .object({ request: z.string().min(1).max(100), error: z.string().max(2000).optional() })
+        .strict(),
+      output: ok,
+    },
+    /** Characters the open project remembers from earlier episodes (ADR-053). */
+    'characters.list': { input: empty, output: z.array(storedCharacterSchema) },
+    /** Forgets one: the next episode designs it afresh. */
+    'characters.remove': {
+      input: z.object({ id: z.string().min(1).max(40) }).strict(),
+      output: ok,
+    },
+    /** Starts one talking-character test shot; follow it with templates.changed. */
+    'templates.talkTest': { input: talkTestSchema, output: z.object({ jobId: z.string() }) },
 
     // 3D LUTs imported into the project (Phase 6e, ADR-040).
     'luts.list': { input: empty, output: z.array(lutInfoSchema) },
@@ -282,7 +347,12 @@ export const backendContract = defineContract({
     'claude.changed': claudeStateSchema,
     'voice.changed': voiceStatusSchema,
     'images.changed': imageStatusSchema,
+    'animation.changed': imageStatusSchema,
+    'voicehq.changed': imageStatusSchema,
+    'voices.changed': z.array(voiceSampleSchema),
     'templates.changed': z.array(templateJobSchema),
+    /** The backend asks the renderer to film a low-poly spec (ADR-054). */
+    'lowpoly.render': z.object({ request: z.string(), spec: renderSpecSchema }),
   },
 });
 

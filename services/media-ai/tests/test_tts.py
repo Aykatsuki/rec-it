@@ -181,3 +181,54 @@ def test_motion_background(tmp_path):
     assert im.size == (270, 480)
     top, bottom = im.getpixel((5, 5)), im.getpixel((265, 475))
     assert top != bottom
+
+
+def test_snap_to_pauses_moves_sentence_ends_onto_the_real_pauses():
+    import numpy as np
+
+    from recit_media_ai.tts import SAMPLE_RATE, snap_to_pauses
+
+    sr = SAMPLE_RATE
+    tone = lambda s: (0.3 * np.sin(np.arange(int(s * sr)) * 2 * np.pi * 220 / sr)).astype(np.float32)
+    quiet = lambda s: np.zeros(int(s * sr), dtype=np.float32)
+    # Speech 0-1.5 s, pause 1.5-1.9 s, speech 1.9-3.0 s, pause 3.0-3.5 s, speech 3.5-4.2 s.
+    audio = np.concatenate([tone(1.5), quiet(0.4), tone(1.1), quiet(0.5), tone(0.7)])
+    # Predicted timings that run early by up to half a second.
+    words = [
+        {"text": "In", "start": 0.0, "end": 0.3},
+        {"text": "1944,", "start": 0.3, "end": 1.0},
+        {"text": "a", "start": 1.2, "end": 1.4},
+        {"text": "soldier.", "start": 1.4, "end": 2.6},
+        {"text": "Nobody", "start": 2.8, "end": 3.4},
+        {"text": "came.", "start": 3.4, "end": 3.9},
+    ]
+    sounds = [{"p": "n", "start": 2.8, "end": 2.9}]
+    new, snd = snap_to_pauses(words, sounds, audio)
+    ends = {w["text"]: w["end"] for w in new}
+    starts = {w["text"]: w["start"] for w in new}
+    assert abs(ends["1944,"] - 1.5) < 0.03
+    assert abs(starts["a"] - 1.9) < 0.03
+    assert abs(ends["soldier."] - 3.0) < 0.03
+    assert abs(starts["Nobody"] - 3.5) < 0.03
+    # Everything stays in order, and sounds move with their words.
+    times = [t for w in new for t in (w["start"], w["end"])]
+    assert times == sorted(times)
+    assert abs(snd[0]["start"] - 3.5) < 0.03
+
+
+def test_match_pauses_does_not_take_a_short_breath_for_a_sentence_end():
+    from recit_media_ai.tts import match_pauses
+
+    # Expected ends 2.0 and 4.0 s. The audio has a brief breath at 3.5 s inside the second
+    # sentence and its real end at 4.6 s; the nearest-pause guess took the breath, which pulled
+    # every later sentence early.
+    words = [
+        {"text": "One", "start": 0.0, "end": 1.0},
+        {"text": "two.", "start": 1.0, "end": 2.0},
+        {"text": "Three", "start": 2.2, "end": 3.0},
+        {"text": "four.", "start": 3.0, "end": 4.0},
+        {"text": "Five", "start": 4.2, "end": 5.4},
+        {"text": "six.", "start": 5.4, "end": 6.6},
+    ]
+    gaps = [(2.0, 2.4), (3.5, 3.65), (4.6, 5.0), (7.0, 7.4)]
+    assert match_pauses(words, gaps, 7.4) == [(1, 0), (3, 2)]

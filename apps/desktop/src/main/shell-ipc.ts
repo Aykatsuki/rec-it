@@ -60,6 +60,19 @@ export function registerShellIpc(
         });
         return { paths: result.canceled ? [] : result.filePaths };
       },
+      'dialog.chooseAudio': async () => {
+        const result = await open({
+          title: 'Choose a voice sample (5–15 seconds of clear speech)',
+          properties: ['openFile'],
+          filters: [
+            {
+              name: 'Audio or video',
+              extensions: ['wav', 'mp3', 'm4a', 'flac', 'ogg', 'mp4', 'mov', 'webm'],
+            },
+          ],
+        });
+        return { path: result.canceled ? null : (result.filePaths[0] ?? null) };
+      },
       'dialog.importLut': async () => {
         const result = await open({
           title: 'Import LUT',

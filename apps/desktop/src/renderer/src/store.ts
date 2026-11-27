@@ -14,6 +14,7 @@ import type {
   TemplateJob,
   VoiceStatus,
   ImageStatus,
+  VoiceSample,
 } from '@rec-it/ipc-contract';
 import { backend } from './api';
 
@@ -64,6 +65,11 @@ interface AppState {
   voice: VoiceStatus | null;
   /** AI picture engine (ADR-047). */
   images: ImageStatus | null;
+  /** Talking-character engine (ADR-048). */
+  animation: ImageStatus | null;
+  /** Human-like voice (Chatterbox; ADR-051) and your voice samples. */
+  voiceHq: ImageStatus | null;
+  voiceSamples: VoiceSample[];
   templateJobs: TemplateJob[];
   /** Clips waiting for their media's face analysis, to be reframed when it finishes. */
   pendingReframe: Record<string, string[]>;
@@ -145,6 +151,9 @@ export const useApp = create<AppState>((set) => ({
   claude: null,
   voice: null,
   images: null,
+  animation: null,
+  voiceHq: null,
+  voiceSamples: [],
   templateJobs: [],
   pendingReframe: {},
   safeZones: stored('recit.safeZones') === '1',
@@ -211,6 +220,9 @@ export function startBackendSync(): () => void {
     useApp.setState({
       voice: await backend.invoke('voice.status', {}).catch(() => null),
       images: await backend.invoke('images.status', {}).catch(() => null),
+      animation: await backend.invoke('animation.status', {}).catch(() => null),
+      voiceHq: await backend.invoke('voicehq.status', {}).catch(() => null),
+      voiceSamples: await backend.invoke('voices.list', {}).catch(() => []),
       templateJobs: await backend.invoke('templates.jobs', {}).catch(() => []),
     });
   };
@@ -246,6 +258,9 @@ export function startBackendSync(): () => void {
     backend.on('luts.changed', (luts) => useApp.setState({ luts })),
     backend.on('voice.changed', (voice) => useApp.setState({ voice })),
     backend.on('images.changed', (images) => useApp.setState({ images })),
+    backend.on('animation.changed', (animation) => useApp.setState({ animation })),
+    backend.on('voicehq.changed', (voiceHq) => useApp.setState({ voiceHq })),
+    backend.on('voices.changed', (voiceSamples) => useApp.setState({ voiceSamples })),
     backend.on('templates.changed', (templateJobs) => useApp.setState({ templateJobs })),
     backend.on('claude.changed', (claude) => {
       const before = useApp.getState().claude;

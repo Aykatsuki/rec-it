@@ -1,7 +1,19 @@
 // "Create a Short" (ADR-046): faceless templates. The story template writes (or tidies) a story
 // with the configured AI, voices it on this PC, and builds a finished, editable Short.
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { BookOpen, MessagesSquare, Play, Scissors, Square, Columns2, Wand2, X } from 'lucide-react';
+import {
+  BookOpen,
+  Box,
+  Lightbulb,
+  Clapperboard,
+  MessagesSquare,
+  Play,
+  Scissors,
+  Square,
+  Columns2,
+  Wand2,
+  X,
+} from 'lucide-react';
 import { create } from 'zustand';
 import {
   PICTURE_STYLES,
@@ -12,16 +24,22 @@ import {
   type StoryGenre,
 } from '@rec-it/ai';
 import { DEFAULT_VOICE, VOICES } from '@rec-it/templates';
-import type { StoryShortInput } from '@rec-it/ipc-contract';
+import {
+  CHARACTER_MOODS,
+  type CharacterMood,
+  type ImageStatus,
+  type StoryShortInput,
+} from '@rec-it/ipc-contract';
 import { Button, Dialog, TextField } from '@rec-it/ui';
-import { backend, RecitError } from '../api';
+import { backend, RecitError, shell } from '../api';
 import { notify } from '../notifications';
 import { useApp } from '../store';
 
 const useCreateDialog = create<{ open: boolean }>(() => ({ open: false }));
 export const openCreateDialog = () => useCreateDialog.setState({ open: true });
 
-type TemplateId = 'story' | 'texts' | 'split' | 'clips';
+type TemplateId =
+  'episode' | 'lowpoly' | 'blocky' | 'story' | 'characters' | 'texts' | 'split' | 'clips';
 const TEMPLATES: {
   id: TemplateId;
   title: string;
@@ -30,10 +48,38 @@ const TEMPLATES: {
   ready: boolean;
 }[] = [
   {
+    id: 'episode',
+    title: 'Episode from a brief',
+    text: 'Paste a brief (style, story, dialogue): the AI plans the shots; characters stay the same and speak their lines.',
+    icon: <Clapperboard size={18} />,
+    ready: true,
+  },
+  {
+    id: 'lowpoly',
+    title: 'Low-poly 3D story',
+    text: 'Strange true stories and what-ifs in retro PS1-style 3D: the AI writes, storyboards and films it on this PC.',
+    icon: <Box size={18} />,
+    ready: true,
+  },
+  {
+    id: 'blocky',
+    title: 'Blocky 3D story',
+    text: 'Game-style stories with blocky avatar characters ("In this town…"): bright sets, a moving camera, one-word captions. Filmed on this PC.',
+    icon: <Box size={18} />,
+    ready: true,
+  },
+  {
     id: 'story',
     title: 'Story or topic video',
     text: 'From a topic or your script: AI voice and big captions over AI pictures, motion graphics or gameplay.',
     icon: <BookOpen size={18} />,
+    ready: true,
+  },
+  {
+    id: 'characters',
+    title: 'Talking characters',
+    text: '2D cartoon (or 3D) characters that say your lines, lip-synced on this PC. Start with a test shot.',
+    icon: <Clapperboard size={18} />,
     ready: true,
   },
   {
@@ -73,7 +119,7 @@ export function CreateDialogHost() {
 }
 
 function CreateBody({ onDone }: { onDone: () => void }) {
-  const [template, setTemplate] = useState<TemplateId>('story');
+  const [template, setTemplate] = useState<TemplateId>('episode');
   const project = useApp((s) => s.project);
   return (
     <div className="create" data-testid="create-dialog">
@@ -99,7 +145,13 @@ function CreateBody({ onDone }: { onDone: () => void }) {
         {!project ? (
           <p className="create__note">Open or create a project first.</p>
         ) : (
-          template === 'story' && <StoryForm onDone={onDone} />
+          <>
+            {template === 'episode' && <EpisodeForm onDone={onDone} />}
+            {template === 'lowpoly' && <LowPolyForm onDone={onDone} />}
+            {template === 'blocky' && <LowPolyForm onDone={onDone} style="blocky" />}
+            {template === 'story' && <StoryForm onDone={onDone} />}
+            {template === 'characters' && <CharactersForm onDone={onDone} />}
+          </>
         )}
       </div>
     </div>
@@ -127,7 +179,7 @@ function StoryForm({ onDone }: { onDone: () => void }) {
   const [story, setStory] = useState('');
   const [community, setCommunity] = useState<string>(STORY_GENRES.aita.community);
   const [username, setUsername] = useState('');
-  const [voice, setVoice] = useState<string>(DEFAULT_VOICE);
+  const [voice, setVoice] = useState<string>(initialVoice);
   const [speed, setSpeed] = useState(1.1);
   const [chosenBackground, setBackground] = useState('');
   // The first video until the user picks one (media may finish importing while this is open).
@@ -135,7 +187,7 @@ function StoryForm({ onDone }: { onDone: () => void }) {
   const [randomStart, setRandomStart] = useState(true);
   const [music, setMusic] = useState('');
   const [visuals, setVisuals] = useState<'footage' | 'pictures' | 'graphics'>('pictures');
-  const [pictureStyle, setPictureStyle] = useState<PictureStyle>('cinematic');
+  const [pictureStyle, setPictureStyle] = useState<PictureStyle>('cartoon');
   const [captionStyle, setCaptionStyle] =
     useState<NonNullable<StoryShortInput['captionStyle']>>('pop');
   const [card, setCard] = useState(true);
@@ -235,7 +287,9 @@ function StoryForm({ onDone }: { onDone: () => void }) {
       setJobId(r.jobId);
     });
 
-  const voiceReady = voiceStatus?.available === true;
+  const voiceHq = useApp((s) => s.voiceHq);
+  const voiceReady =
+    voiceStatus?.available === true && (!voice.startsWith('hq:') || !!voiceHq?.available);
   const running = job?.state === 'running';
   const visualsReady =
     visuals === 'footage' ? !!background : visuals === 'pictures' ? !!imageStatus?.available : true;
@@ -386,18 +440,7 @@ function StoryForm({ onDone }: { onDone: () => void }) {
         <div className="create__row">
           <label className="create__grow">
             Voice
-            <select
-              className="ui-input"
-              value={voice}
-              onChange={(e) => setVoice(e.target.value)}
-              data-testid="story-voice"
-            >
-              {VOICES.map((v) => (
-                <option key={v.id} value={v.id}>
-                  {v.label} · {v.gender}, {v.accent} · {v.note}
-                </option>
-              ))}
-            </select>
+            <VoicePicker value={voice} onChange={setVoice} testId="story-voice" />
           </label>
           <label>
             Speed {speed.toFixed(2)}×
@@ -615,38 +658,911 @@ function StoryForm({ onDone }: { onDone: () => void }) {
 /** Status and install button for the AI picture engine (about 7 GB, downloaded once). */
 function PictureEngine() {
   const status = useApp((s) => s.images);
+  return (
+    <EngineNote
+      status={status}
+      testId="picture-engine"
+      what="AI pictures"
+      engine="the picture engine: Z-Image Turbo, run on your graphics card (about 7 GB, downloaded once)"
+      button="Install picture engine"
+      install={() => void backend.invoke('images.install', {})}
+      cancel={() => void backend.invoke('images.cancelInstall', {})}
+    />
+  );
+}
+
+/** Status and install button for the mouth-shape engine (about 5.5 GB; ADR-049). */
+function AnimationEngine() {
+  const status = useApp((s) => s.animation);
+  return (
+    <EngineNote
+      status={status}
+      testId="animation-engine"
+      what="Talking characters"
+      engine="the mouth-shape engine: FLUX.2 Klein, run on your graphics card (about 5.5 GB, downloaded once)"
+      button="Install mouth-shape engine"
+      install={() => void backend.invoke('animation.install', {})}
+      cancel={() => void backend.invoke('animation.cancelInstall', {})}
+    />
+  );
+}
+
+function EngineNote(p: {
+  status: ImageStatus | null;
+  testId: string;
+  what: string;
+  engine: string;
+  button: string;
+  install: () => void;
+  cancel: () => void;
+}) {
+  const { status } = p;
   if (!status) return null;
   if (status.install.state === 'running')
     return (
-      <div className="create__note" data-testid="picture-engine">
+      <div className="create__note" data-testid={p.testId}>
         {status.install.message ?? 'Installing…'}
         <progress value={status.install.progress ?? 0} max={1} />
-        <Button
-          size="sm"
-          variant="ghost"
-          onClick={() => void backend.invoke('images.cancelInstall', {})}
-        >
+        <Button size="sm" variant="ghost" onClick={p.cancel}>
           Cancel
         </Button>
       </div>
     );
   return (
-    <div className="create__note" data-testid="picture-engine">
+    <div className="create__note" data-testid={p.testId}>
       {status.installable ? (
         <>
-          AI pictures need the picture engine: Z-Image Turbo, run on your graphics card (about 7 GB,
-          downloaded once).{' '}
-          <Button size="sm" onClick={() => void backend.invoke('images.install', {})}>
-            Install picture engine
+          {p.what} need {p.engine}.{' '}
+          <Button size="sm" onClick={p.install}>
+            {p.button}
           </Button>
         </>
       ) : (
-        <>AI pictures are not available on this computer. {status.reason}</>
+        <>
+          {p.what} are not available on this computer. {status.reason}
+        </>
       )}
       {status.install.state === 'failed' && (
         <div className="create__error">{status.install.message}</div>
       )}
       {status.blocked && <div className="create__error">{status.blocked}</div>}
     </div>
+  );
+}
+
+/**
+ * Talking characters (ADR-048), first step: one test shot. Draws the character, records the line
+ * and animates the character saying it, so speed and quality can be judged on this PC.
+ */
+function CharactersForm({ onDone }: { onDone: () => void }) {
+  const voiceStatus = useApp((s) => s.voice);
+  const imageStatus = useApp((s) => s.images);
+  const animationStatus = useApp((s) => s.animation);
+  const jobs = useApp((s) => s.templateJobs);
+  const [character, setCharacter] = useState('a samurai in dark armour with a horned helmet');
+  const [style, setStyle] = useState<'cartoon' | 'render3d'>('cartoon');
+  const [setting, setSetting] = useState('a muddy battlefield in the rain');
+  const [mood, setMood] = useState<CharacterMood>('serious');
+  const [liveliness, setLiveliness] = useState(0.6);
+  const [line, setLine] = useState('Hi! I was made on your own computer. Pretty cool, right?');
+  const [voice, setVoice] = useState<string>(initialVoice);
+  const [error, setError] = useState<string | null>(null);
+  const [jobId, setJobId] = useState<string | null>(null);
+  const job = jobs.find((j) => j.id === jobId);
+  const running = job?.state === 'running';
+
+  useEffect(() => {
+    if (job?.state === 'done') {
+      useApp.setState({
+        selectedAssetId: null,
+        selectedItemIds: [],
+        monitor: 'program',
+        playhead: 0,
+        playing: false,
+      });
+      notify(job.stage, 'info');
+      onDone();
+    }
+  }, [job?.state, job?.stage, onDone]);
+
+  const words = line.trim().split(/\s+/).filter(Boolean).length;
+  const voiceHq = useApp((s) => s.voiceHq);
+  const ready =
+    voiceStatus?.available === true &&
+    (!voice.startsWith('hq:') || !!voiceHq?.available) &&
+    !!imageStatus?.available &&
+    !!animationStatus?.available;
+  const canStart = ready && character.trim().length >= 3 && words > 0 && words <= 80 && !running;
+
+  const start = async () => {
+    setError(null);
+    try {
+      const r = await backend.invoke('templates.talkTest', {
+        character,
+        line,
+        voice,
+        style,
+        setting,
+        mood,
+        liveliness,
+      });
+      setJobId(r.jobId);
+    } catch (e) {
+      setError(message(e));
+    }
+  };
+
+  return (
+    <form
+      className="create__story"
+      onSubmit={(e) => {
+        e.preventDefault();
+        if (canStart) void start();
+      }}
+    >
+      <section className="create__section">
+        <h3>Test one shot</h3>
+        <p className="create__hint">
+          One character says one line. Rec-It draws the character and its mouth shapes, then moves
+          the mouth in time with every sound of the voice. This shows how it looks on your PC before
+          full talking-character Shorts.
+        </p>
+        {!imageStatus?.available && <PictureEngine />}
+        {!animationStatus?.available && <AnimationEngine />}
+        <label>
+          Character
+          <TextField
+            value={character}
+            placeholder="e.g. a grumpy old robot with a tiny umbrella"
+            onChange={(e) => setCharacter(e.target.value)}
+            data-testid="talk-character"
+          />
+        </label>
+        <label>
+          Setting (the background)
+          <TextField
+            value={setting}
+            placeholder="e.g. a misty forest clearing at dawn"
+            onChange={(e) => setSetting(e.target.value)}
+            data-testid="talk-setting"
+          />
+        </label>
+        <label>
+          Mood
+          <select
+            className="ui-input"
+            value={mood}
+            onChange={(e) => setMood(e.target.value as CharacterMood)}
+            data-testid="talk-mood"
+          >
+            {CHARACTER_MOODS.map((m) => (
+              <option key={m} value={m}>
+                {m[0]!.toUpperCase() + m.slice(1)}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label>
+          Mouth movement: {liveliness < 0.3 ? 'calm' : liveliness < 0.75 ? 'balanced' : 'lively'}
+          <input
+            type="range"
+            min={0}
+            max={1}
+            step={0.05}
+            value={liveliness}
+            onChange={(e) => setLiveliness(Number(e.target.value))}
+            data-testid="talk-liveliness"
+          />
+        </label>
+        <label>
+          Style
+          <select
+            className="ui-input"
+            value={style}
+            onChange={(e) => setStyle(e.target.value as 'cartoon' | 'render3d')}
+            data-testid="talk-style"
+          >
+            <option value="cartoon">2D stick-figure cartoon</option>
+            <option value="render3d">3D (Pixar-style)</option>
+          </select>
+        </label>
+        <label>
+          Line ({words} of 80 words)
+          <TextField
+            value={line}
+            onChange={(e) => setLine(e.target.value)}
+            data-testid="talk-line"
+          />
+        </label>
+        <label>
+          Voice
+          <VoicePicker value={voice} onChange={setVoice} testId="talk-voice" />
+        </label>
+      </section>
+      {error && (
+        <div className="create__error" role="alert">
+          {error}
+        </div>
+      )}
+      {job && job.state !== 'done' && (
+        <div className="create__progress" data-testid="talk-progress">
+          <span>{job.state === 'failed' ? `Failed: ${job.error}` : job.stage}</span>
+          {running && (
+            <>
+              <progress value={job.progress} max={1} />
+              <Button
+                size="sm"
+                variant="ghost"
+                icon={<Square size={12} />}
+                onClick={() => void backend.invoke('templates.cancel', { jobId: job.id })}
+              >
+                Cancel
+              </Button>
+            </>
+          )}
+        </div>
+      )}
+      <footer className="create__footer">
+        <small>
+          Drawing a character and its mouth shapes takes a few minutes; saying lines is quick.
+        </small>
+        <Button type="submit" variant="primary" disabled={!canStart} data-testid="talk-create">
+          {running ? 'Animating…' : 'Test one shot'}
+        </Button>
+      </footer>
+    </form>
+  );
+}
+
+/** Human-like by default once it is installed; the fast voice otherwise. */
+const initialVoice = (): string =>
+  useApp.getState().voiceHq?.available ? 'hq:builtin' : DEFAULT_VOICE;
+
+const ADD_SAMPLE = '__add-sample';
+
+/**
+ * Voices: human-like (Chatterbox: built-in, or cloned from your samples; ADR-051) and fast
+ * (Kokoro). Adding a sample picks a recording you have the rights to.
+ */
+function VoicePicker(p: { value: string; onChange: (voice: string) => void; testId: string }) {
+  const human = useApp((s) => s.voiceHq);
+  const samples = useApp((s) => s.voiceSamples);
+  const [adding, setAdding] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const sample = p.value.startsWith('hq:v-') ? p.value.slice(3) : null;
+
+  const add = async () => {
+    setError(null);
+    const { path } = await shell.invoke('dialog.chooseAudio', {});
+    if (!path) return;
+    setAdding(true);
+    try {
+      const name = (path.split(/[\\/]/).pop() ?? 'My voice').replace(/\.[^.]+$/, '');
+      const v = await backend.invoke('voices.add', { path, name });
+      p.onChange(`hq:${v.id}`);
+    } catch (e) {
+      setError(message(e));
+    } finally {
+      setAdding(false);
+    }
+  };
+
+  return (
+    <>
+      <select
+        className="ui-input"
+        value={p.value}
+        data-testid={p.testId}
+        onChange={(e) => (e.target.value === ADD_SAMPLE ? void add() : p.onChange(e.target.value))}
+      >
+        <optgroup label="Human-like (Chatterbox)">
+          <option value="hq:builtin">Built-in voice</option>
+          {samples.map((v) => (
+            <option key={v.id} value={`hq:${v.id}`}>
+              {v.name} (your sample)
+            </option>
+          ))}
+          <option value={ADD_SAMPLE}>{adding ? 'Adding…' : 'Add a voice sample…'}</option>
+        </optgroup>
+        <optgroup label="Human-like, in a fast voice's tone">
+          {[...VOICES]
+            .sort((a, b) => (a.gender === b.gender ? 0 : a.gender === 'male' ? -1 : 1))
+            .map((v) => (
+              <option key={`hq-${v.id}`} value={`hq:k-${v.id}`}>
+                {v.label} · {v.gender}, {v.accent} (human-like)
+              </option>
+            ))}
+        </optgroup>
+        <optgroup label="Fast (Kokoro)">
+          {VOICES.map((v) => (
+            <option key={v.id} value={v.id}>
+              {v.label} · {v.gender}, {v.accent} · {v.note}
+            </option>
+          ))}
+        </optgroup>
+      </select>
+      {p.value.startsWith('hq:') && !human?.available && <HumanVoiceEngine />}
+      {sample && (
+        <small className="create__hint">
+          Use only recordings of your own voice, or of someone who agreed to be cloned.{' '}
+          <Button
+            size="sm"
+            variant="ghost"
+            onClick={() => {
+              void backend.invoke('voices.remove', { id: sample });
+              p.onChange('hq:builtin');
+            }}
+          >
+            Remove sample
+          </Button>
+        </small>
+      )}
+      {error && <div className="create__error">{error}</div>}
+    </>
+  );
+}
+
+/**
+ * Low-poly 3D story (ADR-054): a topic (or your script) becomes a narrated PS1-style 3D Short.
+ * The AI writes in the genre's style, storyboards one shot per clause from the 3D kit, and the
+ * renderer films it; captions, voice and music are ordinary clips afterwards.
+ */
+function LowPolyForm({
+  onDone,
+  style = 'ps1',
+}: {
+  onDone: () => void;
+  /** The look (ADR-055): the same pipeline films the blocky game style. */
+  style?: 'ps1' | 'blocky';
+}) {
+  const isBlocky = style === 'blocky';
+  const assets = useApp((s) => s.assets);
+  const voiceStatus = useApp((s) => s.voice);
+  const voiceHq = useApp((s) => s.voiceHq);
+  const jobs = useApp((s) => s.templateJobs);
+  const [topic, setTopic] = useState('');
+  const [script, setScript] = useState('');
+  const [seconds, setSeconds] = useState(isBlocky ? 60 : 40);
+  const [speed, setSpeed] = useState(isBlocky ? 1.05 : 1.1);
+  const [classicSkin, setClassicSkin] = useState(true);
+  const [narrator, setNarrator] = useState<string>(() =>
+    useApp.getState().voiceHq?.available ? 'hq:k-am_michael' : 'am_michael',
+  );
+  const [brand, setBrand] = useState('');
+  const [brandOpacity, setBrandOpacity] = useState(0.9);
+  const [pixels, setPixels] = useState<'chunky' | 'classic' | 'clean'>(
+    isBlocky ? 'clean' : 'classic',
+  );
+  const [music, setMusic] = useState('');
+  const [ideas, setIdeas] = useState<{ title: string; premise: string }[]>([]);
+  const [thinking, setThinking] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [jobId, setJobId] = useState<string | null>(null);
+  const job = jobs.find((j) => j.id === jobId);
+  const running = job?.state === 'running';
+  const sounds = assets.filter(
+    (a) =>
+      a.status === 'ready' &&
+      a.rights.source !== 'made-in-rec-it' &&
+      (a.kind === 'audio' || (a.kind === 'video' && a.probe?.audioStreamCount)),
+  );
+
+  useEffect(() => {
+    if (job?.state === 'done') {
+      useApp.setState({
+        selectedAssetId: null,
+        selectedItemIds: [],
+        monitor: 'program',
+        playhead: 0,
+        playing: false,
+      });
+      notify(job.stage, 'info');
+      onDone();
+    }
+  }, [job?.state, job?.stage, onDone]);
+
+  const ready =
+    voiceStatus?.available === true && (!narrator.startsWith('hq:') || !!voiceHq?.available);
+  const canStart = ready && (topic.trim().length >= 3 || script.trim().length >= 10) && !running;
+
+  const suggest = async () => {
+    setError(null);
+    setThinking(true);
+    try {
+      setIdeas(await backend.invoke('lowpoly.ideas', { theme: topic.slice(0, 300), style }));
+    } catch (e) {
+      setError(message(e));
+    } finally {
+      setThinking(false);
+    }
+  };
+
+  const start = async () => {
+    setError(null);
+    try {
+      const r = await backend.invoke('templates.lowPoly', {
+        topic,
+        script,
+        seconds,
+        narrator,
+        speed,
+        brand,
+        brandOpacity,
+        pixels,
+        style,
+        classicSkin,
+        ...(isBlocky ? { captionStyle: 'game' as const } : {}),
+        musicAssetId: music || null,
+      });
+      setJobId(r.jobId);
+    } catch (e) {
+      setError(message(e));
+    }
+  };
+
+  return (
+    <form
+      className="create__story"
+      onSubmit={(e) => {
+        e.preventDefault();
+        if (canStart) void start();
+      }}
+    >
+      <section className="create__section">
+        <h3>Topic</h3>
+        {isBlocky ? (
+          <p className="create__hint">
+            A strange town rule (&quot;In this town, your screen time controls the weather&quot;) or
+            a big question answered with a story. The AI writes it the way the big blocky-story
+            channels do: the hook first, one character, a turn, and a twist or a lesson at the end.
+            Each clause becomes one 3D shot with a moving camera.
+          </p>
+        ) : (
+          <p className="create__hint">
+            A strange true story, a body or science fact, or a what-if. The AI writes it the way the
+            big low-poly channels do: no intro, the premise in the first words, short clauses, a
+            twist, and a joke or a loop at the end. Each clause becomes one 3D shot.
+          </p>
+        )}
+        <label>
+          <textarea
+            className="ui-input create__text"
+            value={topic}
+            rows={3}
+            placeholder={
+              isBlocky
+                ? 'e.g. In this town, the more you doomscroll, the longer your legs get'
+                : 'e.g. Why stopping time is a bad idea'
+            }
+            onChange={(e) => setTopic(e.target.value)}
+            data-testid="lowpoly-topic"
+          />
+        </label>
+        <div className="create__row">
+          <Button
+            size="sm"
+            variant="ghost"
+            icon={<Lightbulb size={14} />}
+            disabled={thinking}
+            onClick={() => void suggest()}
+            data-testid="lowpoly-ideas"
+          >
+            {thinking ? 'Thinking…' : 'Suggest ideas'}
+          </Button>
+        </div>
+        {ideas.length > 0 && (
+          <ul className="create__ideas" data-testid="lowpoly-idea-list">
+            {ideas.map((i) => (
+              <li key={i.title}>
+                <button
+                  type="button"
+                  className="create__idea"
+                  onClick={() => setTopic(`${i.title}. ${i.premise}`.trim())}
+                >
+                  <strong>{i.title}</strong>
+                  {i.premise && <small>{i.premise}</small>}
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
+        <label>
+          Script (optional, spoken exactly as written)
+          <textarea
+            className="ui-input create__text"
+            value={script}
+            rows={5}
+            placeholder={
+              isBlocky
+                ? 'In this town, whenever the sky turns red, everyone has to hide…'
+                : 'If you could stop time with the snap of your fingers, you would instantly go blind…'
+            }
+            onChange={(e) => setScript(e.target.value)}
+            data-testid="lowpoly-script"
+          />
+        </label>
+        <div className="create__row">
+          <label className="create__grow">
+            Length: about {seconds} s{script.trim() ? ' (follows the script)' : ''}
+            <input
+              type="range"
+              min={20}
+              max={isBlocky ? 90 : 75}
+              step={5}
+              value={seconds}
+              onChange={(e) => setSeconds(Number(e.target.value))}
+            />
+          </label>
+          <label className="create__grow">
+            Pace: {speed.toFixed(2)}×
+            <input
+              type="range"
+              min={0.9}
+              max={1.3}
+              step={0.05}
+              value={speed}
+              onChange={(e) => setSpeed(Number(e.target.value))}
+            />
+          </label>
+        </div>
+        <label>
+          Narrator
+          <VoicePicker value={narrator} onChange={setNarrator} testId="lowpoly-narrator" />
+        </label>
+        <div className="create__row">
+          <label className="create__grow">
+            Channel name on screen (optional)
+            <input
+              className="ui-input"
+              value={brand}
+              maxLength={40}
+              placeholder={isBlocky ? 'e.g. Block Town Stories' : 'e.g. Low Poly Facts'}
+              onChange={(e) => setBrand(e.target.value)}
+              data-testid="lowpoly-brand"
+            />
+          </label>
+          <label className="create__grow">
+            Name opacity: {Math.round(brandOpacity * 100)}%
+            <input
+              type="range"
+              min={0.1}
+              max={1}
+              step={0.05}
+              value={brandOpacity}
+              disabled={!brand.trim()}
+              onChange={(e) => setBrandOpacity(Number(e.target.value))}
+              data-testid="lowpoly-brand-opacity"
+            />
+          </label>
+          {isBlocky && (
+            <label className="create__grow">
+              Quality
+              <select
+                className="ui-input"
+                value={pixels}
+                onChange={(e) => setPixels(e.target.value as typeof pixels)}
+                data-testid="blocky-quality"
+              >
+                <option value="clean">Full HD (1920 lines)</option>
+                <option value="classic">Fast (1280 lines)</option>
+                <option value="chunky">Draft (720 lines)</option>
+              </select>
+            </label>
+          )}
+          {isBlocky ? (
+            <label className="create__check">
+              <input
+                type="checkbox"
+                checked={classicSkin}
+                onChange={(e) => setClassicSkin(e.target.checked)}
+                data-testid="blocky-classic-skin"
+              />
+              Classic yellow skin
+            </label>
+          ) : (
+            <label className="create__grow">
+              Pixels
+              <select
+                className="ui-input"
+                value={pixels}
+                onChange={(e) => setPixels(e.target.value as typeof pixels)}
+              >
+                <option value="chunky">Chunky (PS1, 320 lines)</option>
+                <option value="classic">Classic (480 lines)</option>
+                <option value="clean">Clean (720 lines)</option>
+              </select>
+            </label>
+          )}
+        </div>
+        <label>
+          Music (optional; {isBlocky ? 'upbeat game music' : 'chiptune'} suits the style)
+          <select className="ui-input" value={music} onChange={(e) => setMusic(e.target.value)}>
+            <option value="">None</option>
+            {sounds.map((v) => (
+              <option key={v.id} value={v.id}>
+                {v.name}
+              </option>
+            ))}
+          </select>
+        </label>
+      </section>
+      {error && (
+        <div className="create__error" role="alert">
+          {error}
+        </div>
+      )}
+      {job && job.state !== 'done' && (
+        <div className="create__progress" data-testid="lowpoly-progress">
+          <span>{job.state === 'failed' ? `Failed: ${job.error}` : job.stage}</span>
+          {running && (
+            <>
+              <progress value={job.progress} max={1} />
+              <Button
+                size="sm"
+                variant="ghost"
+                icon={<Square size={12} />}
+                onClick={() => void backend.invoke('templates.cancel', { jobId: job.id })}
+              >
+                Cancel
+              </Button>
+            </>
+          )}
+        </div>
+      )}
+      <footer className="create__footer">
+        <small>Filmed on this PC in a minute or two; keep Rec-It open while it films.</small>
+        <Button type="submit" variant="primary" disabled={!canStart} data-testid="lowpoly-create">
+          {running ? 'Creating…' : 'Create 3D Short'}
+        </Button>
+      </footer>
+    </form>
+  );
+}
+
+/**
+ * The characters this project remembers (ADR-053): later episodes reuse their look, pictures
+ * and voice. Forgetting one makes the next episode design it again.
+ */
+function Cast({ running }: { running: boolean }) {
+  const [cast, setCast] = useState<{ id: string; name: string; look: string }[]>([]);
+  const load = () =>
+    void backend
+      .invoke('characters.list', {})
+      .then(setCast)
+      .catch(() => setCast([]));
+  useEffect(load, [running]);
+  if (!cast.length)
+    return (
+      <small className="create__hint">
+        Characters are designed in the first episode and remembered by this project, so every later
+        episode uses the same faces, clothes and voices.
+      </small>
+    );
+  return (
+    <div className="create__cast" data-testid="episode-cast">
+      <span>Remembered characters (reused in every episode):</span>
+      {cast.map((c) => (
+        <span key={c.id} className="create__castmember" title={c.look}>
+          {c.name}
+          <Button
+            size="sm"
+            variant="ghost"
+            disabled={running}
+            title={`Forget ${c.name}: the next episode designs them again`}
+            onClick={() => {
+              void backend.invoke('characters.remove', { id: c.id }).then(load);
+            }}
+          >
+            Forget
+          </Button>
+        </span>
+      ))}
+    </div>
+  );
+}
+
+/** Status and install button for the human-like voice (about 5 GB; ADR-051). */
+function HumanVoiceEngine() {
+  const status = useApp((s) => s.voiceHq);
+  return (
+    <EngineNote
+      status={status}
+      testId="voicehq-engine"
+      what="Human-like voices"
+      engine="the human-like voice: Chatterbox Turbo by Resemble AI, run on your graphics card (about 5 GB, downloaded once)"
+      button="Install human-like voice"
+      install={() => void backend.invoke('voicehq.install', {})}
+      cancel={() => void backend.invoke('voicehq.cancelInstall', {})}
+    />
+  );
+}
+
+/**
+ * An episode from a brief (ADR-052): the AI plans cast and shots from the brief; characters are
+ * drawn once and kept the same, narration and dialogue are voiced, dialogue close-ups talk.
+ */
+function EpisodeForm({ onDone }: { onDone: () => void }) {
+  const assets = useApp((s) => s.assets);
+  const voiceStatus = useApp((s) => s.voice);
+  const voiceHq = useApp((s) => s.voiceHq);
+  const imageStatus = useApp((s) => s.images);
+  const animationStatus = useApp((s) => s.animation);
+  const jobs = useApp((s) => s.templateJobs);
+  const [brief, setBrief] = useState('');
+  const [script, setScript] = useState('');
+  const [seconds, setSeconds] = useState(60);
+  const [narrator, setNarrator] = useState<string>(() =>
+    useApp.getState().voiceHq?.available ? 'hq:k-am_onyx' : 'am_onyx',
+  );
+  const [liveliness, setLiveliness] = useState(0.6);
+  const [music, setMusic] = useState('');
+  const [error, setError] = useState<string | null>(null);
+  const [jobId, setJobId] = useState<string | null>(null);
+  const job = jobs.find((j) => j.id === jobId);
+  const running = job?.state === 'running';
+  const sounds = assets.filter(
+    (a) =>
+      a.status === 'ready' &&
+      a.rights.source !== 'made-in-rec-it' &&
+      (a.kind === 'audio' || (a.kind === 'video' && a.probe?.audioStreamCount)),
+  );
+
+  useEffect(() => {
+    if (job?.state === 'done') {
+      useApp.setState({
+        selectedAssetId: null,
+        selectedItemIds: [],
+        monitor: 'program',
+        playhead: 0,
+        playing: false,
+      });
+      notify(job.stage, 'info');
+      onDone();
+    }
+  }, [job?.state, job?.stage, onDone]);
+
+  const ready =
+    voiceStatus?.available === true &&
+    (!narrator.startsWith('hq:') || !!voiceHq?.available) &&
+    !!imageStatus?.available &&
+    !!animationStatus?.available;
+  const canStart = ready && (brief.trim().length >= 20 || script.trim().length >= 10) && !running;
+
+  const start = async () => {
+    setError(null);
+    try {
+      const r = await backend.invoke('templates.episode', {
+        brief,
+        script,
+        seconds,
+        narrator,
+        liveliness,
+        musicAssetId: music || null,
+      });
+      setJobId(r.jobId);
+    } catch (e) {
+      setError(message(e));
+    }
+  };
+
+  return (
+    <form
+      className="create__story"
+      onSubmit={(e) => {
+        e.preventDefault();
+        if (canStart) void start();
+      }}
+    >
+      <section className="create__section">
+        <h3>Brief</h3>
+        <p className="create__hint">
+          Paste everything: the visual style, the story, the dialogue and how the narration should
+          feel. The AI plans the shots; each character is designed once and kept the same in every
+          shot; lines of dialogue become talking close-ups. Camera moves, dissolves and subtitles
+          are added. Fluid character animation and sound effects are not made yet; add a music track
+          below.
+        </p>
+        {!imageStatus?.available && <PictureEngine />}
+        {!animationStatus?.available && <AnimationEngine />}
+        <label>
+          <textarea
+            className="ui-input create__text"
+            value={brief}
+            rows={10}
+            placeholder="e.g. Episode 1 of a dark 2D anime samurai thriller… VISUAL STYLE: … STORY: …"
+            onChange={(e) => setBrief(e.target.value)}
+            data-testid="episode-brief"
+          />
+        </label>
+        <label>
+          Script (optional)
+          <small className="create__hint">
+            Every line is spoken exactly as written, in order. Write NARRATOR: for narration and the
+            character&apos;s name for dialogue (e.g. HIROSHI: I will find you.). A line in [square
+            brackets] describes the picture for the next line. With a script, the length follows the
+            script.
+          </small>
+          <textarea
+            className="ui-input create__text"
+            value={script}
+            rows={8}
+            placeholder={
+              '[Night. A burning village.]\nNARRATOR: The year is 1582.\nHIROSHI: I will find you.'
+            }
+            onChange={(e) => setScript(e.target.value)}
+            data-testid="episode-script"
+          />
+        </label>
+        <Cast running={running} />
+        <div className="create__row">
+          <label className="create__grow">
+            Length: about {seconds} s
+            <input
+              type="range"
+              min={40}
+              max={75}
+              step={5}
+              value={seconds}
+              onChange={(e) => setSeconds(Number(e.target.value))}
+            />
+          </label>
+          <label className="create__grow">
+            Mouth movement: {liveliness < 0.3 ? 'calm' : liveliness < 0.75 ? 'balanced' : 'lively'}
+            <input
+              type="range"
+              min={0}
+              max={1}
+              step={0.05}
+              value={liveliness}
+              onChange={(e) => setLiveliness(Number(e.target.value))}
+            />
+          </label>
+        </div>
+        <label>
+          Narrator (characters get their own voices)
+          <VoicePicker value={narrator} onChange={setNarrator} testId="episode-narrator" />
+        </label>
+        <label>
+          Music (optional)
+          <select className="ui-input" value={music} onChange={(e) => setMusic(e.target.value)}>
+            <option value="">None</option>
+            {sounds.map((v) => (
+              <option key={v.id} value={v.id}>
+                {v.name}
+              </option>
+            ))}
+          </select>
+        </label>
+      </section>
+      {error && (
+        <div className="create__error" role="alert">
+          {error}
+        </div>
+      )}
+      {job && job.state !== 'done' && (
+        <div className="create__progress" data-testid="episode-progress">
+          <span>{job.state === 'failed' ? `Failed: ${job.error}` : job.stage}</span>
+          {running && (
+            <>
+              <progress value={job.progress} max={1} />
+              <Button
+                size="sm"
+                variant="ghost"
+                icon={<Square size={12} />}
+                onClick={() => void backend.invoke('templates.cancel', { jobId: job.id })}
+              >
+                Cancel
+              </Button>
+            </>
+          )}
+        </div>
+      )}
+      <footer className="create__footer">
+        <small>About 10–15 minutes on an 8 GB graphics card: every shot is drawn on your PC.</small>
+        <Button type="submit" variant="primary" disabled={!canStart} data-testid="episode-create">
+          {running ? 'Creating…' : 'Create episode'}
+        </Button>
+      </footer>
+    </form>
   );
 }

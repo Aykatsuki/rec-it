@@ -15,6 +15,7 @@ def query_gpus() -> list[dict[str, Any]]:
     try:
         out = subprocess.run(
             [smi, "--query-gpu=name,memory.total,driver_version", "--format=csv,noheader,nounits"],
+            stdin=subprocess.DEVNULL,
             capture_output=True,
             text=True,
             timeout=10,

@@ -1,6 +1,9 @@
 // AI text for one-click features (ADR-046): Ollama on this PC or Kimi with the user's own key,
 // through packages/ai. The key lives in the secret store and never reaches the renderer.
 import {
+  episodePlanSchema,
+  episodePrompt,
+  type EpisodePlan,
   AI_PROVIDERS,
   AiClient,
   narrationPrompt,
@@ -11,7 +14,18 @@ import {
   writeStoryPrompt,
   type FetchLike,
   type StoryGenre,
+  lowPolyBoardPrompt,
+  lowPolyBoardSchema,
+  lowPolyIdeasPrompt,
+  lowPolyModelsPrompt,
+  lowPolyModelsSchema,
+  lowPolyIdeasSchema,
+  lowPolyScriptPrompt,
+  lowPolyScriptSchema,
+  type LowPolyBoard,
+  type LowPolyScript,
 } from '@rec-it/ai';
+import type { CastMember } from '@rec-it/lowpoly';
 import type { AiStatus, Settings } from '@rec-it/ipc-contract';
 
 export interface AiDeps {
@@ -76,6 +90,54 @@ export class AiService {
     return this.client().json(scenePlanSchema, scenePlanPrompt({ title, sentences, scenes }), {
       temperature: 0.6,
     });
+  }
+
+  /** The plan of an episode from a brief: cast, shots, lines and pictures (ADR-052). */
+  planEpisode(
+    brief: string,
+    seconds: number,
+    extra: { script?: string; cast?: readonly { id: string; name: string; look: string }[] } = {},
+  ): Promise<EpisodePlan> {
+    return this.client().json(episodePlanSchema, episodePrompt({ brief, seconds, ...extra }), {
+      temperature: 0.7,
+    });
+  }
+
+  /** A low-poly 3D Short's script in the genre's style (ADR-054). */
+  lowPolyScript(
+    topic: string,
+    seconds: number,
+    style: 'ps1' | 'blocky' = 'ps1',
+  ): Promise<LowPolyScript> {
+    return this.client().json(lowPolyScriptSchema, lowPolyScriptPrompt({ topic, seconds, style }), {
+      temperature: 0.8,
+    });
+  }
+
+  /** The storyboard of a low-poly 3D Short: one shot per beat (ADR-054). */
+  lowPolyBoard(title: string, beats: string[], cast: CastMember[]): Promise<LowPolyBoard> {
+    return this.client().json(lowPolyBoardSchema, lowPolyBoardPrompt({ title, beats, cast }), {
+      temperature: 0.6,
+    });
+  }
+
+  /** Simple primitive-built models of things the 3D kit has no prop for (ADR-054). */
+  async lowPolyModels(names: string[]): Promise<Record<string, unknown>[]> {
+    const r = await this.client().json(lowPolyModelsSchema, lowPolyModelsPrompt(names), {
+      temperature: 0.4,
+    });
+    return r.models;
+  }
+
+  /** Ten ideas for low-poly Shorts in the formats that work (ADR-054). */
+  async lowPolyIdeas(
+    theme: string,
+    style: 'ps1' | 'blocky' = 'ps1',
+  ): Promise<{ title: string; premise: string }[]> {
+    const r = await this.client().json(lowPolyIdeasSchema, lowPolyIdeasPrompt(theme, style), {
+      temperature: 0.9,
+    });
+    return r.ideas;
   }
 
   /** Unloads local models so the picture engine has the graphics card (ADR-047). */

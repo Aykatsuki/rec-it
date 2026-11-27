@@ -140,7 +140,16 @@ export const trackSchema = z.object({
   items: z.array(timelineItemSchema),
 });
 
-const captionStyle = z.enum(['highlight', 'pop', 'karaoke', 'caps', 'clean', 'bebas']);
+const captionStyle = z.enum([
+  'highlight',
+  'pop',
+  'karaoke',
+  'caps',
+  'clean',
+  'bebas',
+  'retro',
+  'game',
+]);
 export const captionSettingsSchema = z.object({
   enabled: z.boolean(),
   style: captionStyle,

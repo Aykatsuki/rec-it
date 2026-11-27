@@ -6,6 +6,7 @@ import {
   extractJson,
   narrationPrompt,
   storySchema,
+  episodePlanSchema,
   writeStoryPrompt,
   type FetchLike,
 } from './index';
@@ -165,5 +166,41 @@ describe('prompts', () => {
   it('extracts JSON from wrapped replies', () => {
     expect(extractJson('Here you go: {"a": 1} thanks')).toEqual({ a: 1 });
     expect(() => extractJson('no json')).toThrow(AiError);
+  });
+});
+
+describe('episode plan schema', () => {
+  it('accepts an answer with an imperfect shot (what a local model sent)', () => {
+    const plan = episodePlanSchema.parse({
+      title: 'Blood of the Shogun',
+      style: '2D anime',
+      characters: [
+        { id: 'hiroshi', name: 'Hiroshi', gender: 'male', age: 'young', look: 'samurai' },
+      ],
+      shots: [
+        { speaker: 'narrator', text: 'The year is 1582.', picture: 'a village' },
+        { speaker: '', text: '', picture: '' },
+        'not even a shot',
+        { speaker: 'hiroshi', text: 'I will find you.', picture: 'close-up', motion: 'spin' },
+      ],
+    });
+    expect(plan.shots).toHaveLength(4);
+    expect(plan.shots[1]).toMatchObject({ speaker: '', text: '' });
+    expect(plan.shots[2]).toMatchObject({ speaker: 'narrator', text: '' });
+    expect(plan.shots[3]!.motion).toBeUndefined();
+  });
+});
+
+describe('blocky 3D story prompts (ADR-055)', () => {
+  it('writes in the blocky-story formats and keeps the low-poly ones apart', async () => {
+    const { lowPolyScriptPrompt, lowPolyIdeasPrompt } = await import('./prompts');
+    const blocky = lowPolyScriptPrompt({ topic: 'doomscrolling', seconds: 60, style: 'blocky' });
+    expect(blocky[0]!.content).toMatch(/In this town/);
+    expect(blocky[0]!.content).toMatch(/ONE main character/);
+    expect(blocky[1]!.content).toBe('doomscrolling');
+    const ps1 = lowPolyScriptPrompt({ topic: 'x', seconds: 40 });
+    expect(ps1[0]!.content).not.toMatch(/In this town/);
+    expect(lowPolyIdeasPrompt('', 'blocky')[0]!.content).toMatch(/In this town, …/);
+    expect(lowPolyIdeasPrompt('')[0]!.content).toMatch(/low-poly/);
   });
 });

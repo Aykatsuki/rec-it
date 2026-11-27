@@ -23,6 +23,7 @@
     "@rec-it/db": "workspace:*",
     "@rec-it/ffmpeg": "workspace:*",
     "@rec-it/ipc-contract": "workspace:*",
+    "@rec-it/lowpoly": "workspace:*",
     "@rec-it/render-plan": "workspace:*",
     "@rec-it/templates": "workspace:*",
     "@rec-it/tools": "workspace:*",
@@ -33,6 +34,7 @@
     "react": "^19.3.0",
     "react-dom": "^19.3.0",
     "react-resizable-panels": "^4.0.0",
+    "three": "0.181.0",
     "zod": "^4.6.0",
     "zustand": "^5.0.0"
   },
@@ -41,6 +43,7 @@
     "@playwright/test": "^1.65.0",
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",
+    "@types/three": "0.181.0",
     "@vitejs/plugin-react": "^6.0.0",
     "electron": "^45.3.0",
     "electron-vite": "^6.0.0",

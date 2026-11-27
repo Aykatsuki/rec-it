@@ -491,3 +491,523 @@ export function normaliseScenes(
 export function sceneCount(seconds: number): number {
   return Math.max(3, Math.min(24, Math.round(seconds / 4.5)));
 }
+
+/** What the talking-character test shot (ADR-048) needs: the clip and the line's voice. */
+export interface TalkingShotInput {
+  sequenceId: string;
+  name: string;
+  /** The animated clip (no sound) and the voice it was animated to, both starting at 0. */
+  video: { assetId: string; duration: number };
+  voice: { assetId: string; duration: number };
+  ids: { video: string; voice: string };
+}
+
+/** A sequence with the character clip filling the 9:16 frame and the voice under it. */
+export function talkingShot(input: TalkingShotInput): Command {
+  const { sequenceId: sid, ids } = input;
+  const track = (name: string) => `${sid}-${name}`;
+  return {
+    type: 'batch',
+    commands: [
+      {
+        type: 'sequence.create',
+        id: sid,
+        name: input.name,
+        width: 1080,
+        height: 1920,
+        fps: FPS,
+        trackIds: { V2: track('V2'), V1: track('V1'), A1: track('A1'), A2: track('A2') },
+      },
+      {
+        type: 'item.add',
+        sequenceId: sid,
+        trackId: track('V1'),
+        assetId: input.video.assetId,
+        id: ids.video,
+        start: 0,
+        duration: f(input.video.duration),
+        // sd-cli also muxes the driving voice into the clip; playing both doubles it and clips.
+        muted: true,
+        transform: { fit: 'fill' },
+      },
+      // A slow push in keeps a held shot alive (keyframes, so it stays editable).
+      {
+        type: 'keyframe.set',
+        sequenceId: sid,
+        itemId: ids.video,
+        property: 'scale',
+        t: 0,
+        value: 1,
+        easing: 'linear',
+      },
+      {
+        type: 'keyframe.set',
+        sequenceId: sid,
+        itemId: ids.video,
+        property: 'scale',
+        t: f(Math.max(0.05, input.video.duration - 0.04)),
+        value: 1.05,
+        easing: 'linear',
+      },
+      {
+        type: 'item.add',
+        sequenceId: sid,
+        trackId: track('A1'),
+        assetId: input.voice.assetId,
+        id: ids.voice,
+        start: 0,
+        duration: f(input.voice.duration),
+      },
+    ],
+  };
+}
+
+/** How a talking character looks and where it is (ADR-050). */
+export interface CharacterLook {
+  style?: 'cartoon' | 'render3d';
+  /** The background scene, e.g. "a muddy battlefield in the rain"; empty for a plain one. */
+  setting?: string;
+  /** The expression kept while talking: understated, since only the mouth moves. */
+  mood?: string;
+}
+
+/**
+ * The picture prompt for a talking character facing the camera with the mouth closed, an
+ * understated expression and room to talk: a 2D stick-figure cartoon (the default) or a
+ * Pixar-like 3D character, in its setting.
+ */
+export function characterPrompt(character: string, look: CharacterLook = {}): string {
+  const mood = look.mood ?? 'serious';
+  const setting = look.setting?.trim();
+  const face = `a subtle, understated ${mood} expression, mouth closed`;
+  if (look.style === 'render3d')
+    return (
+      `${character.trim()}, Pixar-style 3D animated film character, waist-up portrait facing the ` +
+      `camera, ${face}, eyes open, soft cinematic lighting, ` +
+      (setting ? `in ${setting}, detailed background` : 'simple softly blurred background') +
+      ', vertical 9:16 composition, no text'
+    );
+  return (
+    `${character.trim()}, 2D cartoon stick-figure character with a round plain white head, dot ` +
+    `eyes, ${face} as a small line, bold clean black outlines, flat muted colours, upper body ` +
+    'facing the camera, ' +
+    (setting ? `in ${setting}, detailed hand-drawn background` : 'simple hand-drawn background') +
+    ', webcomic explainer style, vertical 9:16 composition, no text'
+  );
+}
+
+/** The animation prompt for the same character speaking. */
+export function talkingPrompt(character: string): string {
+  return (
+    `${character.trim()} is talking to the camera, Pixar-style 3D animation, natural head ` +
+    'movement, expressive face, clear lip movement'
+  );
+}
+
+// ---- Episodes from a brief (ADR-052) -----------------------------------------------------------
+
+export interface EpisodeCharacter {
+  id: string;
+  name: string;
+  gender: 'male' | 'female';
+  age: 'young' | 'adult' | 'old';
+  look: string;
+}
+
+export interface EpisodeShot {
+  /** "narrator" or a character id. */
+  speaker: string;
+  text: string;
+  picture: string;
+  /** Visible character ids (known ones only). */
+  characters: string[];
+  motion: Motion;
+}
+
+export interface Episode {
+  title: string;
+  style: string;
+  characters: EpisodeCharacter[];
+  shots: EpisodeShot[];
+}
+
+/** Most shots per episode: about one every 4 s for a minute. */
+export const MAX_SHOTS = 18;
+/** Most shots for a written script: every line is kept. */
+export const MAX_SCRIPT_SHOTS = 60;
+
+interface PlannedShot {
+  speaker: string;
+  text: string;
+  picture: string;
+  characters?: readonly string[];
+  motion?: Motion | undefined;
+}
+
+/** Whether a picture description names a character (by full name or first name). */
+function mentions(picture: string, c: EpisodeCharacter): boolean {
+  const text = ` ${picture.toLowerCase().replace(/[^a-z0-9]+/g, ' ')} `;
+  const names = [c.name, c.name.split(/\s+/)[0] ?? '', c.id.replace(/_/g, ' ')]
+    .map((n) =>
+      n
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, ' ')
+        .trim(),
+    )
+    .filter((n) => n.length >= 3);
+  return names.some((n) => text.includes(` ${n} `));
+}
+
+/**
+ * Makes any AI plan safe to build: unknown speakers become the narrator, unknown visible
+ * characters are dropped (the speaker of a line is always visible, and a character the picture
+ * names is visible too, so it is drawn from its reference), empty lines go, the count is capped,
+ * and every shot gets a camera motion.
+ */
+export function normaliseEpisode(
+  plan: {
+    title: string;
+    style: string;
+    characters: readonly EpisodeCharacter[];
+    shots: readonly PlannedShot[];
+  },
+  maxShots = MAX_SHOTS,
+): Episode {
+  const seen = new Set<string>();
+  const characters = plan.characters.filter((c) => {
+    if (seen.has(c.id)) return false;
+    seen.add(c.id);
+    return true;
+  });
+  const known = new Set(characters.map((c) => c.id));
+  const shots: EpisodeShot[] = [];
+  for (const s of plan.shots) {
+    const text = speakable(s.text);
+    if (!text) continue;
+    const speaker = known.has(s.speaker.trim()) ? s.speaker.trim() : 'narrator';
+    const picture = s.picture.trim() || text;
+    let visible = [...new Set((s.characters ?? []).filter((c) => known.has(c)))];
+    for (const c of characters)
+      if (!visible.includes(c.id) && mentions(picture, c)) visible.push(c.id);
+    if (speaker !== 'narrator') visible = [speaker, ...visible.filter((c) => c !== speaker)];
+    shots.push({
+      speaker,
+      text,
+      // A missing picture is drawn from what is said.
+      picture,
+      characters: visible.slice(0, 2),
+      motion: s.motion ?? MOTIONS[shots.length % MOTIONS.length]!,
+    });
+    if (shots.length >= maxShots) break;
+  }
+  return { title: plan.title.trim(), style: plan.style.trim(), characters, shots };
+}
+
+// ---- Written scripts (ADR-053) -----------------------------------------------------------------
+
+/** One spoken line of a written script: said exactly as written. */
+export interface ScriptLine {
+  /** "narrator" or the character's name as written. */
+  speaker: string;
+  text: string;
+  /** A picture note written in [brackets] before the line, if any. */
+  picture?: string;
+}
+
+const NARRATOR_NAMES = /^(narrator|narration|narrator \(v\.?o\.?\)|v\.?o\.?|voice ?over)$/i;
+/** "NAME: line" or "Name (whispering): line", up to four capitalised words. */
+const SPEAKER_LINE =
+  /^([A-Z][\p{L}.'-]*(?:\s+[A-Z][\p{L}.'-]*){0,3})\s*(?:\([^)]{0,60}\))?\s*[:：]\s*(.+)$/u;
+/** A screenplay name on its own line, in capitals: the lines below are theirs. */
+const SPEAKER_ALONE = /^([A-Z][A-Z.'-]*(?:\s+[A-Z][A-Z.'-]*){0,3})\s*(?:\([^)]{0,60}\))?$/;
+
+function unquote(text: string): string {
+  return text
+    .trim()
+    .replace(/^["“”'‘’]+|["“”'‘’]+$/g, '')
+    .trim();
+}
+
+function speakerOf(name: string): string {
+  const n = name.trim();
+  if (NARRATOR_NAMES.test(n)) return 'narrator';
+  // A screenplay "KENJI" is Kenji.
+  return n === n.toUpperCase()
+    ? n.toLowerCase().replace(/(^|[\s'-])\p{L}/gu, (m) => m.toUpperCase())
+    : n;
+}
+
+/**
+ * Reads a written script. Lines are "NAME: what they say" (NARRATOR for narration), or a
+ * screenplay name in capitals on its own line with the speech below it; any other text is
+ * narration. A line in [square brackets] is a picture note for the next spoken line. Long
+ * narration is split into shots of a sentence or two; dialogue lines are kept whole.
+ */
+export function parseScript(script: string): ScriptLine[] {
+  const out: ScriptLine[] = [];
+  let note: string[] = [];
+  let holder: string | null = null;
+  const push = (speaker: string, raw: string) => {
+    const text = unquote(raw);
+    if (!speakable(text)) return;
+    const picture = note.length ? note.join(' ') : undefined;
+    note = [];
+    if (speaker !== 'narrator') {
+      out.push({ speaker, text, ...(picture ? { picture } : {}) });
+      return;
+    }
+    // Narration: shots of up to about 25 words, split between sentences.
+    let group = '';
+    const flush = (withPicture: boolean) => {
+      if (!group) return;
+      out.push({ speaker, text: group, ...(withPicture && picture ? { picture } : {}) });
+      group = '';
+    };
+    let first = true;
+    for (const sentence of splitSentences(text)) {
+      const words = `${group} ${sentence}`.trim().split(/\s+/).length;
+      if (group && words > 25) {
+        flush(first);
+        first = false;
+      }
+      group = `${group} ${sentence}`.trim();
+    }
+    flush(first);
+  };
+  for (const raw of script.replace(/\r/g, '').split('\n')) {
+    const line = raw.trim();
+    if (!line) {
+      holder = null;
+      continue;
+    }
+    const bracket = /^\[(.+)\]$/.exec(line);
+    if (bracket) {
+      note.push(bracket[1]!.trim());
+      continue;
+    }
+    // Stage directions in round brackets on their own line are not spoken.
+    if (/^\(.+\)$/.test(line)) continue;
+    const said = SPEAKER_LINE.exec(line);
+    if (said) {
+      holder = null;
+      push(speakerOf(said[1]!), said[2]!);
+      continue;
+    }
+    const alone = SPEAKER_ALONE.exec(line);
+    if (alone && alone[1]!.split(/\s+/).length <= 4 && line.length <= 50) {
+      holder = speakerOf(alone[1]!);
+      continue;
+    }
+    push(holder ?? 'narrator', line);
+  }
+  return out;
+}
+
+/** The script as numbered lines for the AI planner. */
+export function numberedScript(lines: readonly ScriptLine[]): string {
+  return lines
+    .map(
+      (l, i) =>
+        `${i + 1}. ${l.speaker === 'narrator' ? 'NARRATOR' : l.speaker}: ${l.text}` +
+        (l.picture ? ` [picture: ${l.picture}]` : ''),
+    )
+    .join('\n');
+}
+
+function slug(name: string): string {
+  return (
+    name
+      .toLowerCase()
+      .replace(/[^a-z0-9_]+/g, '_')
+      .replace(/^_+|_+$/g, '')
+      .slice(0, 24) || 'character'
+  );
+}
+
+/** The character a written name means: by id, full name or first name. */
+export function findCharacter(
+  name: string,
+  characters: readonly EpisodeCharacter[],
+): EpisodeCharacter | undefined {
+  const n = name.trim().toLowerCase();
+  const first = n.split(/\s+/)[0]!;
+  return (
+    characters.find((c) => c.id === slug(name)) ??
+    characters.find((c) => c.name.toLowerCase() === n) ??
+    characters.find((c) => c.name.toLowerCase().split(/\s+/)[0] === first) ??
+    characters.find((c) => c.name.toLowerCase().split(/\s+/).includes(first))
+  );
+}
+
+/**
+ * Builds the episode from a written script and the AI's picture plan: every line is spoken
+ * exactly as written, in order, by the character it names; the AI only chose the pictures,
+ * who is visible and the camera. A speaker the AI did not describe still gets a character.
+ */
+export function applyScript(
+  plan: {
+    title: string;
+    style: string;
+    characters: readonly EpisodeCharacter[];
+    shots: readonly (Partial<PlannedShot> & { line?: number | undefined })[];
+  },
+  lines: readonly ScriptLine[],
+): Episode {
+  const characters = [...plan.characters];
+  const shots: PlannedShot[] = lines.map((l, i) => {
+    const planned = plan.shots.find((s) => s.line === i + 1) ?? plan.shots[i];
+    let speaker = 'narrator';
+    if (l.speaker !== 'narrator') {
+      let c = findCharacter(l.speaker, characters);
+      if (!c) {
+        c = { id: slug(l.speaker), name: l.speaker, gender: 'male', age: 'adult', look: l.speaker };
+        characters.push(c);
+      }
+      speaker = c.id;
+    }
+    const picture = [l.picture, planned?.picture].filter((p) => p?.trim()).join('. ');
+    return {
+      speaker,
+      text: l.text,
+      picture,
+      characters: planned?.characters ?? [],
+      motion: planned?.motion,
+    };
+  });
+  return normaliseEpisode({ ...plan, characters, shots }, MAX_SCRIPT_SHOTS);
+}
+
+// ---- Remembered characters (ADR-053) -----------------------------------------------------------
+
+/** A character kept in the project's cast, with the voice it was given. */
+export interface StoredCharacter extends EpisodeCharacter {
+  /** Kokoro voice id the character speaks with (its human-like version when installed). */
+  voice?: string;
+}
+
+/**
+ * Puts remembered characters into an episode: a planned character with the id or name of a
+ * stored one becomes that character (its look, gender and age), and the shots follow the id.
+ */
+export function withCast(episode: Episode, cast: readonly StoredCharacter[]): Episode {
+  const rename = new Map<string, string>();
+  const characters: EpisodeCharacter[] = [];
+  for (const c of episode.characters) {
+    const stored = cast.find((s) => s.id === c.id) ?? findCharacter(c.name, cast);
+    const use = stored
+      ? {
+          id: stored.id,
+          name: stored.name,
+          gender: stored.gender,
+          age: stored.age,
+          look: stored.look,
+        }
+      : c;
+    rename.set(c.id, use.id);
+    if (!characters.some((x) => x.id === use.id)) characters.push(use);
+  }
+  const id = (x: string) => rename.get(x) ?? x;
+  return {
+    ...episode,
+    characters,
+    shots: episode.shots.map((s) => ({
+      ...s,
+      speaker: s.speaker === 'narrator' ? s.speaker : id(s.speaker),
+      characters: [...new Set(s.characters.map(id))],
+    })),
+  };
+}
+
+/** Kokoro voices to cast characters by gender and age (distinct from the narrator's). */
+const CAST: Record<string, readonly VoiceId[]> = {
+  'male-young': ['am_michael', 'am_liam', 'am_eric'],
+  'male-adult': ['bm_george', 'am_eric', 'am_onyx'],
+  'male-old': ['bm_lewis', 'am_adam', 'bm_george'],
+  'female-young': ['af_sky', 'af_bella', 'af_nicole'],
+  'female-adult': ['af_heart', 'bf_isabella', 'af_sarah'],
+  'female-old': ['bf_emma', 'af_sarah', 'af_heart'],
+};
+
+/**
+ * A voice for every speaker: the narrator's as chosen, and one per character by gender and age,
+ * each different where possible. With the human-like voice installed, characters speak in the
+ * human-like version of their voice (ADR-051).
+ */
+export function castVoices(
+  characters: readonly EpisodeCharacter[],
+  narrator: string,
+  human: boolean,
+  /** Voices characters already have (remembered from earlier episodes). */
+  fixed: Readonly<Record<string, string>> = {},
+): Record<string, string> {
+  const out: Record<string, string> = { narrator };
+  const used = new Set<string>([narrator.replace(/^hq:k-/, ''), ...Object.values(fixed)]);
+  for (const c of characters) {
+    const options = CAST[`${c.gender}-${c.age}`] ?? CAST['male-adult']!;
+    const pick = fixed[c.id] ?? options.find((v) => !used.has(v)) ?? options[0]!;
+    used.add(pick);
+    out[c.id] = human ? `hq:k-${pick}` : pick;
+  }
+  return out;
+}
+
+/**
+ * The picture prompt for a character's design sheet: the whole figure, front view, on a plain
+ * background, drawn once and kept for every later shot and episode.
+ */
+export function referencePrompt(c: EpisodeCharacter, style: string): string {
+  return (
+    `Character design sheet of ${c.name}: ${c.look}. Full body from head to feet, standing ` +
+    'straight, front view facing the camera, arms relaxed, neutral expression, mouth closed, ' +
+    `plain white background, even soft lighting. ${style}, vertical 9:16, no text`
+  );
+}
+
+/** The prompt for a character's face reference, edited from the design sheet (image 1). */
+export function facePrompt(c: EpisodeCharacter, style: string): string {
+  return (
+    `Head-and-shoulders portrait of ${c.name}, the character in image 1, facing the camera, ` +
+    'neutral expression, mouth closed, plain white background. Keep the face shape, eyes, eye ' +
+    `colour, eyebrows, hair, skin tone, clothing and colours exactly as in image 1. ${style}, no text`
+  );
+}
+
+/** Which reference pictures a shot is drawn from, in order (image 1, image 2, …). */
+export function shotReferences(shot: EpisodeShot): { id: string; kind: 'face' | 'sheet' }[] {
+  // A talking close-up of one character: the face first, then the sheet for the clothes.
+  if (shot.speaker !== 'narrator' && shot.characters.length === 1)
+    return [
+      { id: shot.speaker, kind: 'face' },
+      { id: shot.speaker, kind: 'sheet' },
+    ];
+  return shot.characters.map((id) => ({ id, kind: 'sheet' as const }));
+}
+
+/**
+ * The prompt for one shot. Each visible character is tied to its reference pictures by number
+ * and described with its fixed look, so its face, hair and clothes stay the same in every shot.
+ */
+export function shotPrompt(
+  shot: EpisodeShot,
+  episode: Episode,
+  refs: readonly { id: string; kind: 'face' | 'sheet' }[] = shotReferences(shot),
+): string {
+  const parts: string[] = [];
+  for (const id of shot.characters) {
+    const c = episode.characters.find((x) => x.id === id);
+    if (!c) continue;
+    const images = refs.flatMap((r, i) => (r.id === id ? [`image ${i + 1}`] : []));
+    const where = images.length ? `, the character in ${images.join(' and ')}` : '';
+    parts.push(
+      `${c.name}${where}: ${c.look}. Keep ${c.name}'s face, eyes, hair, build, clothing, ` +
+        `armour and colours exactly the same${images.length ? ` as in ${images.join(' and ')}` : ''}; only the pose, expression, camera and setting change.`,
+    );
+  }
+  const talk =
+    shot.speaker !== 'narrator'
+      ? ' Close-up facing the camera, face clearly visible, mouth closed.'
+      : '';
+  return `${shot.picture}.${talk} ${parts.join(' ')} ${episode.style}, vertical 9:16 composition, no text`
+    .replace(/\s+/g, ' ')
+    .trim();
+}

@@ -16,6 +16,7 @@ import { shuttle, stepFrames, togglePlay } from './timeline/ProgramMonitor';
 import { ContextMenuHost } from './ui/ContextMenu';
 import { ClaudeConfirmHost } from './claude/ClaudeConfirm';
 import { CreateDialogHost } from './create/CreateDialog';
+import { LowPolyHost } from './lowpoly/LowPolyHost';
 import {
   copySelected,
   cutSelected,
@@ -62,6 +63,7 @@ export function App() {
       <ContextMenuHost />
       <ClaudeConfirmHost />
       <CreateDialogHost />
+      <LowPolyHost />
       <Toasts />
       {dragging && (
         <div className="drop-overlay" aria-hidden>

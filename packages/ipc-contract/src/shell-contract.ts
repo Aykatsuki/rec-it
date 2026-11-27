@@ -28,6 +28,10 @@ export const shellContract = defineContract({
       input: z.object({}).strict(),
       output: z.object({ paths: z.array(z.string()) }),
     },
+    'dialog.chooseAudio': {
+      input: z.object({}).strict(),
+      output: z.object({ path: z.string().nullable() }),
+    },
     'dialog.importLut': {
       input: z.object({}).strict(),
       output: z.object({ path: z.string().nullable() }),

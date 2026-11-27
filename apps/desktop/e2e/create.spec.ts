@@ -1,7 +1,10 @@
 import { expect, test } from '@playwright/test';
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
-import { rmSync } from 'node:fs';
+import { mkdtempSync, readdirSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { execFileSync } from 'node:child_process';
 import { findTestFfmpeg, makeFixtures, type Fixtures } from '../../../packages/ffmpeg/src/testing';
 import { createProject, launch, mockOpenDialog, tempUserData } from './helpers';
 
@@ -51,6 +54,139 @@ const PLAN = {
   ],
 };
 
+const EPISODE = {
+  title: 'Blood of the Shogun',
+  style: '2D anime illustration, dark fantasy, black and crimson',
+  characters: [
+    {
+      id: 'hiroshi',
+      name: 'Hiroshi Takeda',
+      gender: 'male',
+      age: 'young',
+      look: 'young samurai, dark blue armour',
+    },
+  ],
+  shots: [
+    {
+      speaker: 'narrator',
+      text: 'The year is 1582.',
+      picture: 'a burning village at dusk',
+      characters: [],
+    },
+    {
+      speaker: 'narrator',
+      text: 'Hiroshi returns home.',
+      picture: 'Hiroshi on a mountain path',
+      characters: ['hiroshi'],
+    },
+    {
+      speaker: 'hiroshi',
+      text: 'Whoever did this, I will find you.',
+      picture: 'Hiroshi close-up',
+      characters: ['hiroshi'],
+    },
+  ],
+};
+
+const BLOCKY_SCRIPT = {
+  title: 'In This Town, Screen Time Controls The Weather',
+  script: 'In this town, screen time makes it snow. One boy never put his phone down.',
+};
+const LOWPOLY_SCRIPT = {
+  title: 'Why Stopping Time Is A Bad Idea',
+  script:
+    'If you could stop time with the snap of your fingers, you would instantly go blind. Light could not reach your eyes anymore. The air around you would turn solid. Your doctor would call it a miracle. You would reach for a cup and it would not move. So you would be rich, but frozen forever.',
+};
+const LOWPOLY_BOARD = {
+  cast: [
+    {
+      id: 'doctor',
+      name: 'Doctor',
+      gender: 'female',
+      age: 'adult',
+      skin: 'brown',
+      hair: 'ponytail',
+      hairColor: 'black',
+      top: 'labcoat',
+      topColor: 'teal',
+      bottomColor: 'navy',
+      extra: 'glasses',
+    },
+    {
+      id: 'old_man',
+      name: 'Old Man',
+      gender: 'male',
+      age: 'old',
+      skin: 'pale',
+      hair: 'short',
+      top: 'suit',
+      topColor: 'grey',
+      bottomColor: 'black',
+      extra: 'beard',
+    },
+  ],
+  shots: [
+    {
+      beat: 1,
+      set: 'street',
+      framing: 'extremeCloseUp',
+      subject: 'you',
+      action: 'shock',
+      camera: 'pushIn',
+    },
+    {
+      beat: 2,
+      set: 'bedroom',
+      framing: 'closeUp',
+      subject: 'you',
+      action: 'idle',
+      effect: 'beam',
+      camera: 'pullOut',
+    },
+    {
+      beat: 3,
+      set: 'street',
+      framing: 'wide',
+      subject: 'you',
+      action: 'walk',
+      effect: 'frozen',
+      camera: 'orbit',
+    },
+    {
+      beat: 4,
+      set: 'hospital',
+      framing: 'medium',
+      subject: 'doctor',
+      others: ['old_man'],
+      action: 'talk',
+      props: ['brain'],
+      speaker: 'doctor',
+      camera: 'static',
+    },
+    { beat: 5, set: 'kitchen', framing: 'pov', subject: 'you', props: ['cup'], camera: 'pushIn' },
+    {
+      beat: 6,
+      set: 'bank',
+      framing: 'medium',
+      subject: 'you',
+      action: 'celebrate',
+      props: ['money'],
+      effect: 'sparkles',
+      bigText: 'IM RICH',
+      camera: 'shake',
+    },
+    {
+      beat: 7,
+      set: 'space',
+      framing: 'wide',
+      subject: 'you',
+      action: 'float',
+      effect: 'glow',
+      camera: 'orbit',
+    },
+  ],
+};
+
 test.describe('create a Short', () => {
   test.skip(!bins, 'FFmpeg is not available (run pnpm fetch-ffmpeg)');
   test.beforeAll(async () => {
@@ -66,13 +202,21 @@ test.describe('create a Short', () => {
           return;
         }
         const ask = JSON.stringify(JSON.parse(body).messages);
-        const content = ask.includes('Rec-It is connected')
-          ? 'Rec-It is connected.'
-          : ask.includes('storyboard')
-            ? JSON.stringify(PLAN)
-            : ask.includes('faceless YouTube Shorts')
-              ? JSON.stringify(FACTS)
-              : JSON.stringify(STORY);
+        const content = ask.includes('low-poly 3D story channels')
+          ? JSON.stringify(LOWPOLY_SCRIPT)
+          : ask.includes('blocky 3D avatar characters')
+            ? JSON.stringify(BLOCKY_SCRIPT)
+            : ask.includes('storyboard a vertical 3D Short')
+              ? JSON.stringify(LOWPOLY_BOARD)
+              : ask.includes('Rec-It is connected')
+                ? 'Rec-It is connected.'
+                : ask.includes('director and storyboard artist')
+                  ? JSON.stringify(EPISODE)
+                  : ask.includes('storyboard')
+                    ? JSON.stringify(PLAN)
+                    : ask.includes('faceless YouTube Shorts')
+                      ? JSON.stringify(FACTS)
+                      : JSON.stringify(STORY);
         res.end(JSON.stringify({ choices: [{ message: { content } }] }));
       });
     });
@@ -118,6 +262,7 @@ test.describe('create a Short', () => {
       // Create → Story video → Write it → Create Short.
       await page.getByTestId('create-button').click();
       const dialog = page.getByTestId('create-dialog');
+      await dialog.getByRole('button', { name: /Story or topic video/ }).click();
       await dialog.getByTestId('story-write').click();
       await expect(dialog.getByTestId('story-title')).toHaveValue(STORY.title, { timeout: 15_000 });
       await expect(dialog.getByTestId('story-text')).toHaveValue(STORY.story);
@@ -169,6 +314,7 @@ test.describe('create a Short', () => {
 
       await page.getByTestId('create-button').click();
       const dialog = page.getByTestId('create-dialog');
+      await dialog.getByRole('button', { name: /Story or topic video/ }).click();
       await dialog.getByRole('combobox').first().selectOption('facts');
       await dialog.getByRole('textbox', { name: 'Topic' }).fill('octopus facts');
       await dialog.getByTestId('story-write').click();
@@ -187,6 +333,189 @@ test.describe('create a Short', () => {
       await page.screenshot({ path: test.info().outputPath('pictures-short.png') });
     } finally {
       await app.close();
+    }
+  });
+  test('test a talking character: draw, voice and animate one shot', async () => {
+    const { app, page } = await launch(tempUserData(), {
+      ...(bins!.source === 'path' ? {} : { RECIT_FFMPEG_PATH: bins!.ffmpeg }),
+      RECIT_DISABLE_SIDECAR: '0',
+      RECIT_FAKE_TTS: '1',
+      RECIT_FAKE_IMAGES: '1',
+      RECIT_FAKE_LIPSYNC: '1',
+      RECIT_FAKE_VOICEHQ: '1',
+    });
+    try {
+      await createProject(page, 'Characters');
+      await page.getByTestId('create-button').click();
+      const dialog = page.getByTestId('create-dialog');
+      await dialog.getByRole('button', { name: /Talking characters/ }).click();
+      // The fake engines count as installed.
+      await expect(dialog.getByTestId('talk-create')).toBeEnabled({ timeout: 60_000 });
+      await expect(dialog.getByTestId('animation-engine')).toHaveCount(0);
+      await dialog.getByTestId('talk-character').fill('a sleepy blue owl');
+      await dialog.getByTestId('talk-line').fill('Who stayed up this late?');
+      // The human-like voice is the default once installed (the fake one counts).
+      await expect(dialog.getByTestId('talk-voice')).toHaveValue('hq:builtin');
+      await page.screenshot({ path: test.info().outputPath('talking-form.png') });
+      await dialog.getByTestId('talk-create').click();
+      await expect(dialog).toBeHidden({ timeout: 90_000 });
+      // The clip, the line and the character picture, on a new sequence.
+      await expect(page.locator('[data-testid=asset-card]')).toHaveCount(3);
+      await page.waitForTimeout(500);
+      await page.screenshot({ path: test.info().outputPath('talking-shot.png') });
+    } finally {
+      await app.close();
+    }
+  });
+  test('make an episode from a brief', async () => {
+    const { app, page } = await launch(tempUserData(), {
+      ...(bins!.source === 'path' ? {} : { RECIT_FFMPEG_PATH: bins!.ffmpeg }),
+      RECIT_DISABLE_SIDECAR: '0',
+      RECIT_FAKE_TTS: '1',
+      RECIT_FAKE_IMAGES: '1',
+      RECIT_FAKE_LIPSYNC: '1',
+      RECIT_FAKE_VOICEHQ: '1',
+    });
+    try {
+      await createProject(page, 'Episode');
+      await page.getByRole('button', { name: 'Settings' }).click();
+      await page.getByRole('tab', { name: 'AI' }).click();
+      const ai = page.getByTestId('ai-settings');
+      await ai.getByLabel('AI provider').selectOption('custom');
+      await ai.getByLabel('Server address').fill(aiUrl);
+      await ai.getByLabel('Server address').blur();
+      await page.keyboard.press('Escape');
+
+      await page.getByTestId('create-button').click();
+      const dialog = page.getByTestId('create-dialog');
+      // Episode from a brief is the first template; the narrator defaults to a deep human-like voice.
+      await expect(dialog.getByTestId('episode-narrator')).toHaveValue('hq:k-am_onyx', {
+        timeout: 60_000,
+      });
+      await dialog
+        .getByTestId('episode-brief')
+        .fill(
+          'Episode 1 of a dark 2D anime samurai thriller. Hiroshi returns to his burning village.',
+        );
+      await page.screenshot({ path: test.info().outputPath('episode-form.png') });
+      await dialog.getByTestId('episode-create').click();
+      await expect(dialog).toBeHidden({ timeout: 120_000 });
+      // The voice track and one visual per shot (the dialogue shot is a talking clip).
+      await expect(page.locator('[data-testid=asset-card]')).toHaveCount(4);
+      await page.waitForTimeout(500);
+      await page.screenshot({ path: test.info().outputPath('episode.png') });
+    } finally {
+      await app.close();
+    }
+  });
+  test('make a low-poly 3D Short from a topic', async () => {
+    // Software WebGL (SwiftShader) in CI films slowly; a graphics card takes seconds.
+    test.setTimeout(900_000);
+    const projects = mkdtempSync(join(tmpdir(), 'recit-lowpoly-'));
+    const { app, page } = await launch(tempUserData(), {
+      ...(bins!.source === 'path' ? {} : { RECIT_FFMPEG_PATH: bins!.ffmpeg }),
+      RECIT_DISABLE_SIDECAR: '0',
+      RECIT_FAKE_TTS: '1',
+      RECIT_PROJECTS_DIR: projects,
+    });
+    try {
+      await createProject(page, 'Low Poly');
+      await page.getByRole('button', { name: 'Settings' }).click();
+      await page.getByRole('tab', { name: 'AI' }).click();
+      const ai = page.getByTestId('ai-settings');
+      await ai.getByLabel('AI provider').selectOption('custom');
+      await ai.getByLabel('Server address').fill(aiUrl);
+      await ai.getByLabel('Server address').blur();
+      await page.keyboard.press('Escape');
+
+      await page.getByTestId('create-button').click();
+      const dialog = page.getByTestId('create-dialog');
+      await dialog.getByRole('button', { name: /Low-poly 3D story/ }).click();
+      await dialog.getByTestId('lowpoly-topic').fill('Why stopping time is a bad idea');
+      await dialog.getByTestId('lowpoly-narrator').selectOption('am_michael');
+      await dialog.getByTestId('lowpoly-brand').fill('Rec It Shorts');
+      await page.screenshot({ path: test.info().outputPath('lowpoly-form.png') });
+      // The voice engine starts in the background.
+      await expect(dialog.getByTestId('lowpoly-create')).toBeEnabled({ timeout: 90_000 });
+      await dialog.getByTestId('lowpoly-create').click();
+      await expect(dialog).toBeHidden({ timeout: 840_000 });
+      // The narration and the filmed 3D video.
+      await expect(page.locator('[data-testid=asset-card]')).toHaveCount(2);
+      await page.waitForTimeout(500);
+      await page.screenshot({ path: test.info().outputPath('lowpoly.png') });
+      const media = join(projects, 'Low Poly media');
+      const video = readdirSync(media).find((f) => /^3d .*\.mp4$/.test(f));
+      expect(video).toBeTruthy();
+      // A contact sheet of the filmed frames, for looking at the style.
+      execFileSync(bins!.ffmpeg, [
+        '-v',
+        'error',
+        '-y',
+        '-i',
+        join(media, video!),
+        '-vf',
+        'fps=2,scale=270:-1,tile=6x3',
+        '-frames:v',
+        '1',
+        test.info().outputPath('lowpoly-sheet.jpg'),
+      ]);
+    } finally {
+      await app.close();
+      rmSync(projects, { recursive: true, force: true, maxRetries: 5, retryDelay: 500 });
+    }
+  });
+  test('make a blocky 3D Short from a topic', async () => {
+    test.setTimeout(900_000);
+    const projects = mkdtempSync(join(tmpdir(), 'recit-blocky-'));
+    const { app, page } = await launch(tempUserData(), {
+      ...(bins!.source === 'path' ? {} : { RECIT_FFMPEG_PATH: bins!.ffmpeg }),
+      RECIT_DISABLE_SIDECAR: '0',
+      RECIT_FAKE_TTS: '1',
+      RECIT_PROJECTS_DIR: projects,
+    });
+    try {
+      await createProject(page, 'Blocky');
+      await page.getByRole('button', { name: 'Settings' }).click();
+      await page.getByRole('tab', { name: 'AI' }).click();
+      const ai = page.getByTestId('ai-settings');
+      await ai.getByLabel('AI provider').selectOption('custom');
+      await ai.getByLabel('Server address').fill(aiUrl);
+      await ai.getByLabel('Server address').blur();
+      await page.keyboard.press('Escape');
+
+      await page.getByTestId('create-button').click();
+      const dialog = page.getByTestId('create-dialog');
+      await dialog.getByRole('button', { name: /Blocky 3D story/ }).click();
+      await dialog
+        .getByTestId('lowpoly-topic')
+        .fill('In this town, screen time controls the weather');
+      await dialog.getByTestId('lowpoly-narrator').selectOption('am_michael');
+      await expect(dialog.getByTestId('blocky-classic-skin')).toBeChecked();
+      // Software WebGL in CI: the draft quality keeps the test quick.
+      await dialog.getByTestId('blocky-quality').selectOption('chunky');
+      await page.screenshot({ path: test.info().outputPath('blocky-form.png') });
+      await expect(dialog.getByTestId('lowpoly-create')).toBeEnabled({ timeout: 90_000 });
+      await dialog.getByTestId('lowpoly-create').click();
+      await expect(dialog).toBeHidden({ timeout: 840_000 });
+      await expect(page.locator('[data-testid=asset-card]')).toHaveCount(2);
+      const media = join(projects, 'Blocky media');
+      const video = readdirSync(media).find((f) => /^3d .*\.mp4$/.test(f));
+      expect(video).toBeTruthy();
+      execFileSync(bins!.ffmpeg, [
+        '-v',
+        'error',
+        '-y',
+        '-i',
+        join(media, video!),
+        '-vf',
+        'fps=2,scale=270:-1,tile=6x3',
+        '-frames:v',
+        '1',
+        test.info().outputPath('blocky-sheet.jpg'),
+      ]);
+    } finally {
+      await app.close();
+      rmSync(projects, { recursive: true, force: true, maxRetries: 5, retryDelay: 500 });
     }
   });
 });

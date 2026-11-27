@@ -15,7 +15,16 @@ import {
   sceneCount,
   splitSentences,
   storyShort,
+  talkingShot,
+  characterPrompt,
   type StoryShortInput,
+  normaliseEpisode,
+  parseScript,
+  applyScript,
+  withCast,
+  castVoices,
+  shotPrompt,
+  shotReferences,
 } from './index';
 
 const s = (f: number) => f / FLICKS_PER_SECOND;
@@ -249,5 +258,217 @@ describe('scenes', () => {
         expect(v1[i]!.start).toBe(v1[i - 1]!.start + v1[i - 1]!.duration);
     }
     lengths.voice = 20;
+  });
+});
+
+describe('talking shot', () => {
+  it('puts the character clip over the voice in a 9:16 sequence', () => {
+    const h = new History(emptyDocument());
+    const lookup: AssetLookup = (id) =>
+      id === 'clip'
+        ? {
+            kind: 'video',
+            duration: secondsToFlicks(2.5625),
+            hasAudio: true,
+            width: 480,
+            height: 832,
+          }
+        : id === 'line'
+          ? { kind: 'audio', duration: secondsToFlicks(2.4), hasAudio: true }
+          : undefined;
+    h.execute(
+      talkingShot({
+        sequenceId: 'talk1',
+        name: 'Fox test',
+        video: { assetId: 'clip', duration: 2.5625 },
+        voice: { assetId: 'line', duration: 2.4 },
+        ids: { video: 'v', voice: 'a' },
+      }),
+      lookup,
+    );
+    const seq = h.doc.sequences[0]!;
+    expect([seq.width, seq.height]).toEqual([1080, 1920]);
+    const v1 = seq.tracks.find((t) => t.name === 'V1')!.items;
+    const a1 = seq.tracks.find((t) => t.name === 'A1')!.items;
+    expect(v1.map((i) => [i.assetId, i.start, i.transform.fit])).toEqual([['clip', 0, 'fill']]);
+    // The clip carries a copy of the voice: it is muted so the line is heard once.
+    expect(v1[0]!.muted).toBe(true);
+    expect(v1[0]!.keyframes?.scale?.map((k) => k.v)).toEqual([1, 1.05]);
+    expect(a1.map((i) => [i.assetId, s(i.duration)])).toEqual([['line', 2.4]]);
+    expect(characterPrompt(' a fox ')).toMatch(/^a fox, 2D cartoon stick-figure/);
+    expect(characterPrompt('a fox')).toContain('understated serious expression');
+    expect(characterPrompt('a fox', { style: 'render3d' })).toMatch(/^a fox, Pixar-style 3D/);
+    const scene = characterPrompt('a samurai', { setting: 'a muddy battlefield', mood: 'sad' });
+    expect(scene).toContain('in a muddy battlefield, detailed hand-drawn background');
+    expect(scene).toContain('understated sad expression');
+  });
+});
+
+describe('episode plan', () => {
+  it('repairs or drops imperfect shots instead of failing the episode', () => {
+    const ep = normaliseEpisode({
+      title: 'Blood of the Shogun',
+      style: '2D anime',
+      characters: [
+        { id: 'hiroshi', name: 'Hiroshi', gender: 'male', age: 'young', look: 'samurai' },
+      ],
+      shots: [
+        { speaker: 'narrator', text: 'The year is 1582.', picture: 'a village', characters: [] },
+        { speaker: 'narrator', text: '', picture: '', characters: [] }, // an empty shot
+        { speaker: ' hiroshi ', text: 'I will find you.', picture: '', characters: [] },
+      ],
+    });
+    expect(ep.shots.map((s) => [s.speaker, s.text])).toEqual([
+      ['narrator', 'The year is 1582.'],
+      ['hiroshi', 'I will find you.'],
+    ]);
+    expect(ep.shots[1]!.picture).toBe('I will find you.');
+    expect(ep.shots[1]!.characters).toEqual(['hiroshi']);
+  });
+
+  it('makes a character the picture names visible, so it is drawn from its reference', () => {
+    const ep = normaliseEpisode({
+      title: 't',
+      style: 's',
+      characters: [
+        { id: 'hiroshi', name: 'Hiroshi Takeda', gender: 'male', age: 'young', look: 'x' },
+      ],
+      shots: [
+        { speaker: 'narrator', text: 'He walks.', picture: 'Wide shot, Hiroshi walks to the gate' },
+      ],
+    });
+    expect(ep.shots[0]!.characters).toEqual(['hiroshi']);
+  });
+});
+
+describe('written scripts', () => {
+  const script = `[Night. A burning village.]
+NARRATOR: The year is 1582. Fire swallowed the village of Kiri. Only one boy walked out of the smoke alive. He carried his father's broken sword and a name he would never forget.
+Hiroshi: "I will find you."
+
+KENJI (whispering)
+You should have stayed dead.
+
+(He draws his sword.)
+The rain began to fall.`;
+
+  it('reads NAME: lines, screenplay names, picture notes and narration', () => {
+    const lines = parseScript(script);
+    expect(lines.map((l) => l.speaker)).toEqual([
+      'narrator',
+      'narrator',
+      'Hiroshi',
+      'Kenji',
+      'narrator',
+    ]);
+    expect(lines[0]!.picture).toBe('Night. A burning village.');
+    expect(lines[1]!.picture).toBeUndefined();
+    expect(lines[2]!.text).toBe('I will find you.');
+    expect(lines[3]!.text).toBe('You should have stayed dead.');
+    expect(lines.map((l) => l.text).join(' ')).not.toContain('draws his sword');
+  });
+
+  it('speaks every line as written, by the character it names', () => {
+    const lines = parseScript(script);
+    const ep = applyScript(
+      {
+        title: 'Ep 1',
+        style: '2D anime',
+        characters: [
+          {
+            id: 'hiroshi',
+            name: 'Hiroshi Takeda',
+            gender: 'male',
+            age: 'young',
+            look: 'red armour',
+          },
+        ],
+        // The AI rewrote the text and skipped a line: neither matters.
+        shots: [
+          { line: 1, text: 'changed', picture: 'a burning village at night' },
+          { line: 3, speaker: 'hiroshi', picture: 'close-up of Hiroshi', characters: ['hiroshi'] },
+        ],
+      },
+      lines,
+    );
+    expect(ep.shots.map((s) => s.text)).toEqual(lines.map((l) => l.text));
+    expect(ep.shots.map((s) => s.speaker)).toEqual([
+      'narrator',
+      'narrator',
+      'hiroshi',
+      'kenji',
+      'narrator',
+    ]);
+    expect(ep.shots[0]!.picture).toBe('Night. A burning village.. a burning village at night');
+    expect(ep.characters.map((c) => c.id)).toEqual(['hiroshi', 'kenji']);
+  });
+});
+
+describe('remembered characters', () => {
+  const hiroshi = {
+    id: 'hiroshi',
+    name: 'Hiroshi Takeda',
+    gender: 'male' as const,
+    age: 'young' as const,
+    look: 'black topknot, dark brown eyes, crimson armour',
+    voice: 'am_liam',
+  };
+
+  it('replaces a re-planned character with the remembered one, ids and all', () => {
+    const ep = withCast(
+      {
+        title: 't',
+        style: 's',
+        characters: [
+          { id: 'takeda', name: 'Hiroshi', gender: 'male', age: 'adult', look: 'blue eyes' },
+        ],
+        shots: [
+          {
+            speaker: 'takeda',
+            text: 'Hi.',
+            picture: 'p',
+            characters: ['takeda'],
+            motion: 'zoomIn',
+          },
+        ],
+      },
+      [hiroshi],
+    );
+    expect(ep.characters[0]!.look).toBe(hiroshi.look);
+    expect(ep.shots[0]!.speaker).toBe('hiroshi');
+    expect(ep.shots[0]!.characters).toEqual(['hiroshi']);
+  });
+
+  it('keeps remembered voices and gives new characters other ones', () => {
+    const v = castVoices(
+      [hiroshi, { id: 'kenji', name: 'Kenji', gender: 'male', age: 'young', look: '' }],
+      'am_onyx',
+      true,
+      { hiroshi: 'am_liam' },
+    );
+    expect(v.hiroshi).toBe('hq:k-am_liam');
+    expect(v.kenji).toBe('hq:k-am_michael');
+  });
+
+  it('ties each visible character to its numbered reference pictures and fixed look', () => {
+    const shot = {
+      speaker: 'hiroshi',
+      text: 'I will find you.',
+      picture: 'Close-up of Hiroshi in the rain',
+      characters: ['hiroshi'],
+      motion: 'zoomIn' as const,
+    };
+    expect(shotReferences(shot)).toEqual([
+      { id: 'hiroshi', kind: 'face' },
+      { id: 'hiroshi', kind: 'sheet' },
+    ]);
+    const prompt = shotPrompt(shot, {
+      title: 't',
+      style: '2D anime',
+      characters: [hiroshi],
+      shots: [shot],
+    });
+    expect(prompt).toContain('Hiroshi Takeda, the character in image 1 and image 2: black topknot');
+    expect(prompt).toContain('exactly the same as in image 1 and image 2');
   });
 });

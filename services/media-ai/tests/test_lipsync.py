@@ -1,0 +1,356 @@
+import shutil
+import subprocess
+import sys
+import threading
+from pathlib import Path
+
+import pytest
+
+from recit_media_ai import lipsync
+
+# Real Kokoro timings for "Who stayed up this late? Five foxes, very happy!" (af_heart).
+KOKORO = [
+    ("h", 0.09, 0.12), ("ˌ", 0.12, 0.14), ("u", 0.14, 0.17), ("ː", 0.17, 0.19), (" ", 0.19, 0.24),
+    ("s", 0.24, 0.29), ("t", 0.29, 0.32), ("ˈ", 0.32, 0.37), ("e", 0.37, 0.42), ("ɪ", 0.42, 0.44),
+    ("d", 0.44, 0.47), (" ", 0.47, 0.49), ("ˌ", 0.49, 0.52), ("ʌ", 0.52, 0.57), ("p", 0.57, 0.59),
+    (" ", 0.59, 0.62), ("ð", 0.62, 0.64), ("ɪ", 0.64, 0.69), ("s", 0.69, 0.74), (" ", 0.74, 0.79),
+    ("l", 0.79, 0.82), ("ˈ", 0.82, 0.87), ("e", 0.87, 0.92), ("ɪ", 0.92, 0.99), ("t", 0.99, 1.22),
+    ("?", 1.22, 1.32), (" ", 1.32, 1.39), ("f", 1.39, 1.44), ("ˈ", 1.44, 1.52), ("a", 1.52, 1.57),
+    ("ɪ", 1.57, 1.62), ("v", 1.62, 1.67), (" ", 1.67, 1.72), ("f", 1.72, 1.77), ("ˈ", 1.77, 1.84),
+    ("ɑ", 1.84, 1.87), ("ː", 1.87, 1.92), ("k", 1.92, 1.99), ("s", 1.99, 2.07), ("ᵻ", 2.07, 2.19),
+    ("z", 2.19, 2.24), (",", 2.24, 2.27), (" ", 2.27, 2.32), ("v", 2.32, 2.34), ("ˈ", 2.34, 2.39),
+    ("ɛ", 2.39, 2.44), ("ɹ", 2.44, 2.52), ("i", 2.52, 2.57), (" ", 2.57, 2.62), ("h", 2.62, 2.64),
+    ("ˈ", 2.64, 2.72), ("æ", 2.72, 2.77), ("p", 2.77, 2.87), ("i", 2.87, 3.07), ("!", 3.07, 3.07),
+]  # fmt: skip
+SOUNDS = [{"p": p, "start": a, "end": b} for p, a, b in KOKORO]
+
+
+def shape_at(segs, t):
+    return next(s["shape"] for s in segs if s["start"] <= t < s["end"])
+
+
+def test_shapes_follow_the_sounds() -> None:
+    segs = lipsync.timeline(SOUNDS, 3.22)
+    # Covers the whole line without gaps, and starts and ends with closed lips.
+    assert segs[0]["start"] == 0 and segs[-1]["end"] == pytest.approx(3.22)
+    assert all(a["end"] == b["start"] for a, b in zip(segs, segs[1:], strict=False))
+    assert segs[0]["shape"] == "rest" and segs[-1]["shape"] == "rest"
+    # No shape is shorter than two frames, and neighbours differ.
+    assert all(s["end"] - s["start"] >= 2 / 30 - 1e-6 for s in segs)
+    assert all(a["shape"] != b["shape"] for a, b in zip(segs, segs[1:], strict=False))
+    # "Who" is round; the "f" of "five" puts teeth on the lip; "five" opens wide; "p" closes.
+    assert shape_at(segs, 0.15) == "round"
+    assert shape_at(segs, 1.40) == "fv"
+    assert shape_at(segs, 1.53) == "open"
+    assert shape_at(segs, 2.80) == "rest"
+    # The pause after "late?" closes the mouth.
+    assert shape_at(segs, 1.30) == "rest"
+
+
+def test_shape_of_symbols() -> None:
+    assert [lipsync.shape_of(p) for p in "aiofmtə"] == [
+        "open",
+        "wide",
+        "round",
+        "fv",
+        "rest",
+        "mid",
+        "mid",
+    ]
+    assert lipsync.shape_of("?") is None and lipsync.shape_of(" ") is None
+
+
+def _picture(path: Path, w: int = 192, h: int = 336) -> None:
+    pytest.importorskip("PIL")
+    import numpy as np
+    from PIL import Image
+
+    rng = np.random.default_rng(1)
+    yy, xx = np.mgrid[0:h, 0:w]
+    base = np.stack([xx * 255 / w, yy * 255 / h, np.full_like(xx, 140)], axis=2)
+    base = base + rng.normal(0, 3, base.shape)  # texture, like fur or skin
+    Image.fromarray(np.clip(base, 0, 255).astype("uint8")).save(path)
+
+
+def test_cut_out_keeps_everything_but_the_mouth(tmp_path) -> None:
+    pytest.importorskip("numpy")
+    import numpy as np
+    from PIL import Image
+
+    base = tmp_path / "base.png"
+    _picture(base)
+    edit = tmp_path / "open-edit.png"
+    lipsync._fake_edit(base, edit, "open")
+    out = tmp_path / "open.png"
+    assert lipsync.cut_out(base, edit, out)
+    a = np.asarray(Image.open(base), dtype=np.int16)
+    o = np.asarray(Image.open(out), dtype=np.int16)
+    changed = np.abs(a - o).max(axis=2) > 0
+    ys, xs = np.nonzero(changed)
+    h, w = changed.shape
+    # Only around the mouth (centre, 42% down) changed; the overall tint did not leak in.
+    assert changed.sum() > 0
+    assert abs(ys.mean() - h * 0.42) < h * 0.05 and abs(xs.mean() - w / 2) < w * 0.05
+    assert not changed[: h // 4].any() and not changed[-h // 4 :].any()
+
+
+def test_cut_out_refuses_a_redrawn_picture(tmp_path) -> None:
+    pytest.importorskip("numpy")
+    import numpy as np
+    from PIL import Image
+
+    base = tmp_path / "base.png"
+    _picture(base)
+    other = tmp_path / "other.png"
+    img = np.asarray(Image.open(base))[::-1]  # everything moved
+    Image.fromarray(np.ascontiguousarray(img)).save(other)
+    assert not lipsync.cut_out(base, other, tmp_path / "x.png")
+
+
+def _ffmpeg() -> str | None:
+    here = Path(__file__).resolve().parents[3] / "resources" / "ffmpeg"
+    found = sorted(here.glob("*/ffmpeg")) + sorted(here.glob("*/ffmpeg.exe"))
+    return str(found[0]) if found else shutil.which("ffmpeg")
+
+
+@pytest.mark.skipif(_ffmpeg() is None, reason="needs FFmpeg")
+def test_shapes_and_render_end_to_end(tmp_path, monkeypatch) -> None:
+    pytest.importorskip("numpy")
+    import numpy as np
+    from PIL import Image
+
+    monkeypatch.setenv("RECIT_FAKE_LIPSYNC", "1")
+    base = tmp_path / "base.png"
+    _picture(base)
+    r = lipsync.make_shapes(
+        {"base": str(base), "outDir": str(tmp_path / "shapes"), "modelsDir": str(tmp_path)},
+        lambda *a: None,
+        threading.Event(),
+    )
+    shapes = r["shapes"]
+    assert set(shapes) == {"base", *lipsync.SHAPES}
+    assert shapes["rest"] != shapes["base"]  # closed lips drawn, not the original
+    assert all(Path(p).is_file() for p in shapes.values())
+
+    out = tmp_path / "talk.mp4"
+    res = lipsync.render(
+        {
+            "shapes": shapes,
+            "sounds": SOUNDS,
+            "duration": 3.22,
+            "out": str(out),
+            "ffmpeg": _ffmpeg(),
+            "seed": 3,
+        },
+        lambda *a: None,
+        threading.Event(),
+    )
+    assert Path(res["video"]).is_file()
+    raw = subprocess.run(
+        [_ffmpeg(), "-v", "error", "-i", res["video"], "-f", "rawvideo", "-pix_fmt", "gray", "-"],
+        capture_output=True,
+        check=True,
+    ).stdout
+    w, h = Image.open(base).size
+    frames = np.frombuffer(raw, np.uint8).reshape(-1, h, w).astype(float)
+    assert len(frames) == round(3.22 * 30)
+    # The mouth area is dark (open) while "five" is said, and plain when the lips close on "p".
+    my, mx = int(h * 0.42), w // 2
+    mouth = frames[:, my - 3 : my + 3, mx - 3 : mx + 3].mean(axis=(1, 2))
+    assert mouth[round(1.53 * 30)] < mouth[round(2.80 * 30)] - 40
+    # Blinks happen (the eyes' row darkens briefly) and are short.
+    eyes = frames[:, int(h * 0.3) - 1 : int(h * 0.3) + 2, mx - w // 8 - 4 : mx - w // 8 + 4]
+    dark = eyes.mean(axis=(1, 2)) < eyes.mean() - 30
+    assert 0 < dark.sum() <= 5 * len(lipsync.blinks(3.22, 3))
+
+
+@pytest.mark.skipif(_ffmpeg() is None, reason="needs FFmpeg")
+def test_render_job_leaves_the_rpc_channel_alone(tmp_path, monkeypatch) -> None:
+    """Through the real stdio server: requests sent while FFmpeg renders are all answered, and
+    the job reports back. FFmpeg used to inherit the sidecar's stdin (the JSON-RPC channel); on
+    Windows it reads that pipe for key presses, and on the reference PC the render never
+    reported back. Linux FFmpeg leaves a pipe alone, so here this guards the behaviour rather
+    than reproducing the Windows hang."""
+    import json
+    import queue
+    import sys
+    import time
+
+    pytest.importorskip("numpy")
+    base = tmp_path / "base.png"
+    _picture(base, 384, 672)
+    monkeypatch.setenv("RECIT_FAKE_LIPSYNC", "1")
+    os_env = {**__import__("os").environ}
+    shapes = lipsync.make_shapes(
+        {"base": str(base), "outDir": str(tmp_path / "shapes"), "modelsDir": str(tmp_path)},
+        lambda *a: None,
+        threading.Event(),
+    )["shapes"]
+    long_sounds = [
+        {"p": "aoifm"[i % 5], "start": i * 0.1, "end": i * 0.1 + 0.1} for i in range(400)
+    ]
+    proc = subprocess.Popen(
+        [sys.executable, "-m", "recit_media_ai"],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
+        text=True,
+        cwd=Path(__file__).resolve().parents[1],
+        env=os_env,
+    )
+    assert proc.stdin and proc.stdout
+    replies: queue.Queue[dict] = queue.Queue()
+    threading.Thread(
+        target=lambda: [replies.put(json.loads(line)) for line in proc.stdout], daemon=True
+    ).start()
+
+    def send(message: dict) -> None:
+        proc.stdin.write(json.dumps(message) + "\n")
+        proc.stdin.flush()
+
+    try:
+        send(
+            {
+                "jsonrpc": "2.0",
+                "id": "render",
+                "method": "lipsync.render",
+                "params": {
+                    "shapes": shapes,
+                    "sounds": long_sounds,
+                    "duration": 40.0,
+                    "out": str(tmp_path / "long.mp4"),
+                    "ffmpeg": _ffmpeg(),
+                },
+            }
+        )
+        for i in range(20):
+            send({"jsonrpc": "2.0", "id": i, "method": "ping"})
+            time.sleep(0.05)
+        answered: set = set()
+        deadline = time.time() + 120
+        while time.time() < deadline and not ({"render", *range(20)} <= answered):
+            try:
+                msg = replies.get(timeout=1)
+            except queue.Empty:
+                continue
+            if "id" in msg and msg.get("method") is None:
+                assert "error" not in msg, msg
+                answered.add(msg["id"])
+        assert answered >= {"render", *range(20)}
+    finally:
+        proc.stdin.close()
+        proc.wait(timeout=10)
+
+
+def _speech_wav(path: Path, pattern: list[tuple[float, float]]) -> None:
+    """A WAV of (seconds, loudness) pieces; loud pieces carry 4 Hz syllable bumps."""
+    import math
+    import struct
+    import wave
+
+    rate = 24000
+    frames = []
+    t = 0.0
+    for seconds, amp in pattern:
+        for i in range(int(seconds * rate)):
+            bump = 0.55 + 0.45 * math.sin(2 * math.pi * 4 * (t + i / rate))
+            v = amp * bump * math.sin(2 * math.pi * 180 * i / rate)
+            frames.append(struct.pack("<h", int(v * 30000)))
+        t += seconds
+    with wave.open(str(path), "wb") as w:
+        w.setnchannels(1)
+        w.setsampwidth(2)
+        w.setframerate(rate)
+        w.writeframes(b"".join(frames))
+
+
+def test_mouth_follows_the_voice_loudness(tmp_path) -> None:
+    """Silence keeps the lips shut whatever the sound timings say; speech moves the mouth about
+    once per syllable, not on every sound; no shape is shorter than 0.1 s."""
+    wav = tmp_path / "v.wav"
+    _speech_wav(wav, [(0.5, 0.0), (1.5, 0.6), (0.8, 0.0), (1.0, 0.6), (0.4, 0.0)])
+    level = lipsync.intensity(wav)
+    duration = 4.2
+    # Sound timings that are wrong on purpose: "speech" during the silent 2.0-2.8 s.
+    wrong = [{"p": "a", "start": i * 0.05, "end": i * 0.05 + 0.05} for i in range(84)]
+    segs = lipsync.timeline_from_audio(level, wrong, duration)
+    assert all(s["shape"] == "rest" for s in segs if s["start"] >= 2.15 and s["end"] <= 2.75)
+    assert shape_at(segs, 0.2) == "rest" and shape_at(segs, 4.1) == "rest"
+    talking = [s for s in segs if 0.5 <= s["start"] < 2.0]
+    # About 4 syllables a second, each opening and closing: lively but not 16+ changes a second.
+    assert 6 <= len(talking) <= 15
+    assert all(s["end"] - s["start"] >= 2 / 30 - 1e-3 for s in segs[:-1])
+    # Calm moves less than lively.
+    calm = lipsync.timeline_from_audio(level, wrong, duration, liveliness=0.0)
+    lively = lipsync.timeline_from_audio(level, wrong, duration, liveliness=1.0)
+    assert len(calm) <= len(segs) <= len(lively)
+    assert {s["shape"] for s in talking} <= {"open", "mid", "wide", "round", "fv", "rest"}
+
+
+def test_voice_track_is_assembled_piece_by_piece(tmp_path) -> None:
+    import struct
+    import wave
+
+    from recit_media_ai import tts
+
+    def wav(path: Path, values: list[int]) -> Path:
+        with wave.open(str(path), "wb") as w:
+            w.setnchannels(1)
+            w.setsampwidth(2)
+            w.setframerate(1000)
+            w.writeframes(b"".join(struct.pack("<h", v) for v in values))
+        return path
+
+    narrator = wav(tmp_path / "n.wav", [1] * 1000 + [2] * 1000)  # two 1 s lines
+    hero = wav(tmp_path / "h.wav", [7] * 500)
+    r = tts.assemble(
+        {
+            "pieces": [
+                {"wav": str(narrator), "start": 0.0, "end": 1.0},
+                {"wav": str(hero), "start": 0.0, "end": 0.5},
+                {"wav": str(narrator), "start": 1.0, "end": 2.0},
+            ],
+            "gap": 0.25,
+            "out": str(tmp_path / "track.wav"),
+            "slicesDir": str(tmp_path / "slices"),
+        }
+    )
+    assert [(p["start"], p["end"]) for p in r["pieces"]] == [(0, 1), (1.25, 1.75), (2.0, 3.0)]
+    with wave.open(r["out"], "rb") as w:
+        data = struct.unpack(f"<{w.getnframes()}h", w.readframes(w.getnframes()))
+    assert data[1300] == 7 and data[2100] == 2 and data[1100] == 0  # gap is silent
+    with wave.open(r["pieces"][1]["wav"], "rb") as w:
+        assert w.getnframes() == 500
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="the stand-in engine is a shell script")
+def test_shot_drawn_from_two_character_references(tmp_path, monkeypatch) -> None:
+    script = tmp_path / "sd-cli"
+    script.write_text(
+        "#!/bin/sh\n"
+        'echo "$@" > "$(dirname "$0")/args.txt"\n'
+        'while [ "$1" != "-o" ]; do shift; done\n'
+        'printf "PNG" > "$2"\n'
+    )
+    script.chmod(0o755)
+    monkeypatch.setenv("RECIT_SD_CLI", str(script))
+    monkeypatch.delenv("RECIT_FAKE_LIPSYNC", raising=False)
+    models = str(tmp_path)
+    for name, _, _ in lipsync.KLEIN_FILES:
+        (lipsync.model_dir(models) / name).parent.mkdir(parents=True, exist_ok=True)
+        (lipsync.model_dir(models) / name).write_bytes(b"x")
+    r = lipsync.draw_with_references(
+        {
+            "modelsDir": models,
+            "refs": [str(tmp_path / "hiroshi.png"), str(tmp_path / "warrior.png")],
+            "prompt": "Hiroshi faces the warrior in the doorway",
+            "out": str(tmp_path / "shot.png"),
+            "width": 768,
+            "height": 1344,
+        },
+        lambda *a: None,
+        threading.Event(),
+    )
+    args = (tmp_path / "args.txt").read_text()
+    assert f"-r {tmp_path}/hiroshi.png -r {tmp_path}/warrior.png" in args
+    assert "-W 768 -H 1344" in args and Path(r["out"]).read_bytes() == b"PNG"

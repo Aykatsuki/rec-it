@@ -1,6 +1,7 @@
 // AI pictures and motion-graphics backdrops for generated Shorts (ADR-047), made by the Python
 // sidecar: Z-Image Turbo through stable-diffusion.cpp (downloaded once on request) and Pillow.
 import type { ImageStatus } from '@rec-it/ipc-contract';
+import { EngineInstall } from './engine-install';
 import type { SidecarClient } from './sidecar';
 
 export interface ImageDeps {
@@ -10,90 +11,34 @@ export interface ImageDeps {
 }
 
 export class ImageService {
-  private status_: Omit<ImageStatus, 'install'> = { available: null, installable: false };
-  private install: ImageStatus['install'] = { state: 'idle' };
-  private installing: AbortController | null = null;
+  private readonly engine: EngineInstall;
 
-  constructor(private readonly d: ImageDeps) {}
+  constructor(private readonly d: ImageDeps) {
+    this.engine = new EngineInstall({
+      sidecar: d.sidecar,
+      modelsDir: d.modelsDir,
+      statusMethod: 'images.status',
+      installJob: 'images.install',
+      what: 'AI pictures',
+      onChange: d.onChange,
+    });
+  }
 
   status(): ImageStatus {
-    return { ...this.status_, install: this.install };
+    return this.engine.status();
   }
 
-  private emit(): void {
-    this.d.onChange(this.status());
-  }
-
-  async refresh(): Promise<void> {
-    if (!this.d.sidecar) {
-      this.status_ = {
-        available: false,
-        installable: false,
-        blocked: 'The media-ai helper is turned off, so AI pictures are unavailable.',
-      };
-      this.emit();
-      return;
-    }
-    try {
-      this.d.sidecar.start();
-      const s = await this.d.sidecar.request<Omit<ImageStatus, 'install'>>(
-        'images.status',
-        { modelsDir: this.d.modelsDir },
-        60_000,
-      );
-      this.status_ = s;
-    } catch (error) {
-      this.status_ = {
-        available: false,
-        installable: false,
-        blocked: `The media-ai helper is not running (${
-          error instanceof Error ? error.message : String(error)
-        }).`,
-      };
-    }
-    this.emit();
+  refresh(): Promise<void> {
+    return this.engine.refresh();
   }
 
   /** Downloads the engine and model in the background; progress arrives as images.changed. */
   startInstall(): void {
-    if (!this.d.sidecar) throw new Error('The media-ai sidecar is turned off.');
-    if (this.installing) return;
-    const controller = new AbortController();
-    this.installing = controller;
-    this.install = { state: 'running', message: 'Starting…', progress: 0 };
-    this.emit();
-    this.d.sidecar.start();
-    void this.d.sidecar
-      .job(
-        'images.install',
-        { modelsDir: this.d.modelsDir },
-        {
-          signal: controller.signal,
-          onProgress: (progress, message) => {
-            this.install = { state: 'running', progress, ...(message ? { message } : {}) };
-            this.emit();
-          },
-        },
-      )
-      .then(
-        () => {
-          this.install = { state: 'idle' };
-        },
-        (error: unknown) => {
-          const message = error instanceof Error ? error.message : String(error);
-          this.install = controller.signal.aborted
-            ? { state: 'idle' }
-            : { state: 'failed', message };
-        },
-      )
-      .finally(() => {
-        this.installing = null;
-        void this.refresh();
-      });
+    this.engine.start();
   }
 
   cancelInstall(): void {
-    this.installing?.abort();
+    this.engine.cancel();
   }
 
   /** One picture per prompt (PNG paths, in order). */
@@ -102,17 +47,26 @@ export class ImageService {
     o: {
       outDir: string;
       seed: number;
+      /** Picture size; the engine's default is 576×1024. */
+      width?: number;
+      height?: number;
       signal?: AbortSignal;
       onProgress?: (p: number, message?: string) => void;
     },
   ): Promise<string[]> {
     if (!this.d.sidecar) throw new Error('AI pictures need the media-ai helper, which is off.');
-    if (!this.status_.available)
+    if (!this.engine.available())
       throw new Error('Install the AI picture engine first (Make a Short → AI pictures).');
     this.d.sidecar.start();
     const r = await this.d.sidecar.job<{ images: string[] }>(
       'images',
-      { prompts, outDir: o.outDir, seed: o.seed, modelsDir: this.d.modelsDir },
+      {
+        prompts,
+        outDir: o.outDir,
+        seed: o.seed,
+        modelsDir: this.d.modelsDir,
+        ...(o.width && o.height ? { width: o.width, height: o.height } : {}),
+      },
       {
         ...(o.signal ? { signal: o.signal } : {}),
         ...(o.onProgress ? { onProgress: o.onProgress } : {}),

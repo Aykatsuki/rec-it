@@ -72,6 +72,14 @@ class Cancelled(Exception):
     pass
 
 
+class EngineFailed(RuntimeError):
+    """sd-cli failed; `lines` is its cleaned output, for callers that can recover."""
+
+    def __init__(self, message: str, lines: list[str]) -> None:
+        super().__init__(message)
+        self.lines = lines
+
+
 def _fake() -> bool:
     return os.environ.get("RECIT_FAKE_IMAGES") == "1"
 
@@ -157,24 +165,26 @@ def _download(
     part.replace(target)
 
 
-def install(
-    params: dict[str, Any], progress: Callable[..., None], cancelled: threading.Event
-) -> dict[str, Any]:
-    models_dir = str(params["modelsDir"])
-    if _fake():
-        progress(1.0, "Installed")
-        return {"installed": True}
-    plan: list[tuple[str, Path, str | None, int, bool]] = []
-    if not os.environ.get("RECIT_SD_CLI"):
-        if sys.platform != "win32":
-            raise RuntimeError("The picture engine download is for Windows; set RECIT_SD_CLI.")
-        if not sd_cli(models_dir):
-            for name, digest, size in ENGINE_FILES:
-                plan.append((ENGINE_URL + name, engine_dir(models_dir) / name, digest, size, True))
-    for name, url, size in MODEL_FILES:
-        target = model_dir(models_dir) / name
-        if not target.is_file():
-            plan.append((url, target, None, size, False))
+def engine_plan(models_dir: str) -> list[tuple[str, Path, str | None, int, bool]]:
+    """Downloads for the sd-cli engine itself (shared by pictures and animation)."""
+    if os.environ.get("RECIT_SD_CLI"):
+        return []
+    if sys.platform != "win32":
+        raise RuntimeError("The engine download is for Windows; set RECIT_SD_CLI.")
+    if sd_cli(models_dir):
+        return []
+    return [
+        (ENGINE_URL + name, engine_dir(models_dir) / name, digest, size, True)
+        for name, digest, size in ENGINE_FILES
+    ]
+
+
+def run_downloads(
+    plan: list[tuple[str, Path, str | None, int, bool]],
+    what: str,
+    progress: Callable[..., None],
+    cancelled: threading.Event,
+) -> None:
     total = sum(p[3] for p in plan) or 1
     done = 0
 
@@ -183,7 +193,7 @@ def install(
         done += n
         progress(
             min(0.99, done / total),
-            f"Downloading the picture engine ({done / 1e9:.1f} of {total / 1e9:.1f} GB)…",
+            f"Downloading {what} ({done / 1e9:.1f} of {total / 1e9:.1f} GB)…",
         )
 
     for url, target, digest, _size, is_zip in plan:
@@ -195,6 +205,21 @@ def install(
                 z.extractall(target.parent)
             target.unlink()
     progress(1.0, "Installed")
+
+
+def install(
+    params: dict[str, Any], progress: Callable[..., None], cancelled: threading.Event
+) -> dict[str, Any]:
+    models_dir = str(params["modelsDir"])
+    if _fake():
+        progress(1.0, "Installed")
+        return {"installed": True}
+    plan = engine_plan(models_dir)
+    for name, url, size in MODEL_FILES:
+        target = model_dir(models_dir) / name
+        if not target.is_file():
+            plan.append((url, target, None, size, False))
+    run_downloads(plan, "the picture engine", progress, cancelled)
     return {"installed": True}
 
 
@@ -242,7 +267,7 @@ def generate(
         out = out_dir / f"scene-{i + 1}.png"
         progress(i / len(prompts), f"Drawing picture {i + 1} of {len(prompts)}…")
         if _fake():
-            _gradient_png(str(out), prompt, 64, 112)
+            _gradient_png(str(out), prompt, max(64, width // 4), max(112, height // 4))
         else:
             _run_sd(models_dir, prompt, out, seed + i, width, height, cancelled)
         outputs.append(str(out))
@@ -264,7 +289,6 @@ def _run_sd(
         raise RuntimeError("The picture engine is not installed.")
     m = model_dir(models_dir)
     args = [
-        str(exe),
         "--diffusion-model",
         str(m / MODEL_FILES[0][0]),
         "--llm",
@@ -283,21 +307,40 @@ def _run_sd(
         str(height),
         "-s",
         str(seed),
-        # Weights go where they fit (sd.cpp's auto-fit: GPU, then RAM, then disk); forcing them
-        # into RAM with --offload-to-cpu ran a 16 GB PC out of memory. Memory-mapped weights
-        # can be dropped and re-read instead of swapping; flash attention saves VRAM.
-        "--mmap",
-        "--max-vram",
-        "-0.5",
-        "--flash-attn",
-        "off,diffusion=on",
+        *MEMORY_ARGS,
         "-o",
         str(out),
     ]
+    run_engine(models_dir, args, out, cancelled)
+
+
+#: Weights go where they fit (sd.cpp's auto-fit: GPU, then RAM, then disk); forcing them into
+#: RAM with --offload-to-cpu ran a 16 GB PC out of memory. Memory-mapped weights can be dropped
+#: and re-read instead of swapping; 0.5 GB of VRAM stays free; flash attention saves VRAM.
+MEMORY_ARGS = ["--mmap", "--max-vram", "-0.5", "--flash-attn", "off,diffusion=on"]
+
+_STEP = re.compile(r"\|\s*(\d+)/(\d+)\s*-")
+
+
+def run_engine(
+    models_dir: str,
+    args: list[str],
+    out: Path,
+    cancelled: threading.Event,
+    on_step: Callable[[int, int], None] | None = None,
+    what: str = "The picture engine",
+) -> None:
+    """Runs sd-cli with `args`; raises a readable error (and keeps last-error.log) on failure.
+    `on_step(done, total)` follows the sampling progress bar."""
+    exe = sd_cli(models_dir)
+    if not exe:
+        raise RuntimeError("The engine is not installed.")
     flags = 0x08000000 if sys.platform == "win32" else 0  # CREATE_NO_WINDOW
     proc = subprocess.Popen(
-        args,
+        [str(exe), *args],
         cwd=str(exe.parent),
+        # Never the sidecar's stdin: that is the JSON-RPC channel.
+        stdin=subprocess.DEVNULL,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
         creationflags=flags,
@@ -311,11 +354,16 @@ def _run_sd(
             # Progress bars redraw with carriage returns and ANSI codes; keep only real lines.
             for part in line.decode("utf-8", "replace").split("\r"):
                 text = _ANSI.sub("", part).rstrip()
-                if not text.strip() or _PROGRESS.match(text):
+                if not text.strip():
+                    continue
+                step = _STEP.search(text)
+                if step and on_step and "it" in text:
+                    on_step(int(step.group(1)), int(step.group(2)))
+                if _PROGRESS.match(text):
                     continue
                 tail.append(text)
                 del tail[:-200]
-                if _is_error(text) and len(errors) < 50:
+                if (_is_error(text) or "enough memory" in text) and len(errors) < 50:
                     errors.append(text)
 
     reader = threading.Thread(target=read, daemon=True)
@@ -328,18 +376,22 @@ def _run_sd(
     if proc.returncode != 0 or not out.is_file():
         log_path = engine_dir(models_dir) / "last-error.log"
         try:
-            log_path.write_text("\n".join([" ".join(args[:1] + ["…"]), *tail]), encoding="utf-8")
+            log_path.write_text("\n".join([str(exe) + " …", *tail]), encoding="utf-8")
         except OSError:
             pass
-        raise RuntimeError(failure_message(errors, tail, proc.returncode, log_path))
+        raise EngineFailed(failure_message(errors, tail, proc.returncode, log_path, what), tail)
 
 
 _ANSI = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]")
 _PROGRESS = re.compile(r"^\s*\|[=#> -]*\|")
 _RAM = re.compile(r"RAM (weight|graph) capacity exceeded", re.IGNORECASE)
+#: Windows commit charge (RAM + page file) too low for the GPU workspace sd.cpp needs.
+_COMMIT = re.compile(r"capacity exceeded.*pending device commit", re.IGNORECASE)
 _ERROR = re.compile(r"\[(E|ERROR)\]|error|failed|out of memory", re.IGNORECASE)
 _OOM = re.compile(
-    r"out of memory|cudaMalloc|failed to allocate|alloc.*buffer|CUDA error", re.IGNORECASE
+    r"out of memory|cudaMalloc|failed to allocate|alloc.*buffer|CUDA error"
+    r"|cannot make enough memory available",
+    re.IGNORECASE,
 )
 
 
@@ -347,25 +399,39 @@ def _is_error(line: str) -> bool:
     return bool(_ERROR.search(line))
 
 
-def failure_message(errors: list[str], tail: list[str], code: int | None, log_path: Path) -> str:
+def failure_message(
+    errors: list[str],
+    tail: list[str],
+    code: int | None,
+    log_path: Path,
+    what: str = "The picture engine",
+) -> str:
     """A readable reason from sd-cli's output: memory problems in plain words, otherwise the
     first error it logged (the last one is only "generate failed", which says nothing)."""
+    if any(_COMMIT.search(e) for e in errors):
+        return (
+            "Windows ran out of memory to give the graphics card (RAM plus the page file). "
+            'Make the page file bigger: Start → "Adjust the appearance and performance of '
+            'Windows" → Advanced → Virtual memory → Change, untick "Automatically manage", '
+            "choose C:, Custom size 16384 to 32768 MB, Set, OK, then restart. "
+            f"Details: {log_path}"
+        )
     if any(_RAM.search(e) for e in errors):
         return (
-            "Your PC ran out of memory (RAM) while drawing. Close other programs, especially "
+            "Your PC ran out of memory (RAM) while generating. Close other programs, especially "
             "browsers and games, then try again. "
             f"Details: {log_path}"
         )
     if any(_OOM.search(e) for e in errors):
         return (
-            "The graphics card ran out of memory while drawing. Close games, browsers with video "
-            "and other AI apps (Ollama is closed for you), then try again. "
+            "The graphics card ran out of memory while generating. Close games, browsers with "
+            "video and other AI apps (Ollama is closed for you), then try again. "
             f"Details: {log_path}"
         )
     useful = [e for e in errors if "generate failed" not in e] or errors
     detail = useful[0] if useful else next((t for t in reversed(tail) if t.strip()), "")
     detail = re.sub(r"^\[[A-Z]+\]\s*", "", detail.strip()) or f"exit code {code}"
-    return f"The picture engine failed: {detail[:300]} (full log: {log_path})"
+    return f"{what} failed: {detail[:300]} (full log: {log_path})"
 
 
 def remove(models_dir: str) -> None:

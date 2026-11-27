@@ -1,10 +1,11 @@
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdtempSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { FLICKS_PER_SECOND } from '@rec-it/core';
 import { findTestFfmpeg, makeFixtures, type Fixtures } from '@rec-it/ffmpeg/testing';
+import { totalFrames, type RenderSpec } from '@rec-it/lowpoly';
 import { BackendApp } from './app';
 
 // The story template end to end with the real sidecar and the fake voice (a tone per word at
@@ -42,6 +43,8 @@ describe.skipIf(!bins || !hasUv)('story template (backend, real sidecar, fake vo
   beforeAll(async () => {
     process.env.RECIT_FAKE_TTS = '1';
     process.env.RECIT_FAKE_IMAGES = '1';
+    process.env.RECIT_FAKE_LIPSYNC = '1';
+    process.env.RECIT_FAKE_VOICEHQ = '1';
     dir = mkdtempSync(join(tmpdir(), 'recit-tpl-'));
     fx = makeFixtures(bins!.ffmpeg, { longSeconds: 4 });
     app = new BackendApp({
@@ -76,6 +79,8 @@ describe.skipIf(!bins || !hasUv)('story template (backend, real sidecar, fake vo
     await app?.dispose();
     delete process.env.RECIT_FAKE_TTS;
     delete process.env.RECIT_FAKE_IMAGES;
+    delete process.env.RECIT_FAKE_LIPSYNC;
+    delete process.env.RECIT_FAKE_VOICEHQ;
     rmSync(dir, { recursive: true, force: true, maxRetries: 3 });
     rmSync(fx.dir, { recursive: true, force: true, maxRetries: 3 });
   });
@@ -210,6 +215,394 @@ describe.skipIf(!bins || !hasUv)('story template (backend, real sidecar, fake vo
       expect(caps[0]!.caption!.words[0]!.text).toBe('Octopus');
     }, 180_000);
   }
+
+  it('makes a talking-character test shot', async () => {
+    await waitFor(() => app.animation.status().available !== null, 60_000);
+    await waitFor(() => app.images.status().available !== null, 60_000);
+    const jobId = app.templates.talkTest({
+      character: 'a cheerful orange fox in a green scarf',
+      line: 'Hello there, I am a fox.',
+      voice: 'af_heart',
+    });
+    const job = await waitFor(() => {
+      const j = app.templates.list().find((x) => x.id === jobId);
+      return j && j.state !== 'running' && j;
+    }, 120_000);
+    expect(job.error).toBeUndefined();
+    expect(job.kind).toBe('talk-test');
+    expect(job.stage).toMatch(/^Done in .+; the mouth shapes took .+ \(\d of 7 drawn\)\.$/);
+    const { doc } = app.projects.document().state();
+    const seq = doc.sequences.find((s) => s.id === job.sequenceId)!;
+    const track = (name: string) => seq.tracks.find((t) => t.name === name)!.items;
+    const clip = app.projects.media().get(track('V1')[0]!.assetId);
+    expect(clip.kind).toBe('video');
+    expect(clip.originalPath).toMatch(/talking .+\.mp4$/);
+    expect(clip.probe?.audioStreamCount).toBe(0);
+    expect(app.projects.media().get(track('A1')[0]!.assetId).kind).toBe('audio');
+    // The clip lasts exactly as long as the line, and the mouth shapes were drawn next to the
+    // character picture.
+    expect(sec(track('V1')[0]!.duration)).toBeCloseTo(sec(track('A1')[0]!.duration), 1);
+    const shapesDir = join(
+      dirname(clip.originalPath),
+      readdirSync(dirname(clip.originalPath)).find((n) => n.startsWith('character '))!,
+      'shapes',
+    );
+    expect(readdirSync(shapesDir).filter((n) => n.endsWith('.png')).length).toBeGreaterThanOrEqual(
+      4,
+    );
+  }, 180_000);
+
+  it('speaks with the human-like voice, built in or cloned from a sample', async () => {
+    await waitFor(() => app.voice.human.status().available !== null, 60_000);
+    expect(app.voice.human.status()).toMatchObject({ available: true, engine: 'fake' });
+    // A sample: any recording of 5 s or more (shorter ones are refused).
+    const recording = join(dir, 'me.wav');
+    execFileSync(bins!.ffmpeg, ['-v', 'error', '-f', 'lavfi', '-i', 'sine=d=6', recording]);
+    await expect(app.voice.addSample(fx.h264, 'Too short')).rejects.toThrow(/at least 5 seconds/);
+    const sample = await app.voice.addSample(recording, 'Test voice');
+    expect(sample.seconds).toBeGreaterThanOrEqual(4);
+    expect((await app.voice.samples()).map((v) => v.name)).toContain('Test voice');
+    for (const voice of ['hq:builtin', `hq:${sample.id}`, 'hq:k-bm_lewis']) {
+      const jobId = app.templates.talkTest({
+        character: 'a tired samurai',
+        line: 'The rain never stopped that day.',
+        voice,
+      });
+      const job = await waitFor(() => {
+        const j = app.templates.list().find((x) => x.id === jobId);
+        return j && j.state !== 'running' && j;
+      }, 120_000);
+      expect(job.error).toBeUndefined();
+      expect(job.state).toBe('done');
+    }
+    // The Lewis reference was read once by Kokoro and kept for next time.
+    expect(existsSync(join(dir, 'ud', 'voices', 'reference-bm_lewis.wav'))).toBe(true);
+    await app.voice.removeSample(sample.id);
+    expect(await app.voice.samples()).toEqual([]);
+  }, 240_000);
+
+  it('makes an episode from a brief: cast, shots, voices, talking close-ups', async () => {
+    app.ai.planEpisode = async () => ({
+      title: 'The Last Samurai: Episode 1',
+      style: '2D anime illustration, dark fantasy',
+      characters: [
+        { id: 'hiroshi', name: 'Hiroshi', gender: 'male', age: 'young', look: 'young samurai' },
+        {
+          id: 'warrior',
+          name: 'Black Warrior',
+          gender: 'male',
+          age: 'adult',
+          look: 'black armour',
+        },
+      ],
+      shots: [
+        {
+          speaker: 'narrator',
+          text: 'The year is 1582.',
+          picture: 'a village',
+          characters: [],
+          motion: 'panLeft',
+        },
+        {
+          speaker: 'narrator',
+          text: 'His village is burning.',
+          picture: 'Hiroshi runs',
+          characters: ['hiroshi'],
+        },
+        {
+          speaker: 'hiroshi',
+          text: 'Whoever did this, I will find you.',
+          picture: 'Hiroshi close-up',
+          characters: [],
+        },
+        {
+          speaker: 'warrior',
+          text: 'Your father warned us you would return.',
+          picture: 'the warrior',
+          characters: ['warrior'],
+        },
+        {
+          speaker: 'ghost',
+          text: 'He draws his sword.',
+          picture: 'a blade',
+          characters: ['nobody'],
+        },
+      ],
+    });
+    const jobId = app.templates.episode({
+      brief: 'Episode 1 of a dark samurai anime. A young samurai returns to his burning village.',
+      seconds: 45,
+      narrator: 'am_onyx',
+    });
+    const job = await waitFor(() => {
+      const j = app.templates.list().find((x) => x.id === jobId);
+      return j && j.state !== 'running' && j;
+    }, 240_000);
+    expect(job.error).toBeUndefined();
+    expect(job.stage).toMatch(/5 shots, 2 spoken by characters/);
+    expect(job.title).toBe('The Last Samurai: Episode 1');
+    const { doc } = app.projects.document().state();
+    const seq = doc.sequences.find((s) => s.id === job.sequenceId)!;
+    const track = (name: string) => seq.tracks.find((t) => t.name === name)!.items;
+    // One clip per shot, edge to edge; the two dialogue shots are talking videos.
+    const v1 = track('V1');
+    expect(v1).toHaveLength(5);
+    for (let i = 1; i < v1.length; i++)
+      expect(v1[i]!.start).toBe(v1[i - 1]!.start + v1[i - 1]!.duration);
+    const kinds = v1.map((i) => app.projects.media().get(i.assetId).kind);
+    expect(kinds).toEqual(['image', 'image', 'video', 'video', 'image']);
+    // One voice track with every line, captioned.
+    expect(track('A1')).toHaveLength(1);
+    const captions = seq.tracks.find((t) => t.kind === 'caption')!.items;
+    expect(captions.flatMap((c) => c.caption!.words.map((w) => w.text)).join(' ')).toContain(
+      'Your father warned us',
+    );
+  }, 300_000);
+
+  it('remembers the cast and speaks a written script exactly as written', async () => {
+    // The first episode designed Hiroshi and the warrior: both are remembered.
+    expect((await app.templates.cast()).map((c) => c.id)).toEqual(['hiroshi', 'warrior']);
+    let seen: { script?: string; cast?: readonly { id: string }[] } = {};
+    app.ai.planEpisode = async (_brief, _seconds, extra = {}) => {
+      seen = extra;
+      return {
+        title: 'Episode 2',
+        style: '2D anime illustration',
+        // The AI re-describes Hiroshi differently and under another id: the remembered one wins.
+        characters: [
+          { id: 'takeda', name: 'Hiroshi', gender: 'male', age: 'adult', look: 'blue eyes' },
+          { id: 'kenji', name: 'Kenji', gender: 'male', age: 'old', look: 'grey beard' },
+        ],
+        shots: [
+          { line: 1, speaker: 'narrator', text: 'x', picture: 'rain on a temple', characters: [] },
+          { line: 2, speaker: 'takeda', text: 'x', picture: 'close-up', characters: ['takeda'] },
+          { line: 3, speaker: 'kenji', text: 'x', picture: 'close-up', characters: ['kenji'] },
+        ],
+      };
+    };
+    const prompts: string[] = [];
+    const generate = app.images.generate.bind(app.images);
+    app.images.generate = (p, o) => {
+      prompts.push(...p);
+      return generate(p, o);
+    };
+    const jobId = app.templates.episode({
+      script:
+        'NARRATOR: Rain fell on the temple.\nHIROSHI: I remember you.\nKenji: Then you remember why.',
+      narrator: 'am_onyx',
+    });
+    const job = await waitFor(() => {
+      const j = app.templates.list().find((x) => x.id === jobId);
+      return j && j.state !== 'running' && j;
+    }, 240_000);
+    app.images.generate = generate;
+    expect(job.error).toBeUndefined();
+    expect(seen.script).toContain('2. Hiroshi: I remember you.');
+    expect(seen.cast?.map((c) => c.id)).toEqual(['hiroshi', 'warrior']);
+    // Only Kenji is new: one design sheet, and no picture of Hiroshi drawn from scratch.
+    expect(prompts.filter((p) => p.startsWith('Character design sheet'))).toHaveLength(1);
+    expect(prompts.join(' ')).not.toContain('blue eyes');
+    expect((await app.templates.cast()).map((c) => c.id)).toEqual(['hiroshi', 'kenji', 'warrior']);
+    const { doc } = app.projects.document().state();
+    const seq = doc.sequences.find((s) => s.id === job.sequenceId)!;
+    const captions = seq.tracks.find((t) => t.kind === 'caption')!.items;
+    expect(captions.flatMap((c) => c.caption!.words.map((w) => w.text)).join(' ')).toMatch(
+      /Rain fell on the temple\. I remember you\. Then you remember why\./,
+    );
+    await app.templates.forget('kenji');
+    expect((await app.templates.cast()).map((c) => c.id)).toEqual(['hiroshi', 'warrior']);
+  }, 300_000);
+
+  it('makes a low-poly 3D Short: script, beats, storyboard, filmed frames, captions', async () => {
+    app.ai.lowPolyScript = async () => ({
+      title: 'Why Stopping Time Is A Bad Idea',
+      script:
+        'If you could stop time with the snap of your fingers, you would instantly go blind. Your time crystal would glow. So you instant-',
+    });
+    let beatsSeen: string[] = [];
+    app.ai.lowPolyBoard = async (_title, beats) => {
+      beatsSeen = beats;
+      // Plain words, as a small local model answers.
+      return {
+        cast: [{ name: 'Doc', look: 'old scientist in a white lab coat' }],
+        shots: [
+          { beat: 1, place: 'street', who: 'you', doing: 'shocked', camera: 'extreme close-up' },
+          { beat: 2, place: 'nothing', who: 'you', effect: 'frozen' },
+          {
+            beat: 3,
+            place: 'laboratory',
+            who: ['Doc'],
+            doing: 'talking',
+            objects: ['time crystal'],
+            speaker: 'Doc',
+          },
+        ],
+      };
+    };
+    let modelsAsked: string[] = [];
+    app.ai.lowPolyModels = async (names) => {
+      modelsAsked = names;
+      return [
+        {
+          name: 'time crystal',
+          parts: [{ shape: 'cone', size: [0.3, 0.6, 0.3], at: [0, 0.3, 0], color: 'purple' }],
+        },
+      ];
+    };
+    // A stand-in renderer: the same small JPEG for every frame.
+    const jpeg = join(dir, 'frame.jpg');
+    execFileSync(bins!.ffmpeg, [
+      '-v',
+      'error',
+      '-y',
+      '-f',
+      'lavfi',
+      '-i',
+      'color=c=0x336699:s=108x192',
+      '-frames:v',
+      '1',
+      jpeg,
+    ]);
+    const frame = new Uint8Array(readFileSync(jpeg));
+    let spec: RenderSpec | null = null;
+    (app.lowPoly as unknown as { d: { emit: (r: string, s: RenderSpec) => void } }).d.emit = (
+      request,
+      s,
+    ) => {
+      spec = s;
+      void (async () => {
+        const total = totalFrames(s);
+        for (let i = 0; i < total; i += 16)
+          await app.lowPoly.frames(
+            request,
+            Array.from({ length: Math.min(16, total - i) }, () => frame),
+          );
+        app.lowPoly.finished(request);
+      })();
+    };
+    const jobId = app.templates.lowPolyShort({
+      topic: 'stopping time',
+      narrator: 'am_michael',
+      brand: 'Test',
+    });
+    const job = await waitFor(() => {
+      const j = app.templates.list().find((x) => x.id === jobId);
+      return j && j.state !== 'running' && j;
+    }, 240_000);
+    expect(job.error).toBeUndefined();
+    expect(job.title).toBe('Why Stopping Time Is A Bad Idea');
+    expect(beatsSeen).toEqual([
+      'If you could stop time with the snap of your fingers,',
+      'you would instantly go blind.',
+      'Your time crystal would glow.',
+      'So you instant-',
+    ]);
+    const s = spec as unknown as RenderSpec;
+    expect(s.brand).toBe('Test');
+    expect(s.shots.map((x) => [x.set, x.subject, x.framing])).toEqual([
+      ['street', 'you', 'extremeCloseUp'],
+      ['void', 'you', 'wide'],
+      ['lab', 'doc', 'wide'],
+      // A beat the AI skipped is read from its narration ("you") in the last place.
+      ['lab', 'you', 'medium'],
+    ]);
+    // The object the kit lacks was designed once and kept for the next Short.
+    expect(modelsAsked).toEqual(['time crystal']);
+    expect(s.shots[2]!.props).toEqual(['m:time_crystal']);
+    expect(s.models.time_crystal!.parts[0]!.shape).toBe('cone');
+    const media = join(dir, 'projects', 'Story test media');
+    expect(existsSync(join(media, 'lowpoly-models.json'))).toBe(true);
+    expect(readdirSync(media).some((f) => / plan\.json$/.test(f))).toBe(true);
+    // Shots run edge to edge from 0, and the speaker's mouth moves.
+    expect(s.shots[0]!.start).toBe(0);
+    for (let i = 1; i < s.shots.length; i++) expect(s.shots[i]!.start).toBe(s.shots[i - 1]!.end);
+    expect(s.shots[2]!.mouth.length).toBeGreaterThan(0);
+    expect(s.cast.find((c) => c.id === 'doc')).toMatchObject({ top: 'labcoat', age: 'old' });
+    // The filmed video is the background, under the voice and retro captions.
+    const { doc } = app.projects.document().state();
+    const seq = doc.sequences.find((x) => x.id === job.sequenceId)!;
+    const v1 = seq.tracks.find((t) => t.name === 'V1')!.items;
+    expect(app.projects.media().get(v1[0]!.assetId).kind).toBe('video');
+    expect(seq.captions?.style).toBe('retro');
+    const captions = seq.tracks.find((t) => t.kind === 'caption')!.items;
+    expect(captions.flatMap((c) => c.caption!.words.map((w) => w.text)).join(' ')).toContain(
+      'snap',
+    );
+  }, 300_000);
+
+  it('makes a blocky 3D Short with the same pipeline: blocky look, classic skin, game captions', async () => {
+    let styleAsked: string | undefined;
+    app.ai.lowPolyScript = async (_topic, _seconds, style) => {
+      styleAsked = style;
+      return {
+        title: 'In This Town, Screen Time Controls The Weather',
+        script:
+          'In this town, your screen time controls the weather. One boy never put his phone down.',
+      };
+    };
+    app.ai.lowPolyBoard = async () => ({
+      cast: [{ name: 'Leo', look: 'boy in a red hoodie' }],
+      shots: [
+        { beat: 1, place: 'street', who: 'nobody', camera: 'wide' },
+        { beat: 2, place: 'bedroom', who: ['Leo'], doing: 'sitting', objects: ['phone'] },
+      ],
+    });
+    const jpeg = join(dir, 'frame.jpg');
+    if (!existsSync(jpeg))
+      execFileSync(bins!.ffmpeg, [
+        '-v',
+        'error',
+        '-y',
+        '-f',
+        'lavfi',
+        '-i',
+        'color=c=0x336699:s=108x192',
+        '-frames:v',
+        '1',
+        jpeg,
+      ]);
+    const frame = new Uint8Array(readFileSync(jpeg));
+    let spec: RenderSpec | null = null;
+    (app.lowPoly as unknown as { d: { emit: (r: string, s: RenderSpec) => void } }).d.emit = (
+      request,
+      s,
+    ) => {
+      spec = s;
+      void (async () => {
+        const total = totalFrames(s);
+        for (let i = 0; i < total; i += 16)
+          await app.lowPoly.frames(
+            request,
+            Array.from({ length: Math.min(16, total - i) }, () => frame),
+          );
+        app.lowPoly.finished(request);
+      })();
+    };
+    const jobId = app.templates.lowPolyShort({
+      topic: 'screen time weather',
+      narrator: 'am_michael',
+      style: 'blocky',
+      captionStyle: 'game',
+    });
+    const job = await waitFor(() => {
+      const j = app.templates.list().find((x) => x.id === jobId);
+      return j && j.state !== 'running' && j;
+    }, 240_000);
+    expect(job.error).toBeUndefined();
+    expect(styleAsked).toBe('blocky');
+    const s = spec as unknown as RenderSpec;
+    expect(s.style).toBe('blocky');
+    expect(s.classicSkin).toBe(true);
+    expect(s.shots.map((x) => [x.set, x.subject])).toEqual([
+      // "your screen time": the viewer is shown.
+      ['street', 'you'],
+      ['bedroom', 'leo'],
+    ]);
+    expect(s.shots[1]!.props).toContain('phone');
+    const { doc } = app.projects.document().state();
+    const seq = doc.sequences.find((x) => x.id === job.sequenceId)!;
+    expect(seq.captions?.style).toBe('game');
+  }, 300_000);
 
   it('previews a voice as WAV', async () => {
     const wav = Buffer.from(await app.voice.preview('af_heart', 1, 'Hello there'), 'base64');

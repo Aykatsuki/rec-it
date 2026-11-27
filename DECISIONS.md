@@ -848,3 +848,247 @@ Each record states the decision, why it was made and what else was considered. R
 
 **Not tested here:** the real engine and models. The cloud sandbox cannot reach Hugging Face and has no NVIDIA GPU, so the first real run happens on the reference PC. Expect about 10–20 s per picture there.
 
+## ADR-048 · Talking characters: Wan 2.2 S2V on the same engine, starting with a test shot
+
+**Status:** Accepted (24 Nov 2026, Phase 8 third slice, first part). The test shot now uses mouth shapes (ADR-049); S2V stays in the sidecar (`talking.py`) for a later slow, high-quality option.
+
+**Context.** You want 3D animated characters that talk, and Pixar-style animated stories, made entirely on your PC; talking characters first. The reference PC has an RTX 3070 (8 GB) and 16 GB of RAM. The stable-diffusion.cpp release Rec-It already installs for AI pictures (ADR-047) runs **Wan 2.2 S2V**: one picture plus a speech recording becomes a clip of that character speaking, with lip sync. It also runs Wan's picture-to-video models, which the Pixar-style story will use later.
+
+**Decisions.**
+- **Same engine, a second download.** Talking characters reuse sd-cli; the "animation engine" install adds about 17 GB (checked against Hugging Face's published SHA-256, as before):
+  - `Wan2.2-S2V-14B-Q3_K_S.gguf` (QuantStack, 10.7 GB): the smallest usable size of the 14B model (Q2_K saves only 1.2 GB and loses quality);
+  - `umt5-xxl-encoder-Q5_K_M.gguf` (city96): the uploader recommends Q5_K_M or larger;
+  - `wav2vec2_large_english_fp16.safetensors` (audio encoder) and `wan_2.1_vae.safetensors` (Comfy-Org);
+  - the 4-step lightning LoRA, low-noise variant `wan2.2_t2v_lightx2v_4steps_lora_v1.1_low_noise.safetensors` (Comfy-Org); the high-noise one breaks S2V.
+- **Settings for 8 GB and 16 GB:** 480×832 (9:16), 4 steps, CFG 1, euler, flow shift 3, VAE tiling, and the memory settings from ADR-047 (auto-fit over VRAM, RAM and disk; `--mmap`; 0.5 GB of VRAM kept free). One generation is at most one S2V chunk: 81 frames at the model's fixed 16 fps (about 5 s). Frames are 4n+1, from 17, to cover the line.
+- **The size adapts to the graphics card.** The engine cannot split one model block's working memory, which grows with width × height × length: on the reference PC, 480×832 for 3.8 s needed 6.8 GB with 6.5 GB free (Windows keeps about 1.5 GB). When sd-cli reports such a shortfall ("need X MB … available Y MB"), Rec-It saves a token limit (tokens = 16-pixel patches × latent frames, 90% of what fitted) in `fit.json` and retries at once at the largest 9:16 size under it (480×832 down to 320×560). The failure comes at the first step, so a retry costs only loading time, and later shots start at a size that fits. The result reports the size used.
+- **Windows commit memory.** sd.cpp also checks Windows' free commit charge (RAM + page file, `ullAvailPageFile`) before giving the GPU a block's workspace (about 4 GB at 432×768, plus 1 GB headroom); the reference PC's 16 GB ran short there ("RAM graph capacity exceeded … pending device commit"). Rec-It then retries up to two sizes smaller, without remembering it (it depends on what else is open), and otherwise explains how to enlarge the page file (16–32 GB on C:), which is the real fix on a 16 GB PC.
+- **Consistent characters come from one picture.** The character is drawn once by Z-Image Turbo with a Pixar-style prompt (waist-up, facing the camera, mouth closed, simple background) and that picture drives every shot of them, so the face and outfit stay the same between shots.
+- **First deliverable: a test shot.** Make a Short → **Talking characters** → *Test one shot*: a character description, a line (up to about 5 s, 14 words) and a voice. Rec-It records the line (Kokoro), frees the GPU from Ollama, draws the character, animates it with step-by-step progress and elapsed time, imports the clip (MJPEG .avi, no sound), the line and the picture, and builds a 9:16 sequence. The result reports the time taken, which decides how long Shorts are planned. Full talking-character Shorts (several characters, a line per shot, AI-written dialogue) follow once speed and quality are known.
+- **Shared code.** `images.run_engine` (sd-cli runner: progress bars parsed into steps, readable errors, `last-error.log`) and `images.engine_plan`/`run_downloads` serve both engines; backend `EngineInstall` tracks status and installs for both. New channels `animation.status`, `animation.install`, `animation.cancelInstall`, `animation.changed`, `templates.talkTest`; template jobs gain kind `talk-test`.
+- **Tests.** `RECIT_FAKE_TALK=1` makes a still MJPEG clip from the picture with FFmpeg. pytest: frame counts, and a stand-in sd-cli checking the full command line and step progress. Unit: the shot sequence. Integration: the whole job through the real sidecar. End to end: the form, the job and the result.
+
+**Not tested here:** the real models (no GPU or Hugging Face in the cloud sandbox). The first real run is on the reference PC. With 16 GB of RAM the 14B model is at the edge of what fits; expect several minutes per 5-second shot. If it is too slow, the fallbacks are Q2_K, shorter or smaller shots, or more RAM.
+
+## ADR-049 · Talking characters by mouth shapes timed to the voice
+
+**Status:** Accepted (24 Nov 2026, Phase 8 third slice).
+
+**Context.** The S2V test shots on the reference PC (ADR-048) were soft (448×784 at most, stretched to 1080×1920) and their lip sync was poor. Frame-by-frame measurement against the voice found only a weak match, with the best offset differing between shots and the mouth opening after the line ended. ComfyUI's S2V guide explains why: the 4-step Lightning LoRA was not trained for S2V, many of its keys do not match, and it costs a lot of motion and quality; the remedy is 20 steps at CFG 6, roughly ten times the work (about an hour per 3-second shot on this PC). Dedicated lip-sync models are either light but soft and hard to install on Windows (MuseTalk) or need about 18 GB of VRAM (LatentSync 1.6). You chose mouth shapes.
+
+**Decisions.**
+- **The character is drawn once** by Z-Image Turbo at 768×1344, mouth closed, Pixar-style prompt.
+- **Mouth shapes by editing that picture.** FLUX.2 Klein 4B (distilled, 4 steps, CFG 1), run by the same sd-cli with `-r`, redraws it as: open ("ah"), mid ("uh"), wide ("ee", teeth), round ("oo"), f/v (teeth on lip), and eyes closed (blink). Models (about 5.5 GB, Apache-2.0, ungated): `flux-2-klein-4b-Q4_K_M.gguf` (unsloth; known to run on stable-diffusion.cpp), `Qwen3-4B-Q4_K_M.gguf` (unsloth) and `flux2-vae.safetensors` (Comfy-Org).
+- **Only the change is kept (`cut_out`).** Each edit is compared with the original at quarter size, the overall drift (median) is removed, and a size-scaled blur fades thin redrawn outlines. The changed region containing the strongest change is the mouth (for the blink, every region with at least a third of its strength, so both eyes). A feathered ellipse around it, generous sideways so the old mouth's corners are covered, blends the edit onto the original. Everything else stays pixel-identical, so shapes switch without flicker. A large or tall change means the model redrew the character: that shape is skipped and its neighbour used (open/wide/round/fv → mid → closed). Checked on a real hard case: a drifting frame whose glasses were doubled and blurred gave a clean open mouth on the sharp original.
+- **The voice drives the mouth.** Kokoro's per-sound timings (IPA symbols) are now returned with each voice segment (`sounds`). `timeline`: stress marks belong to the next sound and length marks to the previous one; word gaps under 0.12 s keep the shape, while longer gaps and punctuation close the lips. The mouth leads the sound by 30 ms. Nothing lasts under two frames: subtle shapes fold into a neighbour, and distinctive ones (closed lips, f/v, round) borrow time so they are never lost.
+- **Closed lips are drawn too.** On the reference PC, Z-Image drew the character with its mouth open despite the prompt, so a seventh edit draws closed lips (`rest`). Blinks are measured against the untouched original (`base`). On that PC each Klein edit took about 12 s: all seven shapes take under 2 minutes.
+- **Child programs never get the sidecar's stdin.** That stdin is the JSON-RPC channel. FFmpeg on Windows reads it for key presses and stalled mid-clip on the reference PC (the MP4 had no index), so the job never reported back. Every sidecar subprocess now gets `stdin=DEVNULL` (FFmpeg also `-nostdin`), and the render has a time limit.
+- **Rendering** is an FFmpeg concat list of the shape pictures with frame-quantised durations, with blinks every 2.5–5 s (0.13 s each), as 30 fps H.264 (CRF 16, no sound). A 1→1.05 push-in keyframe keeps the shot alive and editable. Lines can be up to 80 words; no length limit applies as it did with S2V's 5 s.
+- **Tests.** `RECIT_FAKE_LIPSYNC=1` draws mouths and closed eyes as dark shapes plus an overall tint; the cut-out and FFmpeg render run for real. pytest: the shape timeline on real Kokoro timings ("five" opens; its f shows teeth on lip; "p" closes; pauses close), symbol mapping, the cut-out (only the mouth changes; a moved picture is refused), and a rendered clip checked frame by frame (open mouth on "five", closed on "p", short blinks). Integration and end to end as before.
+
+**Not tested here:** the real Klein edits (no GPU or Hugging Face access in the sandbox). The result message reports how many of the six shapes were drawn, so a model that redraws too much shows up at once.
+
+## ADR-050 · 2D stick-figure cartoon as the default look
+
+**Status:** Accepted (24 Nov 2026).
+
+**Context.** Your first mouth-shape character (a Pixar-style 3D mango) worked technically but looked creepy: realistic 3D faces fall into the uncanny valley when only the mouth moves. You pointed to hand-drawn history and explainer channels instead: simple stick figures with round white heads and dot eyes, bold clean black outlines, flat muted colours and detailed hand-drawn backgrounds.
+
+**Decisions.**
+- **New picture style, `cartoon` ("Stick-figure cartoon")**, first in the list and the default for Story or topic videos (schema and dialog). Every scene picture gets the look; the AI storyboard's picture descriptions stay the same.
+- **Talking characters get a style choice:** `cartoon` (default) or `render3d` (Pixar-style). In the cartoon prompt the character faces the camera with the mouth closed as a small line; mouth edits ask Klein to keep the drawing style too. Simple drawn faces suit swapped mouth shapes, which is how hand-drawn animation has always done lip sync.
+- **Understated faces, real settings.** Your first cartoon results were too exaggerated and cheerful for history. Mouth edits now ask for small, natural shapes (no grin, no tongue), keeping the character's expression, mood and eyebrows. Talking characters take a **Mood** (serious by default; neutral, determined, worried, sad, happy) for an understated face, and a **Setting** that is drawn as the full background in the same style. The story style asks for subtle expressions too.
+- **Speed is unchanged:** Z-Image takes the same steps whatever the style. The gain is the look, and cleaner mouth shapes.
+
+**Not tested here:** how well Z-Image Turbo follows the cartoon prompt; that is seen on the reference PC.
+
+## ADR-051 · Human-like voice: Chatterbox Turbo, built in or cloned from your samples
+
+**Status:** Accepted (24 Nov 2026).
+
+**Context.** Kokoro (ADR-046) is small and fast but sounds synthetic. Among local models, Chatterbox (Resemble AI, MIT, 0.5B) is the usual pick for natural speech with cloning: in Resemble's own blind test, listeners preferred Chatterbox Turbo over ElevenLabs. A third-party test reported about 1.8× real time on an RTX 3060, and it needs about 5 GB of VRAM, so it fits the reference PC. You chose the built-in voice plus voices cloned from your own samples, with Kokoro kept as the fast option.
+
+**Decisions.**
+- **A separate environment.** `chatterbox-tts==0.1.7` pins its own torch 2.6, transformers, gradio and more, which would clash with the sidecar's packages. The install makes its own environment with uv in `<models>/chatterbox` (Python 3.12; CUDA 12.4 PyTorch on Windows; every Windows dependency is a prebuilt wheel, checked) and downloads `ResembleAI/chatterbox-turbo` into its own Hugging Face cache, about 5 GB in all. `chatterbox_worker.py` runs there (imports only stdlib, torch and chatterbox) and talks to the sidecar through JSON lines. The sidecar never shares its stdin with it.
+- **Voices.** `hq:builtin` is Chatterbox's built-in voice. `hq:<id>` is cloned from a sample in `<userData>/voices`: any recording of 5 s or more, converted to mono 24 kHz and cut to 15 s. The picker asks you to use only your own voice or someone who agreed. Kokoro voice IDs are unchanged. `voiceIdSchema` accepts both kinds.
+- **Timings.** Chatterbox gives none, so long parts are said sentence by sentence (joined with 0.18 s pauses) and Whisper (already installed for transcription) times the words of each part. The words are matched to the script's own words (SequenceMatcher on normalised words), and misheard or missing words are interpolated between their neighbours. Without Whisper, words are spread by length over the detected speech. Each word's sounds (Kokoro's phonemiser, or letters) are spread over it for the mouth shapes. The result has the same shape as Kokoro's (`segments` with `words` and `sounds`), so templates and lip sync work unchanged.
+- **Interface.** One voice picker in both templates offers human-like voices (built in, your samples, "Add a voice sample…", "Remove sample") and fast voices. The human-like voice is the default once installed. New channels: `voicehq.status/install/cancelInstall` with event `voicehq.changed`, `voices.list/add/remove` with event `voices.changed`, and shell `dialog.chooseAudio`. Kokoro's extra stays required: it also brings Pillow (cards, mouth shapes) and the phonemiser.
+- **Every fast voice gets a human-like version (`hq:k-<voice>`).** Chatterbox has one built-in voice; others are cloned. The Kokoro voice reads a ~12 s neutral passage once (kept as `reference-<voice>.wav`), and Chatterbox clones it. The result has that voice's tone (men's voices included) with Chatterbox's delivery, and the licences stay clean. A real recording (your own, someone who agreed, or a public-domain LibriVox reading) still clones best.
+- **The mouth follows the voice's loudness.** On the reference PC, Whisper-timed words with evenly spread sounds drifted from the human-like voice (the mouth moved through a 0.7 s silence) and changed shape about 8 times a second. `timeline_from_audio` now reads the voice's loudness per frame: silence keeps the lips shut, quiet sound parts them, and peaks above the surrounding 0.3 s open them, giving about one opening per syllable. Sound timings only choose the vowel shape (round, wide, f/v) while there is sound; shapes hold at least 0.1 s and lead by one frame. Replaying the reference PC's line: closed through the silence, 3.7 changes a second instead of 8.2.
+- **Syllables, not frame loudness (and a Mouth movement slider).** Frame-rate loudness smoothed the human-like voice's syllables into a near-flat level, so the mouth moved too little. Loudness is now measured in dB 100 times a second. A syllable is a peak with a dip of a few dB before the previous one, and gliding stretches without clear dips get syllables at a natural 4–5 a second. The mouth opens around each syllable (weaker ones only part the lips), meets in deep dips (consonants) and is always shut in silence. A **Mouth movement** slider (calm … lively, default balanced) sets how readily syllables count, how long the mouth stays open, how readily the lips meet, and the minimum hold (three frames calm, two lively). On the reference PC's line: about 7 changes a second during speech, none in the silences.
+- **Timing without Whisper (revision).** When Whisper is not installed or fails, words were only spread by length, and on the reference PC's 46 s Onoda Short captions and shot cuts ran up to 1.2 s early. Numbers now count as read out (each digit about four letters), and the spread is pinned to the audio with the same pause snapping as Kokoro (ADR-054). The snapping now picks pauses with a best-path search over the whole script (expected time between matched pauses, a penalty for each punctuated word left unmatched, long pauses favoured for sentence ends), because the nearest-pause guess could take a short breath for a sentence end and pull every later sentence early. On that Short, every sentence end lands on its pause.
+- **Watermark.** Chatterbox adds Resemble's imperceptible Perth watermark to everything it says.
+- **Tests.** `RECIT_FAKE_VOICEHQ=1` uses the fake voice's tones. pytest covers word matching (including a misheard name), timing by length, sounds, sentence splitting, the 5 s sample rule, and the real install and speak code paths run against a stand-in uv and a stand-in environment (command order, worker JSON protocol, marker). Integration covers samples added, refused and removed, and test shots with the built-in and a cloned voice. End to end covers the human-like voice as the default.
+
+**Not tested here:** the real install and model (the PyTorch index and Hugging Face are blocked in the sandbox); the first real run is on the reference PC.
+
+## ADR-052 · Episodes from a brief
+
+**Status:** Accepted (25 Nov 2026).
+
+**Context.** You want to paste a full brief (art direction, colour palette, story beats, exact dialogue, narration notes) and get a finished ~1 minute episode of a series, with the same characters throughout.
+
+**Decisions.**
+- **The AI plans; Rec-It builds.** Ollama or Kimi turns the brief into an episode plan (`episodePlanSchema`): a title, a style line, a cast (id, name, gender, age and one fixed `look`), and 10–16 shots. Each shot has a speaker (narrator or character), the words spoken, one picture, the visible characters and a camera move; dialogue is kept verbatim, and each line is its own close-up of the speaker. `normaliseEpisode` makes any answer safe: unknown speakers become the narrator, unknown characters are dropped, the speaker is always visible, empty lines go, at most 18 shots.
+- **Lenient plans.** On the reference PC, Ollama's plan had one shot with an empty speaker and line, and the strict schema refused the whole episode (even after the corrective retry). Shot fields now fall back instead of failing (`catch`): an empty line drops the shot, an unknown or empty speaker becomes the narrator, a missing picture is drawn from the line, an unknown camera move gets a default, and a shot that is not even an object is dropped.
+- **Consistent characters.** Each character in a shot is drawn once by Z-Image as a reference (768×1344). Every shot with characters is then drawn by FLUX.2 Klein from those references (`-r` per character, up to two), with the prompt asking to keep face, hair, armour, clothing and colours. Shots without characters come from Z-Image. Prompts alone do not keep faces the same.
+- **Voices.** The narrator is your choice (default: the human-like Onyx). Characters are cast by gender and age from distinct voices (`castVoices`), human-like when installed. Each voice records all its lines in one go (one model load); `audio.assemble` then joins the pieces in shot order with 0.25 s gaps into one track, plus a file per piece. Words are shifted onto the track for subtitles and the transcript.
+- **Talking close-ups.** Dialogue shots get mouth shapes and blinks (ADR-049), driven by that line's piece (syllables, ADR-051), and fill their whole slot plus 0.1 s so frame rounding never leaves a gap before a dissolve.
+- **Assembly** reuses the story builder: one clip per shot edge to edge, the planned camera move (dialogue: a gentle push-in), 0.3 s dissolves, one voice track, word-by-word subtitles, and optional music. It is one undo step.
+- **Not yet:** fluid character animation (hair, clothing, sword fights) needs video models, too slow on 8 GB (ADR-048); sound effects and generated music need a local audio model, the next addition.
+- **Tests.** Unit (types); integration with a stand-in plan covering a stray speaker and character, two talking close-ups, edge-to-edge clips, captions containing the dialogue; end to end through a stand-in AI server. Sidecar: voice-track assembly and drawing from two references.
+
+**Not tested here:** real planning by Ollama (qwen3:8b) on a long brief, and real Klein drawings from references; the first real run is on the reference PC (about 10–15 minutes per episode).
+
+
+## ADR-053 · Written scripts and remembered characters
+
+**Status:** Accepted (25 Nov 2026).
+
+**Context.** The first real episode on the reference PC worked, but the main character's face, eye colour and armour changed from shot to shot. Klein was given one upper-body reference and a prompt without the character's description. Characters were also forgotten between episodes, so a ten-episode series would redesign its cast every time. You also want to write the lines yourself.
+
+**Decisions.**
+- **Written scripts.** The Episode form has an optional Script box. `parseScript` reads `NAME: line` (NARRATOR for narration), a screenplay name in capitals on its own line with the speech below it, `[picture notes]` for the next line, and plain text as narration. Round-bracket stage directions are not spoken, long narration is split into shots of about 25 words, and dialogue lines are kept whole. The AI gets the numbered lines and plans only the pictures, visible characters, camera and character looks (`"line": n` per shot). `applyScript` then speaks every line exactly as written, in order, by the character it names (`findCharacter`: id, full name or first name). A speaker the AI did not describe still gets a character. With a script the length follows the script (up to 60 shots), and the brief may be left empty.
+- **Remembered characters.** Every character an episode designs is kept in `<project> media/characters/<id>/` (`character.json` with name, gender, age, look and voice; `sheet.png`; `face.png`) by `CharacterStore`. The next episode gives the planner the remembered cast ("reuse the same id, name and look"). `withCast` then replaces any planned character with the same id or name by the remembered one, so a re-described "Hiroshi" under another id still gets his look, pictures and voice. Remembered voices are kept (`castVoices(…, fixed)`). The dialog lists the remembered characters, with Forget to have one redesigned.
+- **Stronger references.** A new character gets a full-body, front-view design sheet on white (Z-Image, 768×1344), then a 640×640 face close-up drawn by Klein from the sheet. A talking close-up is drawn from [face, sheet]; other shots use each visible character's sheet (up to two characters). The shot prompt ties each character to its pictures by number ("Hiroshi Takeda, the character in image 1 and image 2: <look>. Keep … exactly the same as in image 1 and image 2; only the pose, expression, camera and setting change"). The planner is asked for eye colour and face shape in every look. A character named in a picture description is now drawn from its references even if the AI did not list it as visible: on the reference PC, a wide shot of Hiroshi was drawn from scratch in other armour.
+- **Tests.** Unit: script parsing (names, screenplay form, notes, stage directions, narration split), applying a script over an AI plan that rewrote and skipped lines, cast reuse under a different id, kept voices, numbered references in prompts, and a picture naming a character. Integration: a second episode from a script reuses the remembered cast (one new design sheet only, the AI's new look ignored) and its subtitles match the script, then Forget.
+
+**Not tested here:** how much more consistent Klein is with the face and sheet references on the reference PC. FLUX.2 Klein 9B (more VRAM) is the next step if the 4B still drifts.
+
+## ADR-054 · Low-poly 3D Shorts, made and filmed in Rec-It
+
+**Status:** Accepted (26 Nov 2026).
+
+**Context.** You want "what if" and strange-true-story Shorts in the low-poly PS1 style of channels like LowPolyShorts (1.3 M subscribers; 99 Shorts studied, the best at 24–53 M views), made locally with Rec-It's AI. A third-party plugin (3D Kaz) does something similar, but its licence forbids redistributing modified or derived code, so it cannot be part of a GPL project. Its blocky explainer style and Claude-written scene code also don't suit a local model. Rec-It's own kit is written from scratch; only three.js (MIT) is used.
+
+**What the genre does (from the channel's top Shorts):**
+- 24–47 s long, about 2.8–3 spoken words a second.
+- No intro: the first words are the premise as a concrete image ("They would put the nuclear launch codes inside a capsule…").
+- "You" for what-ifs and body facts; past tense with numbers for true stories.
+- A new picture every 1.5–3 s, often an extreme close-up of a face or eye.
+- An escalating "but" turn, then a dry joke or meme moral, or a last word cut off so the Short loops.
+- Small yellow lower-case captions of 2–4 words in the lower third; the channel name flashes as a yellow logo in the first seconds.
+- PS1-era textured models, a recurring "you" (red jacket, jeans), suburban streets, ragdoll falls, simple effects (light beams into eyes, auras, white silhouettes).
+
+**Decisions.**
+- **Pipeline.** Topic → the AI writes a script by the genre's rules (`lowPolyScriptPrompt`), or your script is spoken as written. `splitBeats` cuts it into clauses of up to 12 words, one picture each. The narrator records it once, with word and sound times, and `beatTimes` matches beats to word times by letter share (robust to spoken numbers). The AI storyboards one shot per numbered beat from a fixed vocabulary (`lowPolyBoardPrompt`), and `normalisePlan` makes any answer safe: values from the lists, subjects that exist, a skipped beat re-shot from another distance, and never the same framing three times running. Rec-It then films it, and `storyShort` builds the Short (film as background, voice, retro captions, optional music) as one undo step. "Suggest ideas" asks the AI for ten titles in the five winning formats.
+- **Vocabulary (`@rec-it/lowpoly`).** 19 sets, 8 framings (extreme close-up … first-person "pov"), 13 actions, 13 effects (beam, glow, x-ray, frozen, silhouette, darkness, spotlight, explosion, fire, rain, sparkles, sick), 6 camera moves, 43 props (organs, planets, animals, vehicles, furniture…), and cast members (gender, age, skin, hair, top, colours, extras). The render spec is checked with zod at the IPC boundary.
+- **The kit (renderer `lowpoly/`).**
+  - Procedural canvas textures only (seeded; nothing to download or license).
+  - Blocky people with a painted face (four mouth shapes timed to the voice's sounds, blinking, wide eyes in shock, wrinkles, beards, glasses) and jointed limbs posed as a pure function of time. The skeleton is used for x-ray.
+  - Props and sets dressed behind the subject.
+  - The PS1 look: vertices snap to the low-res grid, textures are partly affine-mapped, the scene is drawn at 320/480/720 lines and enlarged with hard pixels, and colour is cut to 15-bit with a 4×4 ordered dither and slight grain.
+- **Filming.** WebGL lives in the renderer, so the backend's job emits `lowpoly.render` with the spec. The always-mounted `LowPolyHost` films each frame (big words and the channel name drawn over it) and streams JPEG batches back with `lowpoly.frames`. `LowPolyService` pipes them into FFmpeg (libx264, CRF 17) with backpressure. A renderer that goes quiet for 90 s fails the job with a clear message.
+- **Captions.** A new `retro` caption style: small yellow Poppins Bold with a dark edge, at 68% height, not upper-cased.
+- **Tests.**
+  - Unit: beats, beat timing, mouth shapes, plan repair, colours, spec.
+  - Integration: a topic Short with a stand-in renderer (beats, edge-to-edge shots, the speaker's mouth, retro captions, film as background).
+  - End to end: the real renderer films a seven-shot Short with SwiftShader and writes a contact sheet.
+  - A stills harness was used to check the look of every set, framing and effect.
+
+- **Shots follow the script (revision after the first real run).** On the reference PC, a true story (Hiroo Onoda) came out as unrelated generic shots. qwen3:8b answered in its own words (a jungle, a soldier, leaflets, a rifle), every value outside the fixed lists fell back to a default, and the default subject was the red-jacket "you". The storyboard now asks for plain words per shot: place, who, doing, objects, camera, effect. `normalisePlan` maps them onto the kit with word tables (`words.ts`: places, actions, props, framings, effects, clothes, extras and roles), and anything the AI left out is read from that beat's narration. People default to the story's own hero ("he"/"she"; "you" only when the script talks to the viewer), and roles find characters ("his old commander" finds the cast's officer). Cast looks are read from free descriptions ("young Japanese soldier, olive uniform and cap" gives uniform, olive, cap, tan skin).
+- **Models the script needs.** The kit gained 6 sets (jungle, island, battlefield, snow, ocean, courtroom), 5 actions (crouch, eat, salute, read, wave) and 14 props (rifle, sword, falling leaflets, bananas, coconuts, boat, helicopter, flag, tent, campfire, binoculars, map, radio, medal). Anything the kit still lacks becomes `m:<id>`: the AI designs it from 3–10 primitives (`lowPolyModelsPrompt`, made safe by `normaliseModel` and standing on the ground), and it is cached per project in `<project> media/lowpoly-models.json` so it is reused.
+- **Calmer camera.** Each new place opens wide. A close-up is never followed by another close-up, and extreme close-ups come at most one in four. Push-ins cover a tenth of the distance (a twentieth on faces), orbits are half as wide, and two-person medium shots frame both people. Each film is saved with `3d <stamp> plan.json` (the AI's answer and the shots built from it) for checking what happened.
+
+- **Feelings, active movement, living backgrounds (second revision).**
+  - Each shot has a `mood`: the AI's "feeling", or read from the line ("nobody" → lonely, "ended" → sad, "never surrender" → determined). Mood shapes the painted face (brow slant, half-closed tired eyes, smiles and frowns) and the body: slumped and slow when sad, hunched and glancing round when scared, chest out when proud, scratching the head when confused.
+  - New actions act out lines: look up, patrol, pick up, shake head, nod, work with the hands. Hand actions are never framed as close-ups, and a person reading or picking something up holds a sheet.
+  - Years in the narration become big words ("1944"; "a year later" gives 1945). Plural crowd words ("soldiers", "people") add background extras.
+  - Every set now moves: trees sway, the sky drifts, birds cross, leaves fall in forests and jungles, cars and passers-by pass in streets, water rolls, smoke and distant flashes rise over battlefields, dust floats indoors, fish swim, tumbleweeds roll (`life.ts`).
+  - Shots with something in the sky are staged for it. The set opens a clearing, the character turns away and looks up, and the camera sits behind their shoulder. The plane flies in from the distance so it stays inside the tall frame, and leaflets leave it as it passes. When the line names no watcher, the story's hero watches.
+  - Low angles are kept for strong moments (proud, determined, angry) and shot from knee height. "Alone" no longer switches on the spotlight effect, and clothing colours come from the words next to the garment, not from "black hair".
+
+- **Context and common sense (third revision, from a real qwen3:8b plan).** The reference PC's plan file (kept as the test fixture `fixtures/onoda-qwen.json`) showed:
+  - **No cast, "Japanese soldier" as "who".** The AI gave no cast and named nobody, so shots fell back to objects; "uniform" became a giant model. The hero is now built from the description the AI repeats and named from the script's proper name ("Hiroo Onoda"). "Who" entries resolve to the hero by description, a role or a person word, groups become a crowd, and new people ("old commander") get their own look.
+  - **Objects too early.** The AI listed objects before the script mentions them (leaflets and a map in shot 1). Objects are now kept only if named in that line or the two before it, plus the hero's kit (a soldier's rifle). Clothes and places are never objects, and the AI's own models are built only for things the script names.
+  - **Unfounded big actions.** "Sleeping on ground" for "Nobody told him" is dropped: sleeping, falling, floating, sitting, running, celebrating and shock need the line's support, and otherwise the feeling picks a calm action (lonely → patrolling). The line's own place words and feeling words win over the AI's. A line that continues a sentence keeps its people. Someone flying in is shown by the hero watching the plane.
+  - **Staging.** Beds appear only indoors, with the person's head clear of the headboard. A hand-held object with nobody to hold it lies on the ground. Two held things use both hands (a salute frees the right). A leaflet not falling from a plane is one sheet in the hand. Things at a person's feet stay in frame. Crowds stand further back. The side of the head shows hair, so a turned head no longer reads as a second face.
+  - **Text on screen.** Years are no longer written on screen. The AI's big words are used only when short and whole (its 24-character cut made "messag"). The channel name shows from the first seconds, with an opacity slider.
+  - **Sync.** Kokoro's predicted word times drifted up to about a second from its own audio (spoken numbers worst: "1944," ended at 0.61 s, said until 1.47 s). `tts.snap_to_pauses` matches every sentence and clause end to its pause in the audio and re-times the words and sounds between, so captions, cuts and mouths follow the voice.
+
+**Not yet:** a remembered "you" and cast across Shorts (as ADR-053 does for episodes), sound effects, and imported CC-BY PS1 models.
+
+## ADR-055 · Blocky 3D stories: a second look for the 3D Short pipeline
+
+**Status:** Accepted (27 Nov 2026).
+
+**Context.** You want story Shorts in the style of blocky-avatar game animation: characters made of blocks with simple cartoon faces, a camera that never stops moving, and backgrounds that follow the story. You pointed at halaloogway (4 Shorts, story answers to big questions) and zaylento.yt on TikTok (592 K followers, 25.5 M likes; "In this town…" Shorts at 0.1–8.8 M views each). The look must be our own: no game logos, names, official avatars or anyone's characters.
+
+**What the genre does (studied frame by frame):**
+- Premise first: "In this town, hussing is strictly forbidden" or a question ("Why does the worst person get the best life?"). Then one character's story, a turn, and a twist, cliffhanger or lesson. 60–170 s.
+- Blocky figures: block legs, torso and arms, a rounded block head with a flat cartoon face (dot eyes, a smile, simple mood faces). Often classic yellow skin, sometimes natural skin tones.
+- Bright, smooth plastic sets with soft shadows (homes, bedrooms, streets, gyms, stages, labs) and warm lights. Close shots have a blurred background.
+- A new angle every 1–3 s, and the camera drifts, pushes or orbits in every shot.
+- Captions are one word at a time, big and yellow with a thick black edge, in the middle of the lower half.
+
+**Decision.** Blocky is a second look (`style: 'blocky'`) for the ADR-054 pipeline rather than a separate one. Script, beats, storyboard, planner and voice timing are shared, so every low-poly fix carries over: grounded props, the hero kept in the scene, places from the words, the channel name and its opacity, and pause-snapped timing.
+- **Writing.** `lowPolyScriptPrompt`/`lowPolyIdeasPrompt` take a style. The blocky rules ask for the "In this town…" or big-question hook, one main character, changing places, family-friendly content and no brand or game names.
+- **Look switch.** Renderer `lowpoly/style.ts` sets the look once per film:
+  - `mat()` makes smooth standard (plastic) materials.
+  - Textures are filtered, with only a trace of grain.
+  - `Person` builds a blocky body. It keeps the same joints and height, so every action and camera framing still works; poses scale from the hip height.
+- **Faces.** The rounded head carries a cartoon face drawn over it (128 px): blinking, four speech mouths, and mood faces and brows. Beards and glasses are drawn too. An option gives everyone the classic yellow skin; it is on by default.
+- **Camera** (blocky only):
+  - Shots over 3.4 s cut to a closer angle halfway, except when that would lose a second person or things at the feet.
+  - Every shot drifts and floats gently, and moves are about 2.4× larger.
+  - Close-ups step back to frame head and shoulders.
+  - Sleeping people are seen from above and beside, in both looks; the old camera looked into the bed frame.
+- **Picture** (`blocky-post.ts`):
+  - Drawn at the chosen quality (Full HD 1920 lines by default, Fast 1280 or Draft 720, scaled smoothly to the frame) with 4× multisampling.
+  - Soft PCF shadows from the set's sun, plus a soft fill light.
+  - ACES tone curve.
+  - Depth of field focused on the shot's subject, with blur growing as the camera gets closer.
+  - A light grade: saturation, vignette, and the shot's tint and flashes.
+- **Captions.** New style `game` ("Game yellow"): Montserrat Black in yellow with a thick black edge, one word at a time with a pop, at 62 % height.
+- **Make a Short.** A "Blocky 3D story" card reuses the low-poly form with the blocky hint, ideas, length (up to 90 s), a quality choice, a classic-skin tick box and game captions.
+
+**Tests.** pytest is unchanged. Vitest covers the blocky prompts and an integration run: blocky look, classic skin, the style reaching the script writer, the planner's shots and game captions. End to end makes a blocky Short in the real renderer and saves a contact sheet. Stills from the harness were checked against the reference Shorts.
+
+**Revision (27 Nov 2026): understanding the story.** Your first blocky Short (the Leo doomscrolling script) had almost nothing to do with its script. The plan file showed why:
+- The hero became "Him", because single names were not recognised.
+- People, friends, the ceiling, the floor and a window were designed as strange models: the floating blocks.
+- The AI put a glow on every shot: the blue glitches.
+- "Scrolling" became standing still, and the bed was placed through him.
+- There was no idea of Leo growing.
+
+Changes:
+- **Names and objects.** Single names count ("Leo"; days, months and nationalities do not). The AI's objects drop people, groups, body parts, room parts and times. An effect needs words in the line itself.
+- **New actions:** `usePhone`, `lie` (awake in bed, a phone held over the face), `sitFloor` and `lookDown`.
+  - Postures in the line win ("scrolled in bed" lies in bed).
+  - Lines map to actions: "battery died" is a shock, not a fall; sitting outdoors with no seat is on the ground.
+  - Lying brings a bed indoors. A meal brings a table and a bowl, with the person sitting at it.
+- **Story state** (`ShotSpec.sizes`): each person's height carries from shot to shot.
+  - Growth words grow the person the line is about. "Touching the ceiling" and "taller than the houses" set a height; shrink words reset it.
+  - A story whose rule is growing grows its hero a little whenever they do the thing.
+  - Legs grow when the script says legs. Thighs and shins stretch and the knees move, so joints still bend cleanly.
+  - Indoors a standing giant stops at the ceiling.
+  - Rendered growth animates during the shot.
+- **Crowds.** Lines about people in general ("Most people only scroll at lunch") show a crowd doing it, not the hero.
+  - "Friends", "classmates" and "the whole town" make a crowd (7 for the whole town). "Them" keeps the last crowd.
+  - `crowdAction` comes from the line (waving, cheering, phones) or looks up at a giant.
+  - Around a giant the crowd stands in a ring at his feet; around a sitting giant, at the sides. Classrooms always have pupils at their desks.
+- **Night** (`ShotSpec.time`): a dark sky with stars and a moon, moonlight, lit windows and street lamps, a night view through room windows, and a phone screen lighting the face.
+- **No glitches.**
+  - Set furniture where a person stands is removed. Big props stand clear beside and behind. Birds on a giant perch on his shoulders.
+  - The camera never films through anything: a ray from the subject to the camera (with up-to-date world matrices, as moving cars once fooled it) swings the camera round to a clear angle, and pulls in only when none is clear.
+  - Indoors the camera stays under the ceiling.
+  - Small set pieces right in front of the lens are hidden.
+- **Giant framing.**
+  - Distances grow with height.
+  - Low angles are filmed from behind the people at the giant's feet. A giant with a crowd faces the camera across the street.
+  - "Looked down" is filmed over the giant's shoulder.
+  - Lines about height are wide.
+- **Brighter sets.**
+  - Blocky colours are richer, and the sky is a game blue.
+  - The street has colourful houses, fences, flower beds and parked cars in several colours.
+  - Lying people are filmed from beside the bed, and the bedroom drops its own bed when the shot brings one.
+- **The storyboard prompt** spells out every field. It adds `holding`, `crowdDoing`, `size` and `time`, and seven rules: common sense, story state carries on, general lines show a crowd, nothing before it is mentioned, nothing floats or goes through anything, camera variety, and cast descriptions. It ends with a worked example. The planner reads `holding` and `crowdDoing`.
+
+**Tests.** The real Leo plan is a fixture. Its test checks:
+- the named hero, no models and no effects;
+- every line acted out: crowd scrolling, lying in bed at night, breakfast at a table, a wide shot at the ceiling, sitting on the classroom floor, the teacher, birds, friends looking up from a low angle, the battery shock at night, looking down, the waving town, sitting on the street;
+- that Leo's height never shrinks, reaches the ceiling, then 8.5 m with legs.
+
+Stills of all 18 shots were checked.
+
+**Not yet:** signs and banners written from the story ("NO HUSSING!"), confetti and sparkle effects tied to the words, character accessories beyond hats, caps and helmets (headscarves, kufis), and fully lip-synced dialogue scenes.
