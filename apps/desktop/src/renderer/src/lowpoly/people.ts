@@ -389,10 +389,26 @@ export class Person {
   readonly handR = new THREE.Group();
   readonly handL = new THREE.Group();
   readonly skeleton = new THREE.Group();
-  readonly height: number;
+  height: number;
   private readonly face: THREE.MeshLambertMaterial;
-  /** Height of the hip joints standing (poses scale from it). */
-  private readonly hipY: number;
+  /** Height of the hip joints standing (poses scale from it); grows with long legs. */
+  private hipY: number;
+  /** The hip height of normal legs. */
+  private baseHip = 0.92;
+  /** Height with normal legs and body (before any growing). */
+  private normalHeight = 1.78;
+  /** The leg pieces, stretched for long legs without bending the joints out of shape. */
+  private readonly legParts: {
+    thigh: THREE.Mesh;
+    knee: THREE.Group;
+    shin: THREE.Mesh;
+    foot: THREE.Mesh;
+    kneeY: number;
+    footY: number;
+  }[] = [];
+  /** Holding a phone: the hands hold it up and the eyes look down at it. */
+  phone = false;
+  private bodyScale = 1;
   private readonly faces = new Map<string, THREE.Texture>();
   private readonly blinkSeed: number;
 
@@ -408,6 +424,9 @@ export class Person {
       this.root.scale.setScalar(c.age === 'child' ? 0.72 : 1);
       if (c.age === 'child') this.head.scale.setScalar(1.2);
       this.height = 1.78 * (c.age === 'child' ? 0.72 : 1);
+      this.baseHip = 0.68;
+      this.normalHeight = this.height;
+      this.bodyScale = c.age === 'child' ? 0.72 : 1;
       this.root.traverse((o) => {
         if ((o as THREE.Mesh).isMesh) o.userData.person = c.id;
       });
@@ -438,11 +457,15 @@ export class Person {
       hip.position.set(x, 0, 0);
       this.hips.add(hip);
       const dressLegs = c.top === 'dress' ? skinMat : legs;
-      hip.add(box(0.17, 0.46, 0.18, legs, -0.23));
+      const thigh = box(0.17, 0.46, 0.18, legs, -0.23);
+      hip.add(thigh);
       knee.position.y = -0.46;
       hip.add(knee);
-      knee.add(box(0.15, 0.42, 0.16, dressLegs, -0.21));
-      knee.add(box(0.16, 0.08, 0.28, shoe, -0.44).translateZ(0.05));
+      const shin = box(0.15, 0.42, 0.16, dressLegs, -0.21);
+      knee.add(shin);
+      const foot = box(0.16, 0.08, 0.28, shoe, -0.44).translateZ(0.05);
+      knee.add(foot);
+      this.legParts.push({ thigh, knee, shin, foot, kneeY: -0.46, footY: -0.44 });
     }
     // Torso and arms.
     this.hips.add(this.torso);
@@ -585,6 +608,8 @@ export class Person {
     this.root.scale.setScalar(k);
     if (c.age === 'child') this.head.scale.setScalar(1.25);
     this.height = 1.78 * k;
+    this.normalHeight = this.height;
+    this.bodyScale = k;
     this.root.traverse((o) => {
       if ((o as THREE.Mesh).isMesh) o.userData.person = c.id;
     });
@@ -620,12 +645,15 @@ export class Person {
     ] as const) {
       hip.position.set(x, 0, 0);
       this.hips.add(hip);
-      const thigh = c.top === 'dress' ? sleeve : legs;
-      hip.add(rbox(0.32, 0.37, 0.33, thigh, -0.17));
+      const thigh = rbox(0.32, 0.37, 0.33, c.top === 'dress' ? sleeve : legs, -0.17);
+      hip.add(thigh);
       knee.position.y = -0.34;
       hip.add(knee);
-      knee.add(rbox(0.31, 0.3, 0.32, c.top === 'dress' ? skinMat : legs, -0.13));
-      knee.add(rbox(0.32, 0.07, 0.34, shoe, -0.305));
+      const shin = rbox(0.31, 0.3, 0.32, c.top === 'dress' ? skinMat : legs, -0.13);
+      knee.add(shin);
+      const foot = rbox(0.32, 0.07, 0.34, shoe, -0.305);
+      knee.add(foot);
+      this.legParts.push({ thigh, knee, shin, foot, kneeY: -0.34, footY: -0.305 });
     }
     this.hips.add(this.torso);
     const front = mat('#ffffff', { map: topTexture(c) });
@@ -729,6 +757,42 @@ export class Person {
         ).translateY(0.4),
       );
     return face;
+  }
+
+  /** Both hands up at the chest holding a phone, the eyes down at it, a thumb scrolling. */
+  private holdPhone(t: number): void {
+    // Upper arms forward and in, forearms up: both hands meet in front of the chest.
+    const b = blocky();
+    this.shoulderR.rotation.x = b ? -0.75 : -0.55;
+    this.shoulderR.rotation.z = b ? -0.7 : -0.3;
+    this.elbowR.rotation.x = -1.1 + Math.sin(t * 9) * 0.04;
+    this.shoulderL.rotation.x = b ? -0.7 : -0.5;
+    this.shoulderL.rotation.z = b ? 0.7 : 0.3;
+    this.elbowL.rotation.x = -1.05;
+    this.head.rotation.x = 0.42;
+  }
+
+  /**
+   * Makes the person a given height (metres, feet to the top of the head): by stretching the legs
+   * (thighs, shins and the knees between them, so joints still bend cleanly) or by scaling the
+   * whole body. Cheap enough to call every frame while someone grows.
+   */
+  setHeight(metres: number, legs: boolean): void {
+    const extra = metres - this.normalHeight;
+    let k = 1;
+    let body = 1;
+    if (legs) k = Math.max(0.4, 1 + extra / (this.baseHip * this.bodyScale));
+    else body = Math.max(0.2, metres / this.normalHeight);
+    for (const p of this.legParts) {
+      p.thigh.scale.y = k;
+      p.knee.position.y = p.kneeY * k;
+      p.shin.scale.y = k;
+      // The foot keeps its size and moves down with the end of the shin.
+      p.foot.position.y = p.footY * (k - 1);
+    }
+    this.hipY = this.baseHip * k;
+    this.root.scale.setScalar(this.bodyScale * body);
+    this.height = legs ? this.normalHeight + this.baseHip * this.bodyScale * (k - 1) : metres;
   }
 
   private faceTex(eyes: Eyes, mouth: number, mood: Mood = 'neutral'): THREE.Texture {
@@ -882,12 +946,56 @@ export class Person {
         break;
       }
       case 'sit': {
-        this.hips.position.y = this.hipY * 0.54;
+        // The seat is at chair height whatever the legs; long shins reach forward to the floor.
+        const seat = this.baseHip * 0.54;
+        this.hips.position.y = seat;
         this.hipL.rotation.x = this.hipR.rotation.x = -1.5;
-        this.kneeL.rotation.x = this.kneeR.rotation.x = 1.5;
+        const shin = Math.abs(this.legParts[0]?.kneeY ?? 0.4) * (this.hipY / this.baseHip);
+        const reach = Math.acos(Math.min(1, seat / Math.max(0.01, shin)));
+        this.kneeL.rotation.x = this.kneeR.rotation.x = 1.5 - reach;
         this.shoulderL.rotation.x = this.shoulderR.rotation.x = -0.4;
         this.elbowL.rotation.x = this.elbowR.rotation.x = -0.5;
         this.head.rotation.y = s(t * 0.7) * 0.1;
+        break;
+      }
+      case 'sitFloor': {
+        // On the floor, legs straight out in front, leaning back on the hands.
+        this.hips.position.y = this.baseHip * 0.22;
+        this.hipL.rotation.x = this.hipR.rotation.x = -1.52;
+        this.hipL.rotation.z = -0.06;
+        this.hipR.rotation.z = 0.06;
+        this.torso.rotation.x = -0.12;
+        this.shoulderL.rotation.x = this.shoulderR.rotation.x = 0.45;
+        arms(0.25, 0.25);
+        this.head.rotation.y = s(t * 0.6) * 0.12;
+        break;
+      }
+      case 'lie': {
+        // Awake on the back; a phone is held up over the face.
+        this.root.rotation.x = -Math.PI / 2;
+        this.root.position.y += 0.15;
+        if (this.phone) {
+          this.shoulderR.rotation.x = -1.25;
+          this.elbowR.rotation.x = -0.75 + s(t * 9) * 0.03;
+          this.shoulderL.rotation.x = -1.1;
+          this.elbowL.rotation.x = -0.9;
+          this.head.rotation.x = 0.2;
+        } else {
+          arms(0.15, 0.15);
+          this.head.rotation.y = s(t * 0.5) * 0.25;
+        }
+        break;
+      }
+      case 'usePhone': {
+        this.holdPhone(t);
+        this.head.rotation.y = s(t * 0.7) * 0.05;
+        break;
+      }
+      case 'lookDown': {
+        arms(0.1, 0.1);
+        this.torso.rotation.x = 0.22;
+        this.head.rotation.x = 0.65;
+        this.head.rotation.y = s(t * 0.8) * 0.15;
         break;
       }
       case 'sleep': {
@@ -1038,8 +1146,11 @@ export class Person {
         break;
       }
     }
+    // A phone in the hand is looked at, whatever the legs are doing.
+    if (this.phone && ['sit', 'sitFloor', 'idle', 'walk', 'think', 'crouch'].includes(action))
+      this.holdPhone(t);
     // The feeling shapes the whole body.
-    if (!['fall', 'sleep', 'float'].includes(action)) {
+    if (!['fall', 'sleep', 'float', 'lie'].includes(action)) {
       switch (mood) {
         case 'sad':
         case 'lonely':

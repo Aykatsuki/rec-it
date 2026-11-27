@@ -96,7 +96,11 @@ export function buildShot(
 ): BuiltShot {
   const r = rng(spec.seed + 11);
   const flies = [spec.subject, ...spec.props].some((p) => FLYERS.has(p));
-  const set = buildSet(spec.set, spec.seed, { clearing: flies });
+  const set = buildSet(spec.set, spec.seed, {
+    clearing: flies,
+    night: spec.time === 'night',
+    ownBed: spec.action === 'sleep' || spec.action === 'lie',
+  });
   const { scene } = set;
   const setObjects = [...scene.children];
   const camera = new THREE.PerspectiveCamera(40, 9 / 16, 0.03, 400);
@@ -109,10 +113,14 @@ export function buildShot(
   const mainCast = member(spec.subject);
   const pov = spec.framing === 'pov';
   // Looking at something in the sky: we watch over their shoulder.
+  // A giant with people at their feet faces the camera across the street, the town behind.
+  const giantWithCrowd = (spec.sizes[spec.subject]?.height ?? 0) > 3 && spec.crowd > 0;
   const facing =
-    pov || (flies && spec.framing !== 'object')
+    pov || (flies && spec.framing !== 'object' && !giantWithCrowd)
       ? Math.PI
-      : [0, 0, 0.45, -0.45, 1.25][Math.floor(r() * 5)]!;
+      : giantWithCrowd
+        ? 0
+        : [0, 0, 0.45, -0.45, 1.25][Math.floor(r() * 5)]!;
   const subject = mainCast ? new Person(mainCast, spec.seed) : null;
   if (subject) {
     people.set(mainCast!.id, subject);
@@ -140,15 +148,67 @@ export function buildShot(
     };
   });
 
+  // Story state: how tall each person is (growing during the shot when the story says so). A
+  // standing giant indoors stops at the ceiling ("his head was touching the kitchen ceiling").
+  const lyingDown = ['sleep', 'lie', 'sitFloor', 'sit'].includes(spec.action);
+  const sized = [...people].flatMap(([id, person]) => {
+    const size = spec.sizes[id];
+    if (!size) return [];
+    const cap = set.indoor && !(person === subject && lyingDown) ? 2.86 : 30;
+    const to = Math.min(cap, size.height);
+    const from = Math.min(cap, size.from);
+    person.setHeight(from, size.legs);
+    return [{ person, from, to, legs: size.legs }];
+  });
+  const growTo = (t: number) => {
+    const k = smooth(t / Math.max(0.3, duration * 0.75));
+    for (const x of sized)
+      if (x.from !== x.to || t === 0) x.person.setHeight(x.from + (x.to - x.from) * k, x.legs);
+  };
+  growTo(duration);
+  // How much taller than normal the subject stands (sitting giants are at everyone's level).
+  const tall =
+    subject && !['sitFloor', 'sit', 'lie', 'sleep'].includes(spec.action)
+      ? subject.height / 1.78
+      : 1;
+  const giantSitting = !!subject && tall === 1 && subject.height > 3;
+  // A phone named in the shot is in the subject's hands, looked at.
+  if (subject && spec.props.includes('phone')) {
+    subject.phone = true;
+    // At night the screen lights the face.
+    if (spec.time === 'night') {
+      const screenLight = new THREE.PointLight('#a8d4ff', 3, 2.2, 1.5);
+      screenLight.position.set(0, 0.05, 0.15);
+      subject.handR.add(screenLight);
+    }
+  }
+
   // Furniture the action needs.
   let base = new THREE.Vector3();
+  const flatOut = (v: THREE.Vector3) => v.applyAxisAngle(new THREE.Vector3(0, 1, 0), facing);
+  const atTable = !!subject && spec.action === 'sit' && spec.props.includes('table');
   if (subject && spec.action === 'sit') {
     const chair = makeProp('chair').object;
     chair.position.set(0, 0, -0.12);
     chair.rotation.y = facing;
     scene.add(chair);
   }
-  if (subject && spec.action === 'sleep') {
+  if (atTable) {
+    // Breakfast: the table in front, the bowl on it within reach.
+    const table = makeProp('table').object;
+    table.position.copy(flatOut(new THREE.Vector3(0, 0, 0.62)));
+    table.rotation.y = facing;
+    if (blocky()) table.scale.y = 0.78;
+    scene.add(table);
+    if (spec.props.includes('bowl')) {
+      const bowl = makeProp('bowl').object;
+      bowl.position.copy(flatOut(new THREE.Vector3(-0.12, 0, 0.48)));
+      bowl.position.y = set.tableTop * (blocky() ? 0.78 : 1) + 0.01;
+      bowl.scale.setScalar(blocky() ? 1.6 : 1);
+      scene.add(bowl);
+    }
+  }
+  if (subject && (spec.action === 'sleep' || spec.action === 'lie')) {
     if (set.indoor || spec.props.includes('bed')) {
       // The bed runs from the feet (here) to past the head; the headboard stays clear of it.
       const bed = makeProp('bed').object;
@@ -174,7 +234,43 @@ export function buildShot(
   let holdingPaper = false;
   let nearIndex = 0;
   propIds.forEach((id, i) => {
-    if (id === 'bed' && spec.action === 'sleep') return;
+    if (id === 'bed' && (spec.action === 'sleep' || spec.action === 'lie')) return;
+    if (atTable && (id === 'table' || id === 'bowl')) return;
+    // A bowl with nobody at a table stands on the table of the set, or the ground.
+    if (id === 'bowl' && !atTable && subject) {
+      const bowl = makeProp('bowl').object;
+      bowl.position.copy(near(0.45, 0.5));
+      bowl.scale.setScalar(1.5);
+      scene.add(bowl);
+      return;
+    }
+    // Birds on a giant perch on the shoulders (and one more circles the head).
+    if (id === 'bird' && subject && tall > 1.7) {
+      for (const [k, shoulder] of [subject.shoulderL, subject.shoulderR].entries()) {
+        const b = makeProp('bird').object;
+        b.scale.setScalar(1.4 / Math.max(1, subject.root.scale.x));
+        b.position.set(0, 0.12, 0);
+        b.rotation.y = k ? -0.4 : 0.4;
+        shoulder.add(b);
+        animated.push((t) => {
+          b.position.y = 0.12 + Math.abs(Math.sin(t * 3 + k)) * 0.03;
+          b.rotation.z = Math.sin(t * 2 + k) * 0.12;
+        });
+      }
+      const flier = makeProp('bird').object;
+      flier.scale.setScalar(2.2);
+      scene.add(flier);
+      animated.push((t) => {
+        const head = subject.point('eyes');
+        flier.position.set(
+          head.x + Math.cos(t * 1.4) * 1.6,
+          head.y + 0.6 + Math.sin(t * 2.8) * 0.2,
+          head.z + Math.sin(t * 1.4) * 1.6,
+        );
+        flier.rotation.y = -t * 1.4;
+      });
+      return;
+    }
     // A leaflet on the ground story-wise is one sheet in the hand, not a falling cloud.
     if (id === 'paper' && subject && !flies && held < 2) {
       const hand =
@@ -264,6 +360,11 @@ export function buildShot(
         -4 - p.size * 0.4,
       );
       o.rotation.y = id === 'plane' ? Math.PI / 2 : r() * 0.6 - 0.3;
+    } else if (subject && p.size > 0.9) {
+      // Furniture and big things stand clear of the person, beside and a little behind.
+      const side = i % 2 ? -1 : 1;
+      o.position.copy(near(side * (0.9 + p.size * 0.6), -0.6));
+      o.rotation.y = facing + side * 0.3;
     } else if (subject) {
       const k = nearIndex++;
       o.position.copy(near((k % 2 ? -1 : 1) * 0.55, 0.5 + k * 0.1));
@@ -278,37 +379,114 @@ export function buildShot(
 
   // A crowd in the background: villagers, soldiers, passers-by.
   const crowdLook = ['battlefield', 'jungle', 'island'].includes(spec.set);
-  const crowd = Array.from({ length: spec.crowd }, (_, i) => {
-    const look: CastMember = {
-      id: `extra${i}`,
-      name: 'Extra',
-      gender: r() > 0.45 ? 'male' : 'female',
-      age: r() > 0.8 ? 'old' : 'adult',
-      skin: (['pale', 'light', 'tan', 'brown', 'dark'] as const)[Math.floor(r() * 5)]!,
-      hair: (['short', 'long', 'curly', 'bald'] as const)[Math.floor(r() * 4)]!,
-      hairColor: ['#2a1f18', '#4a3324', '#8a6a3a', '#1c1c1c'][Math.floor(r() * 4)]!,
-      top: crowdLook
-        ? 'uniform'
-        : (['tshirt', 'jacket', 'hoodie', 'sweater', 'suit'] as const)[Math.floor(r() * 5)]!,
-      topColor: crowdLook
-        ? '#5a6a3a'
-        : ['#4a6fa5', '#a3342a', '#3f7a3a', '#d9b53a', '#5e3c7a', '#7a7c80'][Math.floor(r() * 6)]!,
-      bottomColor: ['#3a3f4a', '#3b5a8c', '#5a4a34'][Math.floor(r() * 3)]!,
-      extra: crowdLook ? 'cap' : 'none',
-    };
-    const person = new Person(look, spec.seed + 50 + i);
-    const side = i % 2 ? -1 : 1;
-    const pos = new THREE.Vector3(side * (2.2 + (i >> 1) * 1.4 + r() * 0.8), 0, -5 - r() * 4);
-    const walking = r() > 0.5;
-    const facingC = walking ? (side * -Math.PI) / 2 : (r() - 0.5) * 0.8;
-    scene.add(person.root);
-    return {
-      person,
-      pos,
-      facing: facingC,
-      action: (walking ? 'walk' : spec.action === 'lookUp' ? 'lookUp' : 'idle') as Action,
-    };
-  });
+  const crowd: { person: Person; pos: THREE.Vector3; facing: number; action: Action }[] =
+    Array.from({ length: spec.crowd }, (_, i) => {
+      const look: CastMember = {
+        id: `extra${i}`,
+        name: 'Extra',
+        gender: r() > 0.45 ? 'male' : 'female',
+        age: r() > 0.8 ? 'old' : 'adult',
+        skin: (['pale', 'light', 'tan', 'brown', 'dark'] as const)[Math.floor(r() * 5)]!,
+        hair: (['short', 'long', 'curly', 'bald'] as const)[Math.floor(r() * 4)]!,
+        hairColor: ['#2a1f18', '#4a3324', '#8a6a3a', '#1c1c1c'][Math.floor(r() * 4)]!,
+        top: crowdLook
+          ? 'uniform'
+          : (['tshirt', 'jacket', 'hoodie', 'sweater', 'suit'] as const)[Math.floor(r() * 5)]!,
+        topColor: crowdLook
+          ? '#5a6a3a'
+          : ['#4a6fa5', '#a3342a', '#3f7a3a', '#d9b53a', '#5e3c7a', '#7a7c80'][
+              Math.floor(r() * 6)
+            ]!,
+        bottomColor: ['#3a3f4a', '#3b5a8c', '#5a4a34'][Math.floor(r() * 3)]!,
+        extra: crowdLook ? 'cap' : 'none',
+      };
+      const person = new Person(look, spec.seed + 50 + i);
+      const side = i % 2 ? -1 : 1;
+      const doing = spec.crowdAction;
+      scene.add(person.root);
+      if (subject && (tall > 1.7 || giantSitting)) {
+        // At a giant's feet: a half ring in front, everyone facing up at them. A sitting giant's
+        // legs reach out in front, so then they stand round the sides, chatting.
+        const a = giantSitting
+          ? (i % 2 ? -1 : 1) * (1.15 + (i >> 1) * 0.3)
+          : (i / Math.max(1, spec.crowd - 1) - 0.5) * 2.2;
+        const d = giantSitting ? 1.6 + (i % 3) * 0.6 : 1.6 + tall * 0.35 + (i % 3) * 0.7;
+        const pos = flatOut(new THREE.Vector3(Math.sin(a) * d, 0, Math.cos(a) * d));
+        return {
+          person,
+          pos,
+          facing: Math.atan2(-pos.x, -pos.z) + (r() - 0.5) * 0.3,
+          action: (giantSitting && ['idle', 'lookUp'].includes(doing)
+            ? 'talk'
+            : doing === 'idle'
+              ? 'lookUp'
+              : doing) as Action,
+        };
+      }
+      if (doing === 'usePhone') {
+        // Everyone on their phones: a loose group in front of the set, heads down.
+        person.phone = true;
+        const phone = makeProp('phone').object;
+        person.handR.add(phone);
+        const pos = new THREE.Vector3(
+          side * (0.6 + (i >> 1) * 1.3) + (r() - 0.5) * 0.4,
+          0,
+          -0.5 - (i % 3) * 1.4,
+        );
+        return { person, pos, facing: (r() - 0.5) * 1.2, action: 'usePhone' as Action };
+      }
+      const pos = new THREE.Vector3(side * (2.2 + (i >> 1) * 1.4 + r() * 0.8), 0, -5 - r() * 4);
+      const walking = doing === 'idle' && r() > 0.5;
+      const facingC = walking ? (side * -Math.PI) / 2 : (r() - 0.5) * 0.8;
+      return {
+        person,
+        pos,
+        facing: facingC,
+        action: (walking
+          ? 'walk'
+          : doing !== 'idle'
+            ? doing
+            : spec.action === 'lookUp'
+              ? 'lookUp'
+              : 'idle') as Action,
+      };
+    });
+  // A classroom has pupils at their desks, facing the board.
+  if (spec.set === 'classroom' && !spec.crowd)
+    (
+      [
+        [-2, -1.05],
+        [2, -1.05],
+        [-2, -3.25],
+        [2, -3.25],
+      ] as [number, number][]
+    ).forEach(([x, z], i) => {
+      const look: CastMember = {
+        id: `pupil${i}`,
+        name: 'Pupil',
+        gender: i % 2 ? 'female' : 'male',
+        age: 'child',
+        skin: (['light', 'tan', 'brown', 'pale'] as const)[i]!,
+        hair: (['short', 'ponytail', 'curly', 'long'] as const)[i]!,
+        hairColor: ['#2a1f18', '#8a6a3a', '#1c1c1c', '#4a3324'][i]!,
+        top: 'hoodie',
+        topColor: ['#d94a4a', '#4a8ad9', '#4ab06a', '#d9b53a'][i]!,
+        bottomColor: '#3a3f4a',
+        extra: 'none',
+      };
+      const person = new Person(look, spec.seed + 90 + i);
+      scene.add(person.root);
+      crowd.push({
+        person,
+        pos: new THREE.Vector3(x, 0, z),
+        facing: Math.PI,
+        action: 'sit' as Action,
+      });
+      const chair = makeProp('chair').object;
+      chair.position.set(x, 0, z - 0.12 * -1);
+      chair.rotation.y = Math.PI;
+      scene.add(chair);
+    });
 
   // Reading or picking something up: a sheet of paper in the hand.
   if (
@@ -541,7 +719,67 @@ export function buildShot(
   const shake = spec.camera === 'shake' || effect === 'explosion';
 
   let focusDist = 5;
+  // Set furniture never stands where a person is (a bed through the legs, a table in a body).
+  {
+    const spots = [
+      base.clone(),
+      ...otherSpots.map((o) => o.pos),
+      ...crowd.filter((c) => c.action !== 'sit').map((c) => c.pos),
+    ];
+    const size = new THREE.Vector3();
+    for (const o of setObjects) {
+      if ((o as THREE.Light).isLight || o === set.sky || !o.parent) continue;
+      const box = new THREE.Box3().setFromObject(o);
+      box.getSize(size);
+      if (size.x > 3.5 || size.z > 3.5 || size.y > 5 || box.isEmpty()) continue;
+      box.expandByScalar(0.3);
+      if (
+        spots.some((p) => p.x > box.min.x && p.x < box.max.x && p.z > box.min.z && p.z < box.max.z)
+      )
+        scene.remove(o);
+    }
+  }
+
+  // What can stand between the camera and its subject (not people, not the sky, not glows).
+  let blockers: THREE.Object3D[] | null = null;
+  const ray = new THREE.Raycaster();
+  const blockersNow = () => {
+    if (blockers) return blockers;
+    const personal = new Set<THREE.Object3D>();
+    for (const p of [...people.values(), ...crowd.map((c) => c.person)])
+      p.root.traverse((o) => personal.add(o));
+    blockers = [];
+    scene.traverse((o) => {
+      const mesh = o as THREE.Mesh;
+      if (!mesh.isMesh || personal.has(o) || !o.visible) return;
+      const m = mesh.material as THREE.Material;
+      if (
+        Array.isArray(m) ||
+        m.transparent ||
+        m.side === THREE.BackSide ||
+        (m as THREE.MeshBasicMaterial).blending === THREE.AdditiveBlending
+      )
+        return;
+      blockers!.push(o);
+    });
+    return blockers;
+  };
+
+  // Small set pieces that may end up right in front of the camera.
+  let clutterList: { object: THREE.Object3D; box: THREE.Box3 }[] | null = null;
+  const clutter = () => {
+    if (clutterList) return clutterList;
+    scene.updateMatrixWorld();
+    const size = new THREE.Vector3();
+    clutterList = setObjects
+      .filter((o) => o.parent && !(o as THREE.Light).isLight && o !== set.sky)
+      .map((o) => ({ object: o, box: new THREE.Box3().setFromObject(o) }))
+      .filter((c) => !c.box.isEmpty() && c.box.getSize(size).length() < 12);
+    return clutterList;
+  };
+
   const update = (t: number, frame: number) => {
+    growTo(t);
     const at = frozen ? 0.4 : t;
     set.update?.(at);
     for (const p of props) p.update?.(at);
@@ -629,10 +867,19 @@ export function buildShot(
           dist = 6;
           break;
         case 'lowAngle':
-          // From about knee height, never from under the feet.
+          // From about knee height, never from under the feet. A giant is seen from the
+          // ground, where the people at their feet stand.
           focus = subject.point('chest').add(new THREE.Vector3(0, 0.2, 0));
           dist = 2.6;
           lift = -0.55;
+          if (tall > 1.7) {
+            // From behind the people at the giant's feet: them below, the giant above.
+            focus = subject.root.position
+              .clone()
+              .add(new THREE.Vector3(0, subject.height * 0.52, 0));
+            dist = subject.height * 1.5;
+            lift = 1.5 - focus.y;
+          }
           break;
         case 'object':
           focus = focusProp
@@ -651,9 +898,27 @@ export function buildShot(
         dist *= framing === 'closeUp' ? 1.75 : 1.5;
         focus.y -= 0.12;
       } else if (lively && framing === 'medium') dist *= 1.2;
+      // A giant's close shots look down a little, so the town is behind them, not empty sky.
+      if (
+        tall > 1.7 &&
+        action !== 'usePhone' &&
+        ['medium', 'closeUp', 'extremeCloseUp'].includes(framing)
+      )
+        lift = Math.max(lift, dist * 0.22);
+      // A giant sitting among people: wide enough to see everyone round them.
+      if (giantSitting && spec.crowd > 0) {
+        focus = subject.point('chest');
+        dist = 6.5;
+        lift = 0.8;
+      }
+      // Taller people need more room in the frame.
+      if (tall > 1.25 && ['wide', 'medium', 'overhead'].includes(framing)) {
+        dist *= tall * (framing === 'medium' ? 0.75 : 1);
+        lift *= tall;
+      }
       // Someone lying down is seen from above and beside, never from the feet (that looked
       // into the bed frame or a wall).
-      if (action === 'sleep' && framing !== 'object') {
+      if ((action === 'sleep' || action === 'lie') && framing !== 'object') {
         lift = dist * 0.85;
         dist *= 0.7;
       }
@@ -691,6 +956,8 @@ export function buildShot(
           ? 1 - amount / 2 + amount * k
           : 1 - (lively ? 0.08 : 0.02) * k;
     let az = (subject ? facing : 0) * (framing === 'wide' ? 0.5 : 1);
+    // Someone lying down is filmed from beside the bed, where the face is seen.
+    if (subject && (action === 'sleep' || action === 'lie')) az += 0.95;
     if (move === 'orbit') az += (k - 0.5) * (lively ? 1.1 : 0.5);
     else if (lively) az += (k - 0.5) * (recut ? -0.3 : 0.35);
     const d = dist * scale;
@@ -708,6 +975,19 @@ export function buildShot(
       camera.lookAt(focus);
       if (!camera.children.length && mainCast) camera.add(povArm(mainCast));
       if (!camera.parent) scene.add(camera);
+    } else if (framing === 'overhead' && subject && tall > 1.7 && action === 'lookDown') {
+      // Over a giant's shoulder, looking down at what is at their feet.
+      const eyes = subject.point('eyes');
+      const back = new THREE.Vector3(Math.sin(facing), 0, Math.cos(facing));
+      camera.position
+        .copy(eyes)
+        .addScaledVector(back, -4.2 - k * 0.5)
+        .add(new THREE.Vector3(1.2, 2.4, 0));
+      focus = back
+        .clone()
+        .multiplyScalar(subject.height * 1.1)
+        .setY(0.6);
+      camera.lookAt(focus);
     } else if (framing === 'overhead') {
       camera.position.set(focus.x + Math.sin(az) * 0.6, focus.y + d, focus.z + Math.cos(az) * 0.6);
       camera.lookAt(focus);
@@ -726,12 +1006,62 @@ export function buildShot(
       camera.position.y += Math.sin(t * 59 + 1) * s;
     }
     if (effect === 'sick') camera.rotateZ(Math.sin(t * 2.2) * 0.06);
+    // Nothing between the camera and what it films: pull in in front of any wall or object.
+    // Indoors the camera stays under the ceiling.
+    if (set.indoor && camera.position.y > 2.65) {
+      camera.position.y = 2.65;
+      camera.lookAt(focus);
+    }
+    if (!pov && !skyShot) {
+      // Moving things (cars, people) were just moved: bring their world positions up to date.
+      scene.updateMatrixWorld();
+      const toCam = camera.position.clone().sub(focus);
+      const len = toCam.length();
+      if (len > 0.05) {
+        toCam.divideScalar(len);
+        ray.set(focus, toCam);
+        ray.far = len;
+        const blocked = (dir: THREE.Vector3) => {
+          ray.set(focus, dir);
+          // Ignore what the focus itself touches (the floor under a point on the ground).
+          ray.near = 0.25;
+          ray.far = len;
+          const hit = ray.intersectObjects(blockersNow(), false)[0];
+          return hit && hit.distance < len - 0.05 ? hit.distance : null;
+        };
+        const first = blocked(toCam);
+        if (first !== null) {
+          // Swing round the subject to a clear angle; only pull in when none is clear.
+          let clear: THREE.Vector3 | null = null;
+          for (const turn of [0.5, -0.5, 1, -1, 1.5, -1.5]) {
+            const dir = toCam.clone().applyAxisAngle(new THREE.Vector3(0, 1, 0), turn);
+            if (blocked(dir) === null) {
+              clear = dir;
+              break;
+            }
+          }
+          if (clear) camera.position.copy(focus).addScaledVector(clear, len);
+          else camera.position.copy(focus).addScaledVector(toCam, Math.max(0.6, first - 0.25));
+          camera.lookAt(focus);
+        }
+      }
+    }
     if (lively && !pov) {
       // A hand-held float, slow enough never to blur a face.
       const f = 0.012 * Math.max(0.6, camera.position.distanceTo(focus) * 0.25);
       camera.position.x += Math.sin(t * 0.9 + spec.seed) * f;
       camera.position.y += Math.sin(t * 1.3 + spec.seed * 2) * f * 0.6;
       camera.lookAt(focus);
+    }
+    // Clutter right in front of the lens (a parked car, a fence, a branch) is not drawn.
+    if (!pov) {
+      const near = clutter();
+      for (const c of near) {
+        // Moving things (the passing car) are measured where they are now.
+        c.object.visible = true;
+        c.box.setFromObject(c.object);
+        c.object.visible = c.box.distanceToPoint(camera.position) > 2.2;
+      }
     }
     focusDist = camera.position.distanceTo(focus);
     camera.fov = fov;

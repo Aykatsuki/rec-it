@@ -431,18 +431,41 @@ export function lowPolyBoardPrompt(o: {
   return [
     {
       role: 'system',
-      content:
-        'You storyboard a vertical 3D Short made of simple blocky shapes. Each numbered line of narration gets exactly ONE shot that shows literally what that line says. Reply with one shot per line, in order, with "beat" set to the line number. ' +
-        'For each shot give, in a few plain words: "place" (where it happens: jungle, island, street, kitchen, hospital, lab, space, battlefield, ocean, snow, office, prison, bank, farm, desert, beach, classroom, courtroom, city…), ' +
-        '"who" (the names of the people in the picture, or "nobody"), "doing" (one physical action that acts out the line: walking, patrolling, hiding, looking up at the sky, picking something up, reading, shaking his head, nodding, eating, cleaning or fixing something, saluting, running, falling, waving, sleeping, celebrating, shocked…), ' +
-        '"feeling" (how they feel right now: happy, sad, scared, angry, determined, confused, tired, proud, lonely, surprised or neutral), "crowd" (how many extra background people, 0 to 6), ' +
-        '"objects" (up to 3 things that must be visible, named simply: "rifle", "leaflets", "plane", "bananas", "brain"…), ' +
-        '"camera" (wide, medium, close-up, extreme close-up, overhead, low angle, first person or object close-up), and optionally "effect" (glow, light beam, x-ray, frozen, darkness, explosion, fire, rain, ghost, sick, spotlight) and "bigText" (at most 3 words, only for a joke or a sign). ' +
-        'Make every shot lively and specific: the main character always DOES something that shows the line and how they feel (for "nobody told him" show him alone, patrolling the jungle, unaware; for "leaflets dropped from planes" show the plane in the sky and him looking up as leaflets fall). ' +
-        'Rules: keep the story\'s own people (the narration\'s "he" or "she" is the main character; "you" is the viewer); open each new place with a wide shot; use close-ups only when a face matters, and never more than two in a row. ' +
-        'Describe every person once in "cast" with "name" and "look": gender, age, skin, hair and clothes with colours (for example "young Japanese man, short black hair, olive army uniform and cap"). ' +
-        `Existing cast (reuse these names): ${o.cast.map((c) => c.name).join(', ') || 'none'}. ` +
-        'Reply with JSON only: {"cast": [{"name": "...", "look": "..."}], "shots": [{"beat": 1, "place": "...", "who": ["..."], "doing": "...", "feeling": "...", "objects": ["..."], "crowd": 0, "camera": "wide", "effect": "", "bigText": ""}]}.',
+      content: [
+        'You storyboard a vertical 3D Short made of simple blocky shapes, like a film director who reads every word. Each numbered line of narration gets exactly ONE shot that shows literally what that line says, in order, with "beat" set to the line number.',
+        '',
+        'Fields of each shot (plain words, short):',
+        '- "place": where the line happens: street, town, park, home, bedroom, kitchen, living room, classroom, school, office, hospital, lab, shop, gym, stage, jungle, island, forest, beach, desert, snow, ocean, space, battlefield, prison, bank, courtroom, farm. If the line does not change place, repeat the last place.',
+        '- "who": the NAMES of the people in the picture. The main character is called by their name every time (his, her, he, she and him mean the main character). Write "you" only when the line says "you" or "your". Never put a group here.',
+        '- "doing": ONE physical action the main person does that acts the line out: walking, running, standing, talking, scrolling on a phone, lying in bed, sleeping, sitting on a chair, sitting on the floor, eating, reading, looking up, looking down, waving, pointing, picking something up, hiding, shocked, celebrating, crying, shaking his head, nodding, working.',
+        '- "feeling": happy, sad, scared, angry, determined, confused, tired, proud, lonely, surprised or neutral.',
+        '- "holding": the thing in their hands, if any (a phone while scrolling, a rifle for a soldier).',
+        '- "objects": up to 3 physical things that must be visible and that the narration names or the action needs (a bed to lie in, a table and a bowl for breakfast, a phone to scroll). NEVER people, groups, body parts, rooms, walls, floors, ceilings, windows, times of day, feelings or ideas.',
+        '- "crowd": how many other people are in the picture (0 to 7): 0 unless the line mentions people, friends, a crowd, the town, classmates or everyone.',
+        '- "crowdDoing": what that crowd does (waving, cheering, looking up, scrolling on phones, shouting, walking).',
+        '- "size": how tall the main character is NOW: "normal", "a bit taller", "as tall as the ceiling", "taller than the houses", "giant", "tiny". Keep it in every later shot until the story changes it.',
+        '- "time": "day" or "night" (night only when the line says night, midnight, evening, dark).',
+        '- "camera": wide, medium, close-up, low angle (looking up), overhead (looking down) or first person.',
+        '- "effect": "" unless the line literally describes glowing, a beam, x-ray, freezing, darkness, an explosion, fire, rain, a ghost, sickness or a spotlight.',
+        '- "bigText": "" unless the line needs a sign or a joke word (at most 3 words).',
+        '',
+        'Rules (follow them all):',
+        '1. Show exactly what the words say, with common sense: someone who "scrolled in bed until midnight" is lying in bed at night holding a phone; "at breakfast" means sitting at a table with a bowl; "sat on the floor" means sitting on the floor, not a chair.',
+        '2. Story state carries on: sizes, injuries, clothes, what they hold and where they are stay the same from shot to shot until the narration changes them. If someone is growing, they get taller in every shot about it.',
+        '3. Lines about people in general ("most people…", "everyone in this town…") show a crowd doing it, not the main character.',
+        '4. Things only appear once the narration has mentioned them; nothing floats, nothing is inside a person, beds and tables are used for what they are for.',
+        '5. Open each new place with a wide shot; use close-ups only for faces and feelings, never more than two in a row; vary the camera.',
+        '6. Describe every person once in "cast" with "name" and "look": gender, age, skin, hair and clothes with colours (for example "boy about 12, brown hair, red hoodie, blue jeans").',
+        '',
+        'Example. Lines: 1. Leo never put his phone down. 2. He scrolled in bed until midnight. 3. By Monday, his head touched the ceiling.',
+        'Answer: {"cast":[{"name":"Leo","look":"boy about 12, brown hair, red hoodie, blue jeans"}],"shots":[' +
+          '{"beat":1,"place":"street","who":["Leo"],"doing":"scrolling on a phone","feeling":"neutral","holding":"phone","objects":["phone"],"crowd":0,"crowdDoing":"","size":"normal","time":"day","camera":"medium","effect":"","bigText":""},' +
+          '{"beat":2,"place":"bedroom","who":["Leo"],"doing":"lying in bed","feeling":"tired","holding":"phone","objects":["bed","phone"],"crowd":0,"crowdDoing":"","size":"a bit taller","time":"night","camera":"wide","effect":"","bigText":""},' +
+          '{"beat":3,"place":"bedroom","who":["Leo"],"doing":"standing","feeling":"surprised","holding":"phone","objects":["phone"],"crowd":0,"crowdDoing":"","size":"as tall as the ceiling","time":"day","camera":"wide","effect":"","bigText":""}]}',
+        '',
+        `Existing cast (reuse these names exactly): ${o.cast.map((c) => c.name).join(', ') || 'none'}.`,
+        'Reply with JSON only: {"cast": [{"name": "...", "look": "..."}], "shots": [{"beat": 1, "place": "...", "who": ["..."], "doing": "...", "feeling": "...", "holding": "", "objects": ["..."], "crowd": 0, "crowdDoing": "", "size": "normal", "time": "day", "camera": "wide", "effect": "", "bigText": ""}]}.',
+      ].join('\n'),
     },
     {
       role: 'user',

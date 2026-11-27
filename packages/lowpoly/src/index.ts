@@ -95,6 +95,14 @@ export const ACTIONS = [
   'shakeHead',
   'nod',
   'work',
+  /** Looking at a phone in the hand, thumb scrolling (sits if the shot has a chair or table). */
+  'usePhone',
+  /** Lying awake on the back (in bed indoors), holding a phone over the face if there is one. */
+  'lie',
+  /** Sitting on the floor or the ground, legs out in front. */
+  'sitFloor',
+  /** Looking down at something below (people at a giant's feet). */
+  'lookDown',
 ] as const;
 export type Action = (typeof ACTIONS)[number];
 
@@ -194,6 +202,7 @@ export const PROPS = [
   'map',
   'radio',
   'medal',
+  'bowl',
 ] as const;
 export type PropId = (typeof PROPS)[number];
 
@@ -263,6 +272,25 @@ export const shotSpecSchema = z.object({
   bigText: z.string().max(24).default(''),
   /** The cast member who says this line on screen ("" when it is narration). */
   speaker: z.string().max(24).default(''),
+  /** Day or night: the sky, the light and lit windows follow it. */
+  time: z.enum(['day', 'night']).default('day'),
+  /** What the extra people do (waving at a giant, looking at their phones, cheering). */
+  crowdAction: z.enum(ACTIONS).default('idle'),
+  /**
+   * How tall people are in this shot (story state, ADR-055): metres from the feet to the top of
+   * the head (1.78 is normal), the height at the start of the shot (growing during it), and
+   * whether the legs grow rather than the whole body.
+   */
+  sizes: z
+    .record(
+      z.string().max(24),
+      z.object({
+        height: z.number().min(0.3).max(30),
+        from: z.number().min(0.3).max(30),
+        legs: z.boolean().default(false),
+      }),
+    )
+    .default({}),
   /** Mouth shape per frame for the speaker (0 shut … 3 round). */
   mouth: z.array(z.number().int().min(0).max(3)).max(3600).default([]),
   seed: z.number().int().min(0).max(1_000_000),
@@ -702,11 +730,72 @@ export type ShotPlan = Omit<ShotSpec, 'start' | 'end' | 'mouth' | 'seed'> & {
 
 /** A crowd in the line: "people", "everyone", or a plural like "soldiers" (not "a soldier"). */
 function crowdMentioned(text: string): boolean {
-  return wordList(text).some(
-    (w) =>
-      ['people', 'crowd', 'everyone', 'townspeople', 'audience', 'army'].includes(w) ||
-      (w.endsWith('s') && !!CROWD_WORDS[w.slice(0, -1)]),
+  return (
+    /\b(whole|entire) (town|city|village|school|class)\b/i.test(text) ||
+    wordList(text).some(
+      (w) =>
+        ['people', 'crowd', 'everyone', 'everybody', 'townspeople', 'audience', 'army'].includes(
+          w,
+        ) ||
+        (w.endsWith('s') && !!CROWD_WORDS[w.slice(0, -1)]),
+    )
   );
+}
+
+/** How many extras a line's crowd needs ("the whole town" is a lot of people). */
+function crowdSize(text: string, ai: number): number {
+  if (/\b(whole|entire) (town|city|village|school)\b|\beveryone\b|\beverybody\b/i.test(text))
+    return 7;
+  return Math.min(6, Math.max(3, Number.isFinite(ai) ? Math.round(ai) : 3));
+}
+
+const NIGHT = /\b(night|midnight|nighttime|evening|bedtime|moonlight|stars|dark outside)\b/i;
+const GROW =
+  /\b(grow|grows|grew|grown|growing|taller|bigger|longer|giant|huge|enormous|tall|stretch|stretched)\b/i;
+const SHRINK =
+  /\b(shrink|shrinks|shrank|shrunk|smaller|shorter|tiny|back to normal|normal size)\b/i;
+/** Normal height (metres), and the most a person grows. */
+const NORMAL = 1.78;
+
+/**
+ * How tall someone is after a line (story state): growth words make them taller, a comparison
+ * sets the height ("touching the ceiling", "taller than the houses"), shrinking resets it. A story
+ * whose rule is growing (the first lines) also grows its hero a little whenever they do the thing.
+ */
+function heightAfter(line: string, current: number, habit: boolean): number {
+  const l = line.toLowerCase();
+  if (SHRINK.test(l)) return /\btiny\b/.test(l) ? 0.6 : NORMAL;
+  if (/\bceiling\b/.test(l)) return Math.max(current, 3.2);
+  if (GROW.test(l) || /\btaller than\b/.test(l)) {
+    if (/\b(houses?|buildings?|trees?|towers?|skyscrapers?|roofs?)\b/.test(l))
+      return Math.max(current, 8.5);
+    if (/\b(giant|enormous|huge)\b/.test(l)) return Math.max(current, 5);
+    return current + (/\b(inch|inches|bit|little)\b/.test(l) ? 0.25 : 0.5);
+  }
+  return habit ? current + 0.25 : current;
+}
+
+/** What the extras do: what the line says people do, or look up at a giant. */
+function crowdActionFor(
+  line: string,
+  lineActions: readonly Action[],
+  giant: boolean,
+  props: readonly string[],
+): Action {
+  const ws = wordList(line);
+  if (ws.some((w) => w.startsWith('wav'))) return 'wave';
+  if (ws.some((w) => ['cheer', 'cheered', 'cheering', 'clap', 'clapped', 'celebrated'].includes(w)))
+    return 'celebrate';
+  if (giant) return 'lookUp';
+  if (lineActions.includes('usePhone') || props.includes('phone')) return 'usePhone';
+  for (const a of ['run', 'walk', 'point', 'talk', 'lookUp', 'sitFloor'] as Action[])
+    if (lineActions.includes(a)) return a;
+  return 'idle';
+}
+
+/** Sentences of a script. */
+function splitSentences(text: string): string[] {
+  return text.split(/(?<=[.!?…])\s+/).filter(Boolean);
 }
 
 /** Things that fly: shots with them look up at the sky. */
@@ -840,7 +929,11 @@ export function normalisePlan(
       beats.find((b) => described && wordList(b).some((w) => wordList(described).includes(w))) ??
       beats[0] ??
       '';
-    const name = properNames(script)[0] ?? (she ? 'Her' : 'Him');
+    const names = properNames(script);
+    const name =
+      names.find((n) => wordList(described).includes(n.toLowerCase())) ??
+      names[0] ??
+      (she ? 'Her' : 'Him');
     hero =
       addCast({
         name,
@@ -865,7 +958,7 @@ export function normalisePlan(
     const s = slug(t);
     if (cast.some((c) => c.id === s)) return s;
     const words = wordList(t);
-    if (words.some((w) => w === 'you' || w === 'your' || w === 'viewer')) return you ? 'you' : hero;
+    if (words.some((w) => w === 'you' || w === 'your' || w === 'viewer')) return 'you';
     if (words.length && words.every((w) => PRONOUNS.has(w))) return hero;
     const named = cast.find((c) => words.some((w) => w.length > 2 && wordList(c.name).includes(w)));
     if (named) return named.id;
@@ -901,6 +994,12 @@ export function normalisePlan(
   /** Who each line is about (before staging), for lines that carry on a sentence. */
   const present: string[][] = [];
   let prevMood: Mood = 'neutral';
+  /** Story state: everyone's height so far, whether growing is the story's rule, its target. */
+  const heights = new Map<string, number>();
+  const growthRule = beats.slice(0, 3).some((b) => GROW.test(b));
+  const legsGrow = splitSentences(script).some((x) => GROW.test(x) && /\blegs?\b/i.test(x));
+  /** The last crowd within the last two shots ("talked to them"). */
+  let recentCrowd = 0;
   for (let i = 0; i < beats.length; i++) {
     const beat = beats[i]!;
     const soFar = beats.slice(0, i + 1).join(' ');
@@ -938,6 +1037,14 @@ export function normalisePlan(
     }
     const saidNobody = whoRaw.some((w) => NOBODY.has(w.toLowerCase()));
     const ws = wordList(beat);
+    // "You" in a story about someone else is the viewer, shown as an everyday person.
+    const youLine = ws.some((w) => w === 'you' || w === 'your' || w === 'youre');
+    if (!you) {
+      if (youLine && !cast.some((c) => c.id === 'you')) cast.push(YOU);
+      for (let k = people.length - 1; k >= 0; k--)
+        if (people[k] === 'you' && !youLine) people.splice(k, 1);
+      if (youLine && !people.includes('you')) people.unshift('you');
+    }
     // The narration names people too: "his old commander", "he", "Onoda".
     for (const c of cast) {
       if (people.includes(c.id) || c.id === 'you') continue;
@@ -946,23 +1053,40 @@ export function normalisePlan(
         c.id !== hero && roles.get(c.id)?.some((r) => mentions(beat, ROLE_WORDS).includes(r));
       if (byName || byRole) people.push(c.id);
     }
+    const crowdLine = crowdMentioned(beat) || isGroup(beat);
     if (
       !people.includes(hero) &&
       (ws.some((w) => (you ? ['you', 'your'] : ['he', 'she', 'his', 'her', 'him']).includes(w)) ||
-        (!people.length && !saidNobody))
+        (!people.length && !saidNobody && !crowdLine))
     )
       people.push(hero);
+    // A line about people in general ("Most people only scroll at lunch") shows them, not the hero.
+    if (
+      crowdLine &&
+      !ws.some((w) => ['he', 'she', 'his', 'her', 'him'].includes(w)) &&
+      !mentions(beat, PROP_WORDS).some((p) => FLYING.has(p))
+    )
+      for (let k = people.length - 1; k >= 0; k--)
+        if (
+          people[k] === hero &&
+          !wordList(cast.find((c) => c.id === hero)?.name ?? '').some((n) => ws.includes(n))
+        )
+          people.splice(k, 1);
     // A line that carries on the previous sentence keeps its people.
     if (prev && !/[.!?…]["')\]]*$/.test(beats[i - 1]!.trim()))
       for (const p of present.at(-1) ?? []) if (!people.includes(p)) people.push(p);
 
     // What is in the picture: what the line names first, then the AI's objects, but only things
     // the story has already mentioned (no leaflets before the leaflets), plus the hero's kit.
-    const objectsRaw = [...texts(field(s, 'objects', 'props', 'things', 'items')), ...whoObjects];
+    const objectsRaw = [
+      ...texts(field(s, 'objects', 'props', 'things', 'items')),
+      ...texts(field(s, 'holding', 'holds', 'inHand')),
+      ...whoObjects,
+    ];
     const props: string[] = [...mentions(beat, PROP_WORDS)];
     for (const name of objectsRaw) {
       const t = name.toLowerCase().trim();
-      if (!t || NOT_OBJECTS.test(t) || person(name) === hero) continue;
+      if (!t || notAThing(t, cast)) continue;
       const p = prop(name);
       if (p) {
         if (seen.has(p) || (heroItems.includes(p) && people.includes(hero))) props.push(p);
@@ -983,25 +1107,46 @@ export function normalisePlan(
         }
       }
     }
-    // The hero carries their kit once the story has made them who they are.
-    if (people.includes(hero))
+    // The hero carries their kit once the story has made them who they are (also when they
+    // watch something fly over, below).
+    if (people.includes(hero) || mentions(beat, PROP_WORDS).some((p) => FLYING.has(p)))
       for (const item of heroItems) if (!props.includes(item)) props.push(item);
     const scenery = new Set(
       set === 'forest' || set === 'jungle' || set === 'island' ? ['tree'] : [],
     );
-    const uniqueProps = [...new Set(props)].filter((p) => !scenery.has(p)).slice(0, 4);
+    const lineProps = mentions(beat, PROP_WORDS);
+    const uniqueProps = [...new Set(props)]
+      .filter((p) => !scenery.has(p))
+      // Food is only on screen in the line that mentions it.
+      .filter((p) => p !== 'bowl' || lineProps.includes('bowl'))
+      .slice(0, 4);
 
     const flying = uniqueProps.some((p) => FLYING.has(p));
-    // A crowd only when the line is about people here (not people in a plane).
-    if (crowdMentioned(beat) && !flying) crowd = Math.max(crowd, 3);
-    if (flying) crowd = 0;
+    // A crowd only when the line is about people here (not people in a plane); "them" after a
+    // crowd keeps it.
+    const aiCrowd = Number(field(s, 'crowd'));
+    const perchingBirds = (heights.get(hero) ?? NORMAL) >= 3 && uniqueProps.includes('bird');
+    if (crowdLine && (!flying || perchingBirds)) crowd = crowdSize(beat, aiCrowd);
+    else if (recentCrowd && ws.some((w) => w === 'them' || w === 'they' || w === 'everyone'))
+      crowd = recentCrowd;
+    else crowd = 0;
     // A plane seen by someone on the ground: stay on the ground and look up.
     if (set === 'sky' && flying && prev && prev.set !== 'sky') set = prev.set;
     present.push([...people]);
-    // Something in the sky is seen from the ground, by the hero (whoever is flying is up there).
-    if (flying && !['space', 'sky', 'underwater'].includes(set))
+    const giantNow = (heights.get(hero) ?? NORMAL) >= 3;
+    // Something in the sky is seen from the ground, by the hero (whoever is flying is up there);
+    // birds land on a giant instead.
+    const perching = giantNow && uniqueProps.includes('bird');
+    if (flying && !perching && !['space', 'sky', 'underwater'].includes(set))
       people.splice(0, people.length, hero);
-    const subject = people[0] ?? uniqueProps[0] ?? 'none';
+    if (flying && !perching) crowd = 0;
+    // People in general: the crowd is the picture (their phones are in their hands).
+    const crowdOnly = !people.length && crowdLine;
+    if (crowdOnly)
+      for (let k = uniqueProps.length - 1; k >= 0; k--)
+        if (['phone', 'bowl', 'cup', 'book', 'paper', 'money'].includes(uniqueProps[k]!))
+          uniqueProps.splice(k, 1);
+    const subject = people[0] ?? (crowdOnly ? 'none' : (uniqueProps[0] ?? 'none'));
 
     // What they do: the AI's action unless it is a big one the line does not support
     // (nobody sleeps, falls or floats unless the narration says so).
@@ -1010,7 +1155,14 @@ export function normalisePlan(
     const aiAction =
       pick(ACTIONS, doing, '' as Action) ||
       (firstMention(doing, ACTION_WORDS) as Action | undefined);
-    const lineAction = firstMention(beat, ACTION_WORDS) as Action | undefined;
+    // Postures win over what the hands do ("scrolled in bed" lies in bed, phone in hand).
+    const lineActions = mentions(beat, ACTION_WORDS) as Action[];
+    let lineAction =
+      (['sleep', 'lie', 'sitFloor', 'sit', 'shock'] as Action[]).find((a) =>
+        lineActions.includes(a),
+      ) ?? lineActions[0];
+    if (lineAction === 'sit' && lineActions.includes('sitFloor')) lineAction = 'sitFloor';
+    if (lineAction === 'lie' && lineActions.includes('sleep')) lineAction = 'sleep';
     const feeling = str(field(s, 'feeling', 'mood', 'emotion'));
     // The line's own feeling words win ("Nobody told him" is lonely), then the AI's.
     let mood: Mood =
@@ -1036,7 +1188,21 @@ export function normalisePlan(
         : outdoors && ['lonely', 'determined'].includes(mood)
           ? 'patrol'
           : 'idle';
+    // What the line itself clearly acts out wins over the AI's choice.
+    const strong: Action[] = [
+      'sleep',
+      'lie',
+      'sitFloor',
+      'sit',
+      'shock',
+      'run',
+      'fall',
+      'celebrate',
+      'lookDown',
+      'wave',
+    ];
     let action: Action =
+      (lineAction && strong.includes(lineAction) ? lineAction : undefined) ??
       (aiAction && (!BIG_ACTIONS.has(aiAction) || aiAction === lineAction)
         ? aiAction
         : undefined) ??
@@ -1050,14 +1216,48 @@ export function normalisePlan(
     )
       action = lineAction && lineAction !== 'lookUp' ? lineAction : calm;
     // Being searched for: the hero hides while the searchers pass.
-    if (crowd && subject === hero && !ws.some((w) => w === 'he' || w === 'she')) action = 'crouch';
+    if (
+      crowd &&
+      subject === hero &&
+      !ws.some((w) => w === 'he' || w === 'she') &&
+      ws.some((w) => /^(search|look|hunt|find|chas)/.test(w))
+    )
+      action = 'crouch';
     if (action === 'shock' && mood === 'neutral') mood = 'surprised';
+    // Sitting outdoors, with no seat named, is on the ground.
+    if (
+      action === 'sit' &&
+      outdoors &&
+      !ws.some((w) => ['chair', 'bench', 'seat', 'stool'].includes(w))
+    )
+      action = 'sitFloor';
+    // Lying awake happens in a bed indoors.
+    if ((action === 'lie' || action === 'sleep') && !outdoors && !uniqueProps.includes('bed'))
+      uniqueProps.unshift('bed');
+    // A meal is eaten sitting at a table (with the phone, if there is one).
+    if (uniqueProps.includes('bowl') && !outdoors) {
+      if (!uniqueProps.includes('table')) uniqueProps.push('table');
+      if (['idle', 'usePhone', 'eat', 'talk'].includes(action)) action = 'sit';
+    }
+    // A phone in a person's hand is looked at unless they are doing something else.
+    if (
+      people.length > 0 &&
+      uniqueProps.includes('phone') &&
+      ['idle', 'patrol', 'think', 'walk', 'talk'].includes(action) &&
+      lineActions.includes('usePhone')
+    )
+      action = 'usePhone';
+    if (perching && action === 'lookUp') action = 'idle';
+    // People shouting or talking at the hero: that is the crowd's action, not the hero's.
+    if (crowdLine && action === 'talk' && people.length)
+      action = uniqueProps.includes('phone') ? 'usePhone' : calm;
+    // Effects only when the line itself calls for one (the AI liked to glow every shot).
+    const lineEffect = firstMention(beat, EFFECT_WORDS) as Effect | undefined;
     const effectText = str(field(s, 'effect', 'effects'));
-    const effect =
+    const aiEffect =
       pick(EFFECTS, effectText, '' as Effect) ||
-      ((firstMention(effectText, EFFECT_WORDS) ??
-        firstMention(`${doing} ${beat}`, EFFECT_WORDS)) as Effect | undefined) ||
-      'none';
+      (firstMention(effectText, EFFECT_WORDS) as Effect | undefined);
+    const effect: Effect = lineEffect ?? (aiEffect && aiEffect === lineEffect ? aiEffect : 'none');
     const cameraText = str(field(s, 'camera', 'framing', 'shot', 'view'));
     let framing =
       pick(FRAMINGS, cameraText, '' as Framing) ||
@@ -1068,14 +1268,33 @@ export function normalisePlan(
     const personShot = people.length > 0;
     if (
       flying &&
+      !perching &&
       personShot &&
       ['idle', 'think', 'talk', 'shock', 'patrol', 'crouch', 'walk'].includes(action)
     )
       action = 'lookUp';
+    // Story state: how tall everyone in the shot is now.
+    const sizes: ShotPlan['sizes'] = {};
+    for (const id of people) {
+      const before = heights.get(id) ?? NORMAL;
+      const doingIt =
+        growthRule &&
+        id === hero &&
+        lineActions.includes('usePhone') &&
+        !/\b(died|dead|off|lost|broke|broken|stopped|quit)\b/i.test(beat);
+      // Growth words are about the line's person (the hero, or "you" in a rule line).
+      const about = id === people[0];
+      const after = about ? heightAfter(beat, before, doingIt) : before;
+      heights.set(id, after);
+      if (after !== NORMAL || before !== NORMAL)
+        sizes[id] = { height: after, from: before, legs: legsGrow };
+    }
+    const subjectTall = (heights.get(people[0] ?? '') ?? NORMAL) >= 3;
     if (
       framing === 'lowAngle' &&
       !['proud', 'determined', 'angry'].includes(mood) &&
-      action !== 'celebrate'
+      action !== 'celebrate' &&
+      !subjectTall
     )
       framing = 'medium';
     if (
@@ -1107,6 +1326,14 @@ export function normalisePlan(
       framing = 'medium';
     if (prev && shots.length >= 2 && shots.at(-2)!.framing === framing && prev.framing === framing)
       framing = framing === 'wide' ? 'medium' : 'wide';
+    // A line about how tall someone is shows all of them, head to feet.
+    if (people.length && /\b(ceiling|taller than|as tall as|towered|giant)\b/i.test(beat))
+      framing = 'wide';
+    // A giant with people at their feet is seen from down there, looking up.
+    if (subjectTall && crowd > 0 && action !== 'lookDown' && framing !== 'closeUp')
+      framing = 'lowAngle';
+    // A giant looking down: over the shoulder, down at the people.
+    if (subjectTall && action === 'lookDown') framing = 'overhead';
     if (!move)
       move =
         framing === 'wide'
@@ -1136,8 +1363,22 @@ export function normalisePlan(
       speaker: speaker && cast.some((c) => c.id === speaker) ? speaker : '',
       mood,
       crowd,
+      time: NIGHT.test(beat) ? 'night' : 'day',
+      crowdAction: ((): Action => {
+        const a = crowdActionFor(beat, lineActions, subjectTall, uniqueProps);
+        if (a !== 'idle' || !crowd) return a;
+        // The AI's words for what the crowd does, when the line itself says nothing.
+        const said = firstMention(str(field(s, 'crowdDoing', 'crowdAction')), ACTION_WORDS) as
+          Action | undefined;
+        return said &&
+          ['wave', 'celebrate', 'lookUp', 'usePhone', 'talk', 'walk', 'point'].includes(said)
+          ? said
+          : 'idle';
+      })(),
+      sizes,
     });
     prevMood = mood === 'surprised' ? 'neutral' : mood;
+    recentCrowd = crowd || (shots.at(-2)?.crowd ?? 0);
   }
   const used = new Set(shots.flatMap((x) => [x.subject, ...x.others, x.speaker]));
   const usedModels = new Set(
@@ -1158,7 +1399,16 @@ export function normalisePlan(
 
 /** Words that never mean an object in the picture (clothes are worn, places are sets). */
 const NOT_OBJECTS =
-  /^(?:(?:his|her|their|a|an|the)\s+)?(?:own\s+)?(?:uniform|clothes|clothing|outfit|shirt|trousers|cap|hat|sky|ground|air|water|sea|ocean|beach|jungle|island|forest|nothing|none|cloth|bushes|bush|grass|sand|sun light|sunlight|light|darkness|silence)s?$/;
+  /^(?:(?:his|her|their|a|an|the|whole|entire|kitchen|classroom|bedroom|school)\s+)?(?:own\s+)?(?:uniform|clothes|clothing|outfit|shirt|trousers|cap|hat|sky|ground|air|water|sea|ocean|beach|jungle|island|forest|nothing|none|cloth|bushes|bush|grass|sand|sun light|sunlight|light|darkness|silence|ceiling|floor|wall|window|roof|room|street|road|town|city|village|home|school|classroom|kitchen|bedroom|people|person|friend|crowd|everyone|everybody|family|kid|child|children|leg|head|shoulder|feet|foot|hand|arm|eye|face|body|night|midnight|morning|day|week|minute|hour|time|moment|screen time|weather|life)s?$/;
+
+/** A thing the AI listed that is really a person, a group, a body part or a part of the room. */
+function notAThing(name: string, cast: readonly CastMember[]): boolean {
+  const t = name.toLowerCase().trim();
+  if (NOT_OBJECTS.test(t) || isGroup(t)) return true;
+  const ws = wordList(t);
+  if (ws.some((w) => PERSON_WORDS.has(w) || PRONOUNS.has(w))) return true;
+  return cast.some((c) => wordList(c.name).some((n) => n.length > 2 && ws.includes(n)));
+}
 
 /** Plain words for a person. */
 const PERSON_WORDS = new Set([
@@ -1180,6 +1430,8 @@ const PERSON_WORDS = new Set([
 /** Actions a shot only gets when its line says so. */
 const BIG_ACTIONS = new Set<Action>([
   'sleep',
+  'lie',
+  'sitFloor',
   'fall',
   'float',
   'celebrate',
@@ -1212,16 +1464,54 @@ function isGroup(text: string): boolean {
       'searchers',
       'locals',
       'family',
+      'friends',
+      'classmates',
+      'students',
+      'kids',
+      'neighbours',
+      'neighbors',
+      'townspeople',
+      'everybody',
+      'others',
     ].includes(w),
   );
 }
 
-/** Names in a script: two or more capitalised words not at the start of a sentence. */
+/** Capitalised words that are not people's names. */
+const NOT_NAMES = new Set(
+  (
+    'In On At By So But And Then When While After Before Most One Two Three His Her Their The A An ' +
+    'This That These Those It He She They We You I If For From Of To With Every Each Nobody ' +
+    'Everyone Somebody Someone Monday Tuesday Wednesday Thursday Friday Saturday Sunday January ' +
+    'February March April May June July August September October November December God Earth ' +
+    'Japanese Chinese American British English French German Russian Italian Spanish Indian ' +
+    'African European Asian Mexican Canadian Korean Arab Muslim Christian Jewish Internet TV'
+  ).split(' '),
+);
+
+/**
+ * Names in a script: runs of capitalised words not at the start of a sentence ("Hiroo Onoda"),
+ * then single names ("Leo"), most frequent first.
+ */
 export function properNames(script: string): string[] {
   const out: string[] = [];
   const re = /(?<![.!?]\s)(?<!^)\b([A-Z][a-z]+(?:\s[A-Z][a-z]+)+)\b/g;
-  for (const m of script.matchAll(re)) if (!out.includes(m[1]!)) out.push(m[1]!);
-  return out;
+  for (const m of script.matchAll(re))
+    if (!m[1]!.split(' ').some((w) => NOT_NAMES.has(w)) && !out.includes(m[1]!)) out.push(m[1]!);
+  const counts = new Map<string, number>();
+  const mid = /(?<![.!?]\s)(?<!^)\b([A-Z][a-z]{2,})\b/g;
+  for (const m of script.matchAll(mid)) {
+    const w = m[1]!;
+    if (NOT_NAMES.has(w) || out.some((n) => n.split(' ').includes(w))) continue;
+    counts.set(w, (counts.get(w) ?? 0) + 1);
+  }
+  // A single name also counts where it starts a sentence ("Leo looked down.").
+  for (const w of counts.keys())
+    counts.set(
+      w,
+      (counts.get(w) ?? 0) + (script.match(new RegExp(`(?:^|[.!?]\\s)${w}\\b`, 'g'))?.length ?? 0),
+    );
+  return [...out, ...[...counts].sort((a, b) => b[1] - a[1]).map(([w]) => w)];
 }
 
 const SHAPES: Record<string, Model['parts'][number]['shape']> = {

@@ -111,7 +111,8 @@ describe('plans', () => {
     expect(p.shots[2]).toMatchObject({ subject: 'you', action: 'point', props: ['cup'] });
     expect(p.shots[3]).toMatchObject({
       subject: 'you',
-      effect: 'glow',
+      // The AI's glow is dropped: the line asks for no effect (it glowed every shot).
+      effect: 'none',
       bigText: 'IM RICH',
       framing: 'extremeCloseUp',
     });
@@ -329,5 +330,72 @@ describe('a real local-model storyboard (qwen3:8b, the Onoda script)', () => {
   it('never writes cut-off or year text on screen', () => {
     for (const s of p.shots) expect(s.bigText === '' || s.bigText.length <= 18).toBe(true);
     expect(p.shots.some((s) => /messag$/.test(s.bigText))).toBe(false);
+  });
+});
+
+describe('a real blocky storyboard (qwen3:8b, the Leo script, ADR-055)', () => {
+  // The plan file of the Short that went wrong: the AI's answer and the beats.
+  const real = JSON.parse(
+    readFileSync(new URL('./fixtures/leo-qwen.json', import.meta.url), 'utf8'),
+  ) as { beats: string[]; board: { cast?: unknown; shots?: unknown } };
+  const script = real.beats.join(' ');
+  const p = normalisePlan(real.board, real.beats, { script });
+  const at = (start: string) => p.shots[real.beats.findIndex((b) => b.startsWith(start))]!;
+
+  it('keeps the story: the named hero, no made-up models, no effects nobody asked for', () => {
+    expect(p.cast.map((c) => c.id)).toContain('leo');
+    expect(p.cast.find((c) => c.id === 'leo')!.name).toBe('Leo');
+    // People, ceilings, floors and windows are not objects to design.
+    expect(p.models).toEqual([]);
+    expect(p.shots.every((s) => s.effect === 'none')).toBe(true);
+    expect(p.shots.every((s) => s.props.every((x) => !x.startsWith('m:')))).toBe(true);
+  });
+
+  it('acts each line out with common sense', () => {
+    expect(at('Most people only scroll')).toMatchObject({
+      subject: 'none',
+      crowdAction: 'usePhone',
+    });
+    expect(at('Most people only scroll').crowd).toBeGreaterThan(0);
+    expect(at('But Leo never')).toMatchObject({ subject: 'leo', action: 'usePhone' });
+    expect(at('But Leo never').props).toContain('phone');
+    expect(at('He scrolled in bed')).toMatchObject({
+      set: 'bedroom',
+      action: 'lie',
+      time: 'night',
+    });
+    expect(at('He scrolled in bed').props).toEqual(expect.arrayContaining(['bed', 'phone']));
+    expect(at('He scrolled at breakfast')).toMatchObject({ set: 'kitchen', action: 'sit' });
+    expect(at('He scrolled at breakfast').props).toEqual(
+      expect.arrayContaining(['table', 'bowl', 'phone']),
+    );
+    expect(at('By Monday')).toMatchObject({ set: 'kitchen', framing: 'wide' });
+    expect(at('At school')).toMatchObject({ set: 'classroom', action: 'sitFloor' });
+    expect(at('His teacher').subject).toBe('teacher');
+    expect(at('His teacher').others).toContain('leo');
+    expect(at('Birds started').props).toContain('bird');
+    expect(at('Birds started').action).not.toBe('lookUp');
+    expect(at('His friends shouted')).toMatchObject({ crowdAction: 'lookUp', framing: 'lowAngle' });
+    expect(at('His friends shouted').crowd).toBeGreaterThanOrEqual(3);
+    expect(at('Then one night')).toMatchObject({ action: 'shock', time: 'night' });
+    expect(at('For the first time')).toMatchObject({ action: 'lookDown' });
+    expect(at('The whole town')).toMatchObject({ crowd: 7, crowdAction: 'wave' });
+    expect(at('He sat down on the street')).toMatchObject({ set: 'street', action: 'sitFloor' });
+  });
+
+  it('remembers how tall Leo has grown, shot after shot', () => {
+    const heights = p.shots
+      .map((s) => s.sizes.leo?.height)
+      .filter((h): h is number => h !== undefined);
+    // Never shrinks; reaches the ceiling, then towers over the houses.
+    for (let i = 1; i < heights.length; i++)
+      expect(heights[i]).toBeGreaterThanOrEqual(heights[i - 1]!);
+    expect(at('By Monday').sizes.leo!.height).toBeGreaterThanOrEqual(3);
+    expect(at('By Friday').sizes.leo).toMatchObject({ height: 8.5, legs: true });
+    expect(at('By Friday').sizes.leo!.from).toBeLessThan(8.5);
+    // The story's rule ("the longer your legs get") is shown on "you" first.
+    expect(at('In this town').sizes.you!.height).toBeGreaterThan(
+      at('In this town').sizes.you!.from,
+    );
   });
 });

@@ -1044,4 +1044,51 @@ Each record states the decision, why it was made and what else was considered. R
 
 **Tests.** pytest is unchanged. Vitest covers the blocky prompts and an integration run: blocky look, classic skin, the style reaching the script writer, the planner's shots and game captions. End to end makes a blocky Short in the real renderer and saves a contact sheet. Stills from the harness were checked against the reference Shorts.
 
+**Revision (27 Nov 2026): understanding the story.** Your first blocky Short (the Leo doomscrolling script) had almost nothing to do with its script. The plan file showed why:
+- The hero became "Him", because single names were not recognised.
+- People, friends, the ceiling, the floor and a window were designed as strange models: the floating blocks.
+- The AI put a glow on every shot: the blue glitches.
+- "Scrolling" became standing still, and the bed was placed through him.
+- There was no idea of Leo growing.
+
+Changes:
+- **Names and objects.** Single names count ("Leo"; days, months and nationalities do not). The AI's objects drop people, groups, body parts, room parts and times. An effect needs words in the line itself.
+- **New actions:** `usePhone`, `lie` (awake in bed, a phone held over the face), `sitFloor` and `lookDown`.
+  - Postures in the line win ("scrolled in bed" lies in bed).
+  - Lines map to actions: "battery died" is a shock, not a fall; sitting outdoors with no seat is on the ground.
+  - Lying brings a bed indoors. A meal brings a table and a bowl, with the person sitting at it.
+- **Story state** (`ShotSpec.sizes`): each person's height carries from shot to shot.
+  - Growth words grow the person the line is about. "Touching the ceiling" and "taller than the houses" set a height; shrink words reset it.
+  - A story whose rule is growing grows its hero a little whenever they do the thing.
+  - Legs grow when the script says legs. Thighs and shins stretch and the knees move, so joints still bend cleanly.
+  - Indoors a standing giant stops at the ceiling.
+  - Rendered growth animates during the shot.
+- **Crowds.** Lines about people in general ("Most people only scroll at lunch") show a crowd doing it, not the hero.
+  - "Friends", "classmates" and "the whole town" make a crowd (7 for the whole town). "Them" keeps the last crowd.
+  - `crowdAction` comes from the line (waving, cheering, phones) or looks up at a giant.
+  - Around a giant the crowd stands in a ring at his feet; around a sitting giant, at the sides. Classrooms always have pupils at their desks.
+- **Night** (`ShotSpec.time`): a dark sky with stars and a moon, moonlight, lit windows and street lamps, a night view through room windows, and a phone screen lighting the face.
+- **No glitches.**
+  - Set furniture where a person stands is removed. Big props stand clear beside and behind. Birds on a giant perch on his shoulders.
+  - The camera never films through anything: a ray from the subject to the camera (with up-to-date world matrices, as moving cars once fooled it) swings the camera round to a clear angle, and pulls in only when none is clear.
+  - Indoors the camera stays under the ceiling.
+  - Small set pieces right in front of the lens are hidden.
+- **Giant framing.**
+  - Distances grow with height.
+  - Low angles are filmed from behind the people at the giant's feet. A giant with a crowd faces the camera across the street.
+  - "Looked down" is filmed over the giant's shoulder.
+  - Lines about height are wide.
+- **Brighter sets.**
+  - Blocky colours are richer, and the sky is a game blue.
+  - The street has colourful houses, fences, flower beds and parked cars in several colours.
+  - Lying people are filmed from beside the bed, and the bedroom drops its own bed when the shot brings one.
+- **The storyboard prompt** spells out every field. It adds `holding`, `crowdDoing`, `size` and `time`, and seven rules: common sense, story state carries on, general lines show a crowd, nothing before it is mentioned, nothing floats or goes through anything, camera variety, and cast descriptions. It ends with a worked example. The planner reads `holding` and `crowdDoing`.
+
+**Tests.** The real Leo plan is a fixture. Its test checks:
+- the named hero, no models and no effects;
+- every line acted out: crowd scrolling, lying in bed at night, breakfast at a table, a wide shot at the ceiling, sitting on the classroom floor, the teacher, birds, friends looking up from a low angle, the battery shock at night, looking down, the waving town, sitting on the street;
+- that Leo's height never shrinks, reaches the ceiling, then 8.5 m with legs.
+
+Stills of all 18 shots were checked.
+
 **Not yet:** signs and banners written from the story ("NO HUSSING!"), confetti and sparkle effects tied to the words, character accessories beyond hats, caps and helmets (headscarves, kufis), and fully lip-synced dialogue scenes.

@@ -4,6 +4,7 @@
 import * as THREE from 'three';
 import type { Model, PropId } from '@rec-it/lowpoly';
 import { flat, mat } from './ps1';
+import { blocky } from './style';
 import { noise, shade, SURFACES, texture } from './textures';
 
 export type Placement = 'hand' | 'ground' | 'float' | 'big';
@@ -147,6 +148,13 @@ export function animal(kind: 'dog' | 'cat' | 'cow' | 'rat' | 'bird' | 'fish'): P
 
 /** Builds a prop. `text` is used by signs. */
 export function makeProp(id: PropId, text = ''): Prop {
+  const p = buildProp(id, text);
+  // Blocky hands are big: small things in them are drawn bigger to stay readable.
+  if (blocky() && p.placement === 'hand') p.object.scale.multiplyScalar(1.9);
+  return p;
+}
+
+function buildProp(id: PropId, text: string): Prop {
   switch (id) {
     case 'phone':
       return {
@@ -890,6 +898,26 @@ export function makeProp(id: PropId, text = ''): Prop {
         placement: 'hand',
         size: 0.4,
       };
+    case 'bowl': {
+      // A breakfast bowl of cereal (it goes on a table, see shot.ts).
+      const bowl = new THREE.Mesh(
+        new THREE.SphereGeometry(0.11, 14, 8, 0, Math.PI * 2, Math.PI / 2, Math.PI / 2),
+        mat('#f2f0ea', { side: THREE.DoubleSide }),
+      );
+      bowl.position.y = 0.1;
+      const milk = m(C(0.1, 0.1, 0.01, 14), mat('#fbf8ef'), 0, 0.085, 0);
+      const flakes = new THREE.Group();
+      for (let i = 0; i < 12; i++) {
+        const a = i * 2.4;
+        const f = m(B(0.025, 0.006, 0.02), mat(i % 3 ? '#d9a54a' : '#c98a3a'));
+        f.position.set(Math.cos(a) * 0.06 * ((i % 4) / 4 + 0.3), 0.093, Math.sin(a) * 0.05);
+        f.rotation.y = a;
+        flakes.add(f);
+      }
+      const spoon = m(B(0.012, 0.004, 0.16), mat('#c9cdd2'), 0.05, 0.11, 0.02);
+      spoon.rotation.set(0.35, 0.5, 0);
+      return { object: group(bowl, milk, flakes, spoon), placement: 'ground', size: 0.3 };
+    }
     case 'medal': {
       const gold = mat('#d9b53a', { emissive: '#4a3410' });
       return {

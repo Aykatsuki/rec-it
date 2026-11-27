@@ -1,0 +1,740 @@
+{
+  "title": "3D Short",
+  "beats": [
+    "In this town, the more you doomscroll, the longer your legs get.",
+    "One minute on your phone, and you grow one inch taller.",
+    "Most people only scroll at lunch, so they stay normal.",
+    "But Leo never put his phone down.",
+    "He scrolled in bed until midnight.",
+    "He scrolled at breakfast while his cereal went soggy.",
+    "By Monday, his head was touching the kitchen ceiling.",
+    "At school, he had to sit on the floor of the classroom.",
+    "His teacher just sighed and opened the window for him.",
+    "By Friday, Leo was taller than the houses on his street.",
+    "Birds started landing on his shoulders.",
+    "His friends shouted up at him, but he couldn't hear them anymore.",
+    "He was too busy scrolling.",
+    "Then one night, his phone battery died.",
+    "For the first time in weeks, Leo looked down.",
+    "The whole town was standing at his feet, waving.",
+    "So he did the only thing left.",
+    "He sat down on the street and finally talked to them."
+  ],
+  "board": {
+    "cast": [],
+    "shots": [
+      {
+        "beat": 1,
+        "place": "town",
+        "who": [
+          "nobody"
+        ],
+        "doing": "scrolling on phone",
+        "feeling": "neutral",
+        "objects": [
+          "phone",
+          "street",
+          "people"
+        ],
+        "crowd": 6,
+        "camera": "wide",
+        "effect": "glow",
+        "bigText": ""
+      },
+      {
+        "beat": 2,
+        "place": "town",
+        "who": [
+          "nobody"
+        ],
+        "doing": "scrolling on phone",
+        "feeling": "neutral",
+        "objects": [
+          "phone",
+          "street",
+          "people"
+        ],
+        "crowd": 6,
+        "camera": "medium",
+        "effect": "glow",
+        "bigText": ""
+      },
+      {
+        "beat": 3,
+        "place": "town",
+        "who": [
+          "nobody"
+        ],
+        "doing": "scrolling on phone",
+        "feeling": "neutral",
+        "objects": [
+          "phone",
+          "lunch",
+          "people"
+        ],
+        "crowd": 6,
+        "camera": "wide",
+        "effect": "glow",
+        "bigText": ""
+      },
+      {
+        "beat": 4,
+        "place": "town",
+        "who": [
+          "Leo"
+        ],
+        "doing": "scrolling on phone",
+        "feeling": "determined",
+        "objects": [
+          "phone",
+          "people",
+          "lunch"
+        ],
+        "crowd": 6,
+        "camera": "medium",
+        "effect": "glow",
+        "big,Text": ""
+      },
+      {
+        "beat": 5,
+        "place": "bedroom",
+        "who": [
+          "Leo"
+        ],
+        "doing": "scrolling on phone",
+        "feeling": "determined",
+        "objects": [
+          "phone",
+          "bed",
+          "window"
+        ],
+        "crowd": 0,
+        "camera": "medium",
+        "effect": "glow",
+        "bigText": ""
+      },
+      {
+        "beat": 6,
+        "place": "kitchen",
+        "who": [
+          "Leo"
+        ],
+        "doing": "scrolling on phone",
+        "feeling": "determined",
+        "objects": [
+          "phone",
+          "cereal",
+          "mug"
+        ],
+        "crowd": 0,
+        "camera": "medium",
+        "effect": "glow",
+        "bigText": ""
+      },
+      {
+        "beat": 7,
+        "place": "kitchen",
+        "who": [
+          "Leo"
+        ],
+        "doing": "standing on chair",
+        "feeling": "tired",
+        "objects": [
+          "chair",
+          "ceiling",
+          "phone"
+        ],
+        "crowd": 0,
+        "camera": "wide",
+        "effect": "glow",
+        "bigText": ""
+      },
+      {
+        "beat": 8,
+        "place": "classroom",
+        "who": [
+          "Leo"
+        ],
+        "doing": "sitting on floor",
+        "feeling": "frustrated",
+        "objects": [
+          "floor",
+          "desk",
+          "window"
+        ],
+        "crowd": 4,
+        "camera": "medium",
+        "effect": "glow",
+        "bigText": ""
+      },
+      {
+        "beat": 9,
+        "place": "classroom",
+        "who": [
+          "teacher"
+        ],
+        "doing": "opening window",
+        "feeling": "neutral",
+        "objects": [
+          "window",
+          "desk",
+          "phone"
+        ],
+        "crowd": 4,
+        "camera": "medium",
+        "effect": "glow",
+        "bigText": ""
+      },
+      {
+        "beat": 10,
+        "place": "town",
+        "who": [
+          "Leo"
+        ],
+        "doing": "standing tall",
+        "feeling": "overwhelmed",
+        "objects": [
+          "phone",
+          "house",
+          "tree"
+        ],
+        "crowd": 6,
+        "camera": "wide",
+        "effect": "glow",
+        "bigText": ""
+      },
+      {
+        "beat": 11,
+        "place": "town",
+        "who": [
+          "Leo"
+        ],
+        "doing": "birds landing",
+        "feeling": "overwhelmed",
+        "objects": [
+          "birds",
+          "phone",
+          "tree"
+        ],
+        "crowd": 6,
+        "camera": "medium",
+        "effect": "glow",
+        "bigText": ""
+      },
+      {
+        "beat": 12,
+        "place": "town",
+        "who": [
+          "Leo"
+        ],
+        "doing": "looking down",
+        "feeling": "sad",
+        "objects": [
+          "phone",
+          "friends",
+          "birds"
+        ],
+        "crowd": 6,
+        "camera": "medium",
+        "effect": "glow",
+        "bigText": ""
+      },
+      {
+        "beat": 13,
+        "place": "town",
+        "who": [
+          "Leo"
+        ],
+        "doing": "scrolling on phone",
+        "feeling": "addicted",
+        "objects": [
+          "phone",
+          "birds",
+          "friends"
+        ],
+        "crowd": 6,
+        "camera": "medium",
+        "effect": "glow",
+        "bigText": ""
+      },
+      {
+        "beat": 14,
+        "place": "town",
+        "who": [
+          "Leo"
+        ],
+        "doing": "phone dying",
+        "feeling": "shocked",
+        "objects": [
+          "phone",
+          "birds",
+          "friends"
+        ],
+        "crowd": 6,
+        "camera": "medium",
+        "effect": "glow",
+        "bigText": ""
+      },
+      {
+        "beat": 15,
+        "place": "town",
+        "who": [
+          "Leo"
+        ],
+        "doing": "looking down",
+        "feeling": "confused",
+        "objects": [
+          "phone",
+          "people",
+          "birds"
+        ],
+        "crowd": 6,
+        "camera": "medium",
+        "effect": "glow",
+        "bigText": ""
+      },
+      {
+        "beat": 16,
+        "place": "town",
+        "who": [
+          "people"
+        ],
+        "doing": "waving up",
+        "feeling": "happy",
+        "objects": [
+          "Leo",
+          "phone",
+          "birds"
+        ],
+        "crowd": 6,
+        "camera": "wide",
+        "effect": "glow",
+        "bigText": ""
+      },
+      {
+        "beat": 17,
+        "place": "town",
+        "who": [
+          "Leo"
+        ],
+        "doing": "looking around",
+        "feeling": "realizing",
+        "objects": [
+          "people",
+          "phone",
+          "birds"
+        ],
+        "crowd": 6,
+        "camera": "medium",
+        "effect": "glow",
+        "bigText": ""
+      },
+      {
+        "beat": 18,
+        "place": "town",
+        "who": [
+          "Leo"
+        ],
+        "doing": "sitting down",
+        "feeling": "hopeful",
+        "objects": [
+          "people",
+          "phone",
+          "birds"
+        ],
+        "crowd": 6,
+        "camera": "wide",
+        "effect": "glow",
+        "bigText": ""
+      }
+    ]
+  },
+  "cast": [
+    {
+      "id": "him",
+      "name": "Him",
+      "gender": "male",
+      "age": "adult",
+      "skin": "light",
+      "hair": "short",
+      "hairColor": "#2a1f18",
+      "top": "tshirt",
+      "topColor": "#4a6fa5",
+      "bottomColor": "#3a3f4a",
+      "extra": "none"
+    },
+    {
+      "id": "teacher",
+      "name": "Teacher",
+      "gender": "male",
+      "age": "adult",
+      "skin": "light",
+      "hair": "short",
+      "hairColor": "#2a1f18",
+      "top": "tshirt",
+      "topColor": "#4a6fa5",
+      "bottomColor": "#3a3f4a",
+      "extra": "none"
+    }
+  ],
+  "shots": [
+    {
+      "start": 0,
+      "end": 3.83,
+      "set": "street",
+      "framing": "wide",
+      "subject": "none",
+      "others": [],
+      "action": "idle",
+      "props": [],
+      "effect": "glow",
+      "camera": "pushIn",
+      "mood": "neutral",
+      "crowd": 0,
+      "bigText": "",
+      "speaker": "",
+      "seed": 58757
+    },
+    {
+      "start": 3.83,
+      "end": 6.965,
+      "set": "street",
+      "framing": "object",
+      "subject": "phone",
+      "others": [],
+      "action": "idle",
+      "props": [],
+      "effect": "glow",
+      "camera": "orbit",
+      "mood": "neutral",
+      "crowd": 0,
+      "bigText": "",
+      "speaker": "",
+      "seed": 58774
+    },
+    {
+      "start": 6.965,
+      "end": 10.105,
+      "set": "street",
+      "framing": "wide",
+      "subject": "phone",
+      "others": [],
+      "action": "idle",
+      "props": [
+        "m:lunch",
+        "m:people"
+      ],
+      "effect": "glow",
+      "camera": "pushIn",
+      "mood": "neutral",
+      "crowd": 3,
+      "bigText": "",
+      "speaker": "",
+      "seed": 58791
+    },
+    {
+      "start": 10.105,
+      "end": 12.65,
+      "set": "street",
+      "framing": "medium",
+      "subject": "him",
+      "others": [],
+      "action": "patrol",
+      "props": [
+        "phone",
+        "m:people",
+        "m:lunch"
+      ],
+      "effect": "glow",
+      "camera": "pushIn",
+      "mood": "determined",
+      "crowd": 0,
+      "bigText": "",
+      "speaker": "",
+      "seed": 58808
+    },
+    {
+      "start": 12.65,
+      "end": 15.18,
+      "set": "bedroom",
+      "framing": "wide",
+      "subject": "him",
+      "others": [],
+      "action": "idle",
+      "props": [
+        "bed",
+        "phone"
+      ],
+      "effect": "glow",
+      "camera": "pushIn",
+      "mood": "determined",
+      "crowd": 0,
+      "bigText": "",
+      "speaker": "",
+      "seed": 58825
+    },
+    {
+      "start": 15.18,
+      "end": 18.395,
+      "set": "kitchen",
+      "framing": "wide",
+      "subject": "him",
+      "others": [],
+      "action": "idle",
+      "props": [
+        "phone",
+        "m:cereal"
+      ],
+      "effect": "glow",
+      "camera": "orbit",
+      "mood": "determined",
+      "crowd": 0,
+      "bigText": "",
+      "speaker": "",
+      "seed": 58842
+    },
+    {
+      "start": 18.395,
+      "end": 21.65,
+      "set": "kitchen",
+      "framing": "medium",
+      "subject": "him",
+      "others": [],
+      "action": "idle",
+      "props": [
+        "m:ceiling"
+      ],
+      "effect": "glow",
+      "camera": "pushIn",
+      "mood": "tired",
+      "crowd": 0,
+      "bigText": "",
+      "speaker": "",
+      "seed": 58859
+    },
+    {
+      "start": 21.65,
+      "end": 25.104999999999997,
+      "set": "classroom",
+      "framing": "wide",
+      "subject": "him",
+      "others": [],
+      "action": "sit",
+      "props": [
+        "m:floor"
+      ],
+      "effect": "glow",
+      "camera": "orbit",
+      "mood": "tired",
+      "crowd": 0,
+      "bigText": "",
+      "speaker": "",
+      "seed": 58876
+    },
+    {
+      "start": 25.104999999999997,
+      "end": 28.225,
+      "set": "classroom",
+      "framing": "medium",
+      "subject": "teacher",
+      "others": [
+        "him"
+      ],
+      "action": "idle",
+      "props": [
+        "m:window"
+      ],
+      "effect": "glow",
+      "camera": "pushIn",
+      "mood": "neutral",
+      "crowd": 0,
+      "bigText": "",
+      "speaker": "",
+      "seed": 58893
+    },
+    {
+      "start": 28.225,
+      "end": 32.19,
+      "set": "street",
+      "framing": "wide",
+      "subject": "him",
+      "others": [],
+      "action": "idle",
+      "props": [],
+      "effect": "glow",
+      "camera": "orbit",
+      "mood": "neutral",
+      "crowd": 0,
+      "bigText": "",
+      "speaker": "",
+      "seed": 58910
+    },
+    {
+      "start": 32.19,
+      "end": 34.635,
+      "set": "street",
+      "framing": "medium",
+      "subject": "him",
+      "others": [],
+      "action": "lookUp",
+      "props": [
+        "bird"
+      ],
+      "effect": "glow",
+      "camera": "pushIn",
+      "mood": "neutral",
+      "crowd": 0,
+      "bigText": "",
+      "speaker": "",
+      "seed": 58927
+    },
+    {
+      "start": 34.635,
+      "end": 37.864999999999995,
+      "set": "street",
+      "framing": "medium",
+      "subject": "him",
+      "others": [],
+      "action": "lookUp",
+      "props": [
+        "m:friends",
+        "bird"
+      ],
+      "effect": "glow",
+      "camera": "pushIn",
+      "mood": "sad",
+      "crowd": 0,
+      "bigText": "",
+      "speaker": "",
+      "seed": 58944
+    },
+    {
+      "start": 37.864999999999995,
+      "end": 39.885000000000005,
+      "set": "street",
+      "framing": "wide",
+      "subject": "him",
+      "others": [],
+      "action": "lookUp",
+      "props": [
+        "bird",
+        "m:friends"
+      ],
+      "effect": "glow",
+      "camera": "pushIn",
+      "mood": "sad",
+      "crowd": 0,
+      "bigText": "",
+      "speaker": "",
+      "seed": 58961
+    },
+    {
+      "start": 39.885000000000005,
+      "end": 42.955,
+      "set": "street",
+      "framing": "medium",
+      "subject": "him",
+      "others": [],
+      "action": "idle",
+      "props": [
+        "phone",
+        "m:friends"
+      ],
+      "effect": "glow",
+      "camera": "pushIn",
+      "mood": "surprised",
+      "crowd": 0,
+      "bigText": "",
+      "speaker": "",
+      "seed": 58978
+    },
+    {
+      "start": 42.955,
+      "end": 46.150000000000006,
+      "set": "street",
+      "framing": "medium",
+      "subject": "him",
+      "others": [],
+      "action": "idle",
+      "props": [
+        "phone",
+        "m:people"
+      ],
+      "effect": "glow",
+      "camera": "pushIn",
+      "mood": "confused",
+      "crowd": 0,
+      "bigText": "",
+      "speaker": "",
+      "seed": 58995
+    },
+    {
+      "start": 46.150000000000006,
+      "end": 49.565,
+      "set": "street",
+      "framing": "wide",
+      "subject": "him",
+      "others": [],
+      "action": "crouch",
+      "props": [
+        "m:leo",
+        "phone"
+      ],
+      "effect": "glow",
+      "camera": "orbit",
+      "mood": "happy",
+      "crowd": 3,
+      "bigText": "",
+      "speaker": "",
+      "seed": 59012
+    },
+    {
+      "start": 49.565,
+      "end": 51.775,
+      "set": "street",
+      "framing": "medium",
+      "subject": "him",
+      "others": [],
+      "action": "idle",
+      "props": [
+        "m:people"
+      ],
+      "effect": "glow",
+      "camera": "pushIn",
+      "mood": "surprised",
+      "crowd": 0,
+      "bigText": "",
+      "speaker": "",
+      "seed": 59029
+    },
+    {
+      "start": 51.775,
+      "end": 56.050000000000004,
+      "set": "street",
+      "framing": "wide",
+      "subject": "him",
+      "others": [],
+      "action": "talk",
+      "props": [
+        "m:people"
+      ],
+      "effect": "glow",
+      "camera": "orbit",
+      "mood": "neutral",
+      "crowd": 0,
+      "bigText": "",
+      "speaker": "",
+      "seed": 59046
+    }
+  ],
+  "models": [
+    "lunch",
+    "people",
+    "cereal",
+    "ceiling",
+    "floor",
+    "window",
+    "friends",
+    "leo"
+  ]
+}

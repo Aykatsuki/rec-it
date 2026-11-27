@@ -5,6 +5,7 @@ import * as THREE from 'three';
 import type { SetId } from '@rec-it/lowpoly';
 import { flat, mat } from './ps1';
 import { addLife } from './life';
+import { blocky } from './style';
 import { cloud, house, makeProp, tree } from './props';
 import { noise, rng, shade, SURFACES, texture, type Paint } from './textures';
 
@@ -81,8 +82,10 @@ function room(
     d?: number;
     h?: number;
     window?: boolean;
+    night?: boolean;
   },
 ) {
+  const night = !!o.night;
   const w = o.w ?? 9,
     d = o.d ?? 8,
     h = o.h ?? 3;
@@ -93,7 +96,9 @@ function room(
   scene.add(m(B(w, 0.2, d * 2), mat('#e9e6de'), 0, h, 0));
   scene.add(m(B(w, 0.12, 0.05), mat('#f2f0ea'), 0, 0.06, -d / 2 + 0.12));
   if (o.window ?? true) {
-    const view = texture('window:view', [32, 32], SURFACES.sky('#6fa8dc', '#dfeaf2'));
+    const view = night
+      ? texture('window:night', [32, 32], SURFACES.sky('#070d24', '#22305e', false))
+      : texture('window:view', [32, 32], SURFACES.sky('#6fa8dc', '#dfeaf2'));
     scene.add(m(B(2, 1.3, 0.05), flat('#ffffff', { map: view }), 1.6, 1.7, -d / 2 + 0.12));
     scene.add(
       m(B(2.2, 0.08, 0.15), mat('#f2f0ea'), 1.6, 1.02, -d / 2 + 0.15),
@@ -120,7 +125,12 @@ function place(
   return o;
 }
 
-export function buildSet(id: SetId, seed: number, opts: { clearing?: boolean } = {}): BuiltSet {
+export function buildSet(
+  id: SetId,
+  seed: number,
+  opts: { clearing?: boolean; night?: boolean; ownBed?: boolean } = {},
+): BuiltSet {
+  const night = !!opts.night;
   // A clearing ahead of the subject, so the sky is in view (planes, birds).
   const clear = (x: number, z: number) => !!opts.clearing && Math.abs(x) < 10 && z > -40 && z < 2;
   const scene = new THREE.Scene();
@@ -132,15 +142,50 @@ export function buildSet(id: SetId, seed: number, opts: { clearing?: boolean } =
   let sky: THREE.Object3D | null = null;
   const day = () => {
     indoor = false;
-    sky = skyDome('#5f97d6', '#dce8f2');
+    if (night) {
+      // Night (ADR-055): a deep blue sky with stars and a moon, cool moonlight.
+      sky = skyDome('#070d24', '#22305e', false);
+      scene.add(sky);
+      scene.fog = new THREE.Fog('#121a38', 20, 110);
+      lights = light(scene, {
+        sky: '#5a6aa8',
+        ground: '#1a1a24',
+        hemi: 0.7,
+        sun: '#a9bcff',
+        sunI: 0.7,
+        dir: [-5, 10, 4],
+      });
+      const stars = new THREE.Group();
+      const star = flat('#ffffff', { fog: false });
+      for (let i = 0; i < 260; i++) {
+        const a = r() * Math.PI * 2;
+        const e = 0.12 + r() * 1.3;
+        const d = new THREE.Mesh(new THREE.BoxGeometry(0.35, 0.35, 0.35), star);
+        d.position.set(
+          Math.cos(a) * Math.cos(e) * 160,
+          Math.sin(e) * 160,
+          Math.sin(a) * Math.cos(e) * 160,
+        );
+        stars.add(d);
+      }
+      const moon = new THREE.Mesh(
+        new THREE.SphereGeometry(6, 16, 12),
+        flat('#f4f0d8', { fog: false }),
+      );
+      moon.position.set(-40, 70, -120);
+      scene.add(stars, moon);
+      return;
+    }
+    // The blocky look's sky is a brighter, bluer game sky.
+    sky = blocky() ? skyDome('#2f7fff', '#cfe8ff') : skyDome('#5f97d6', '#dce8f2');
     scene.add(sky);
-    scene.fog = new THREE.Fog('#cfdbe6', 25, 120);
+    scene.fog = new THREE.Fog(blocky() ? '#d6eaff' : '#cfdbe6', 25, 120);
     lights = light(scene, {
       sky: '#dfeeff',
       ground: '#6a6a50',
       hemi: 1.6,
       sun: '#fff1d6',
-      sunI: 2.2,
+      sunI: blocky() ? 2.6 : 2.2,
       dir: [5, 10, 6],
     });
   };
@@ -148,15 +193,17 @@ export function buildSet(id: SetId, seed: number, opts: { clearing?: boolean } =
     scene.fog = new THREE.Fog('#2a2a2a', 12, 30);
     lights = [
       ...light(scene, {
-        sky: '#fff6ea',
+        sky: night ? '#6a78b0' : '#fff6ea',
         ground: '#6a5a4a',
-        hemi: 1.4,
-        sun: '#fff1d6',
-        sunI: 1.2,
+        hemi: night ? 0.45 : 1.4,
+        sun: night ? '#9fb0ff' : '#fff1d6',
+        sunI: night ? 0.25 : 1.2,
         dir: [3, 6, 8],
       }),
       extra,
     ];
+    // At night only a warm lamp lights the room.
+    if (night) (extra as THREE.PointLight).intensity *= 0.7;
   };
 
   switch (id) {
@@ -177,17 +224,40 @@ export function buildSet(id: SetId, seed: number, opts: { clearing?: boolean } =
         map: texture('pavement', [16, 16], SURFACES.pavement(), [150, 1]),
       });
       scene.add(m(B(300, 0.12, 2), walk, 0, 0.06, 0.8), m(B(300, 0.12, 2), walk, 0, 0.06, -6.8));
-      const walls = ['#d9d2c0', '#c9b9a0', '#b9c4c9', '#e2d6b8'];
-      const roofs = ['#5a3b32', '#3f4a5a', '#6a4030'];
+      // Game towns are colourful: bright walls, red and blue roofs.
+      const walls = blocky()
+        ? ['#f2c94c', '#7fd1e8', '#f28c8c', '#9be38a', '#f5f0e6', '#c9a8f2']
+        : ['#d9d2c0', '#c9b9a0', '#b9c4c9', '#e2d6b8'];
+      const roofs = blocky()
+        ? ['#d9483b', '#3b6fd9', '#5a3b32', '#2f9e6a']
+        : ['#5a3b32', '#3f4a5a', '#6a4030'];
       for (let i = -3; i <= 3; i++) {
         place(
           scene,
-          house(walls[(i + 9) % 4]!, roofs[(i + 9) % 3]!),
+          house(walls[(i + 9) % walls.length]!, roofs[(i + 9) % roofs.length]!, night),
           i * 12 + (r() - 0.5) * 2,
           -14,
           0,
         );
         place(scene, tree(0.9 + r() * 0.4, i + 5), i * 12 + 6, -9 + (r() - 0.5) * 2);
+        // Front gardens: a low fence and flower beds.
+        const fence = mat('#f5f2ea');
+        for (let k = -3; k <= 3; k++)
+          scene.add(m(B(0.12, 0.7, 0.12), fence, i * 12 + k * 0.9, 0.35, -9.9));
+        scene.add(m(B(5.6, 0.1, 0.06), fence, i * 12, 0.55, -9.9));
+        for (let k = 0; k < 5; k++) {
+          const colour = ['#ff5a7a', '#ffd23a', '#ff8a3a', '#c86aff'][(k + i + 9) % 4]!;
+          scene.add(m(B(0.25, 0.25, 0.25), mat(colour), i * 12 - 2 + k, 0.13, -10.6));
+        }
+      }
+      // Parked cars in different colours along the far kerb.
+      for (let k = 0; k < 3; k++) {
+        const parked = makeProp('car').object;
+        place(scene, parked, -14 + k * 11 + r() * 3, -5.6, Math.PI / 2);
+        // The body and roof share one paint material.
+        ((parked.children[0] as THREE.Mesh).material as THREE.MeshLambertMaterial).color.set(
+          ['#3b6fd9', '#f2c94c', '#2f9e6a'][k]!,
+        );
       }
       for (let i = -3; i <= 3; i++) {
         const pole = m(
@@ -197,7 +267,15 @@ export function buildSet(id: SetId, seed: number, opts: { clearing?: boolean } =
           2.25,
           -0.4,
         );
-        scene.add(pole, m(B(0.8, 0.12, 0.3), mat('#d9d9d0'), i * 14 + 5.3, 4.4, -0.4));
+        scene.add(
+          pole,
+          m(B(0.8, 0.12, 0.3), night ? flat('#ffe2a0') : mat('#d9d9d0'), i * 14 + 5.3, 4.4, -0.4),
+        );
+        if (night && Math.abs(i) <= 1) {
+          const glow = new THREE.PointLight('#ffd08a', 14, 12, 1.4);
+          glow.position.set(i * 14 + 5.3, 4.2, -0.4);
+          scene.add(glow);
+        }
       }
       const car = makeProp('car').object;
       place(scene, car, -6 + r() * 3, -4.6, Math.PI / 2);
@@ -251,7 +329,12 @@ export function buildSet(id: SetId, seed: number, opts: { clearing?: boolean } =
         ],
       };
       const [fl, wl] = look[id]!;
-      const lamp = room(scene, { floor: fl, wall: wl, window: id !== 'prison' && id !== 'bank' });
+      const lamp = room(scene, {
+        floor: fl,
+        wall: wl,
+        window: id !== 'prison' && id !== 'bank',
+        night,
+      });
       indoorLights(lamp);
       if (id === 'livingRoom') {
         const sofa = new THREE.Group();
@@ -267,7 +350,8 @@ export function buildSet(id: SetId, seed: number, opts: { clearing?: boolean } =
         place(scene, tree(0.35, 2), -3.8, -3.2);
       }
       if (id === 'bedroom') {
-        place(scene, makeProp('bed').object, -1.8, -2.8);
+        // (Not when the shot brings its own bed for someone lying in it.)
+        if (!opts.ownBed) place(scene, makeProp('bed').object, -1.8, -2.8);
         place(
           scene,
           m(

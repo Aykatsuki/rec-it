@@ -69,7 +69,8 @@ export interface MatOptions {
 export function mat(colour: string, o: MatOptions = {}): THREE.MeshLambertMaterial {
   if (blocky())
     return new THREE.MeshStandardMaterial({
-      color: colour,
+      // Game colours are a little richer than the PS1 kit's.
+      color: new THREE.Color(colour).offsetHSL(0, 0.12, 0.02),
       roughness: 0.62,
       metalness: 0,
       flatShading: false,
