@@ -214,3 +214,21 @@ def test_snap_to_pauses_moves_sentence_ends_onto_the_real_pauses():
     times = [t for w in new for t in (w["start"], w["end"])]
     assert times == sorted(times)
     assert abs(snd[0]["start"] - 3.5) < 0.03
+
+
+def test_match_pauses_does_not_take_a_short_breath_for_a_sentence_end():
+    from recit_media_ai.tts import match_pauses
+
+    # Expected ends 2.0 and 4.0 s. The audio has a brief breath at 3.5 s inside the second
+    # sentence and its real end at 4.6 s; the nearest-pause guess took the breath, which pulled
+    # every later sentence early.
+    words = [
+        {"text": "One", "start": 0.0, "end": 1.0},
+        {"text": "two.", "start": 1.0, "end": 2.0},
+        {"text": "Three", "start": 2.2, "end": 3.0},
+        {"text": "four.", "start": 3.0, "end": 4.0},
+        {"text": "Five", "start": 4.2, "end": 5.4},
+        {"text": "six.", "start": 5.4, "end": 6.6},
+    ]
+    gaps = [(2.0, 2.4), (3.5, 3.65), (4.6, 5.0), (7.0, 7.4)]
+    assert match_pauses(words, gaps, 7.4) == [(1, 0), (3, 2)]

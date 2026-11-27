@@ -283,13 +283,96 @@ def pauses(audio: Any, sr: int = SAMPLE_RATE, min_len: float = 0.12) -> list[tup
     return out
 
 
+_SENTENCE_END = re.compile(r"[.!?…:;]['\")\]]*$")
+_CLAUSE_END = re.compile(r"[,]['\")\]]*$")
+
+
+def match_pauses(
+    words: list[dict], gaps: list[tuple[float, float]], total: float
+) -> list[tuple[int, int]]:
+    """Which pause (index into `gaps`) each punctuated word ends on, as (word, pause) pairs.
+
+    A best-path search over the whole script rather than a nearest-pause guess: matching one
+    sentence to the wrong pause pulls every later one with it. The cost of each step is how far
+    the spoken time between two matched pauses is from the time the words were expected to take,
+    plus a penalty for each punctuated word left without a pause (more for a sentence end); long
+    pauses are favoured for sentence ends. Pauses inside a clause may stay unused for free.
+    """
+    marks = []
+    for i, w in enumerate(words[:-1]):
+        if _SENTENCE_END.search(w["text"]):
+            marks.append((i, 0.8, 0.5))
+        elif _CLAUSE_END.search(w["text"]):
+            marks.append((i, 0.4, 0.25))
+    inner = [g for g in gaps if g[1] < total - 0.02]
+    if not marks or not inner:
+        return []
+    n, m = len(marks), len(inner)
+    INF = float("inf")
+    # best[j][k]: cheapest path whose last match is mark j on pause k. Start: the first word.
+    origin = (words[0]["start"], words[0]["start"])
+    best = [[INF] * m for _ in range(n)]
+    back: list[list[tuple[int, int] | None]] = [[None] * m for _ in range(n)]
+
+    def step(prev_old: float, prev_new: float, j: int, k: int) -> float:
+        i, _skip, bonus = marks[j]
+        g0, g1 = inner[k]
+        if g0 <= prev_new:
+            return INF
+        expected = words[i]["end"] - prev_old
+        actual = g0 - prev_new
+        return abs(actual - expected) - bonus * min(g1 - g0, 0.6)
+
+    skips = [0.0]
+    for _i, skip, _b in marks:
+        skips.append(skips[-1] + skip)
+
+    def skipped(a: int, b: int) -> float:  # marks strictly between a and b
+        return skips[b] - skips[a + 1] if b > a + 1 else 0.0
+
+    for j in range(n):
+        for k in range(m):
+            c = step(origin[0], origin[1], j, k) + skips[j]
+            if c < best[j][k]:
+                best[j][k], back[j][k] = c, None
+            for pj in range(j):
+                pi = marks[pj][0]
+                prev_old = words[pi + 1]["start"]
+                for pk in range(k):
+                    if best[pj][pk] == INF:
+                        continue
+                    c = best[pj][pk] + skipped(pj, j) + step(prev_old, inner[pk][1], j, k)
+                    if c < best[j][k]:
+                        best[j][k], back[j][k] = c, (pj, pk)
+    # Close the path: the last word should end where the speech ends.
+    speech_end = gaps[-1][0] if gaps and gaps[-1][1] >= total - 0.02 else total
+    end_old = words[-1]["end"]
+    finish, at = skips[n], None  # no matches at all
+    finish += abs((speech_end - origin[1]) - (end_old - origin[0]))
+    for j in range(n):
+        prev_old = words[marks[j][0] + 1]["start"]
+        for k in range(m):
+            if best[j][k] == INF:
+                continue
+            c = best[j][k] + skipped(j, n) + abs((speech_end - inner[k][1]) - (end_old - prev_old))
+            if c < finish:
+                finish, at = c, (j, k)
+    path: list[tuple[int, int]] = []
+    while at is not None:
+        j, k = at
+        path.append((marks[j][0], k))
+        at = back[j][k]
+    return path[::-1]
+
+
 def snap_to_pauses(words: list[dict], sounds: list[dict], audio: Any) -> tuple[list[dict], list[dict]]:
     """Re-times words and sounds so every sentence and clause end meets its pause in the audio.
 
     Kokoro's predicted timings drift (up to a second over a long script) from the audio it makes,
-    which put captions and shot cuts out of step with the voice. Each word ending in punctuation is
-    matched, in order, to the nearest pause after the previous match; times between matches are
-    stretched linearly, so the whole timeline follows the real audio.
+    and the human-like voice without Whisper only has times spread by word length; either way
+    captions and shot cuts fall out of step with the voice. Words ending in punctuation are matched
+    to pauses by `match_pauses`; times between matches are stretched linearly, so the whole
+    timeline follows the real audio.
     """
     try:
         gaps = pauses(audio)
@@ -298,30 +381,13 @@ def snap_to_pauses(words: list[dict], sounds: list[dict], audio: Any) -> tuple[l
     total = len(audio) / SAMPLE_RATE
     # Anchors: (old time, new time) pairs, always increasing.
     anchors: list[tuple[float, float]] = [(0.0, 0.0)]
-    used = -1
-    for i, w in enumerate(words[:-1]):
-        if not re.search(r"[.,:;!?…]['\")\]]*$", w["text"]):
-            continue
-        best = None
-        for k in range(used + 1, len(gaps)):
-            g0, g1 = gaps[k]
-            if g0 < anchors[-1][1]:
-                continue
-            d = abs(g0 - w["end"])
-            if d <= 1.6 and (best is None or d < best[0]):
-                best = (d, k)
-            if g0 > w["end"] + 1.6:
-                break
-        if best is None:
-            continue
-        k = best[1]
+    for i, k in match_pauses(words, gaps, total):
         g0, g1 = gaps[k]
-        nxt = words[i + 1]["start"]
-        if w["end"] <= anchors[-1][0] or nxt <= w["end"]:
+        w, nxt = words[i], words[i + 1]["start"]
+        if w["end"] <= anchors[-1][0] or nxt <= w["end"] or g0 < anchors[-1][1]:
             continue
         anchors.append((w["end"], g0))
         anchors.append((nxt, g1))
-        used = k
     last_old = max(words[-1]["end"], anchors[-1][0] + 1e-3)
     tail = gaps[-1][0] if gaps and gaps[-1][1] >= total - 0.02 else total
     anchors.append((last_old, max(anchors[-1][1] + 1e-3, tail)))

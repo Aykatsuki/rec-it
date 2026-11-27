@@ -303,6 +303,13 @@ def _norm(word: str) -> str:
     return re.sub(r"[^\w]", "", word.lower())
 
 
+def spoken_length(word: str) -> int:
+    """Rough letters as spoken: digits are read out ("1944" is "nineteen forty-four")."""
+    w = _norm(word)
+    digits = sum(c.isdigit() for c in w)
+    return max(1, len(w) - digits + digits * 4)
+
+
 def speech_span(samples: list[float]) -> tuple[float, float]:
     """Start and end of speech (first and last 20 ms window above a quiet level)."""
     import numpy as np
@@ -328,13 +335,16 @@ def time_words(
         return []
     start, end = speech_span(samples)
     if not heard:
-        weights = [max(1, len(_norm(w))) + 1 for w in words]
+        weights = [spoken_length(w) + 1 for w in words]
         total = sum(weights)
         out, t = [], start
         for w, k in zip(words, weights, strict=True):
             d = (end - start) * k / total
             out.append({"text": w, "start": t, "end": t + d * 0.9})
             t += d
+        # Length alone drifts by a second or more over a long script: pin sentence and clause
+        # ends to the pauses actually in the audio.
+        out, _ = tts.snap_to_pauses(out, [], samples)
         return out
     times: list[tuple[float, float] | None] = [None] * len(words)
     a = [_norm(w) for w in words]

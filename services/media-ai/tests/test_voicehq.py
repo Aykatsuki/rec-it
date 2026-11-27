@@ -42,6 +42,28 @@ def test_words_without_whisper_spread_over_the_speech() -> None:
     assert words[1]["end"] - words[1]["start"] > words[0]["end"] - words[0]["start"]
 
 
+def test_words_without_whisper_end_sentences_on_the_pauses() -> None:
+    np = pytest.importorskip("numpy")
+    sr = voicehq.SAMPLE_RATE
+
+    def speech(sec: float) -> list[float]:
+        return (0.4 * np.sin(np.arange(int(sec * sr)) / 7)).tolist()
+
+    def quiet(sec: float) -> list[float]:
+        return [0.0] * int(sec * sr)
+
+    # A number read out takes far longer than its four digits suggest, and the second sentence is
+    # short: by length alone its end lands about half a second early.
+    audio = speech(1.4) + quiet(0.4) + speech(0.6) + quiet(0.5) + speech(1.8) + quiet(0.3)
+    words = voicehq.time_words("In 1944, nobody came. Then a tiny boat appeared.", None, audio)
+    ends = {w["text"]: w["end"] for w in words}
+    starts = {w["text"]: w["start"] for w in words}
+    assert ends["1944,"] == pytest.approx(1.4, abs=0.03)
+    assert starts["nobody"] == pytest.approx(1.8, abs=0.03)
+    assert ends["came."] == pytest.approx(2.4, abs=0.03)
+    assert starts["Then"] == pytest.approx(2.9, abs=0.03)
+
+
 def test_sounds_cover_each_word() -> None:
     sounds = voicehq.sounds_for([{"text": "five", "start": 1.0, "end": 1.4}])
     spoken = [s for s in sounds if not s["p"].isspace()]
